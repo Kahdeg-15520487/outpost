@@ -160,7 +160,12 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									</div>
 								) : (
 									<div key={c.id} className={rowClass(`c:${c.id}`, on)}>
-										<a className={`side-item ${on ? "on" : ""}`} href={chatHref(ws.id, c.id, route.page === "chat" ? route.gadget : undefined)}>
+										<a
+											className={`side-item ${on ? "on" : ""}`}
+											href={chatHref(ws.id, c.id, route.page === "chat" ? route.gadget : undefined)}
+											title={canEdit ? `${c.title} — double-click to rename` : c.title}
+											onDoubleClick={canEdit ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`c:${c.id}`)) : undefined}
+										>
 											<span className="t">{c.title}</span>
 											<span className="ago">{timeAgo(c.updatedAt)}</span>
 										</a>
@@ -194,7 +199,12 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									</div>
 								) : (
 									<div key={g.id} className={rowClass(`g:${g.id}`, on)}>
-										<a className={`side-item ${on ? "on" : ""}`} href={chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, true)}>
+										<a
+											className={`side-item ${on ? "on" : ""}`}
+											href={chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, true)}
+											title={canChange ? `${g.name} — double-click to rename` : g.name}
+											onDoubleClick={canChange ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`g:${g.id}`)) : undefined}
+										>
 											<span className="ico">{g.icon}</span>
 											<span className="t">{g.name}</span>
 										</a>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
+import { EditableLabel } from "./RowMenu";
 import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Gadget, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
@@ -113,13 +114,8 @@ export function ChatView(props: {
 				</div>
 			)}
 			<div className="topbar">
-				<h2
-					contentEditable={!!chatId && canEdit}
-					suppressContentEditableWarning
-					onBlur={(e) => chatId && e.currentTarget.textContent && api.patch(`/api/w/${ws.id}/chats/${chatId}`, { title: e.currentTarget.textContent })}
-					onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), e.currentTarget.blur())}
-				>
-					{meta?.title ?? "New chat"}
+				<h2>
+					<EditableLabel value={meta?.title ?? "New chat"} onSave={chatId && canEdit ? (title) => api.patch(`/api/w/${ws.id}/chats/${chatId}`, { title }) : undefined} />
 				</h2>
 				<span className="grow" />
 				{chatId && (

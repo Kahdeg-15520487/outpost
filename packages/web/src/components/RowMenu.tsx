@@ -113,7 +113,7 @@ export function RowMenu({ label, items, onOpenChange }: { label: string; items: 
 }
 
 /** In-place rename for a sidebar row: Enter or blur saves, Escape cancels. */
-export function InlineRename({ value, onSave, onDone }: { value: string; onSave: (v: string) => Promise<unknown>; onDone: () => void }) {
+export function InlineRename({ value, onSave, onDone, className = "side-rename", maxLength = 120 }: { value: string; onSave: (v: string) => Promise<unknown>; onDone: () => void; className?: string; maxLength?: number }) {
 	const [text, setText] = useState(value);
 	const done = useRef(false);
 	const finish = async (save: boolean) => {
@@ -125,7 +125,7 @@ export function InlineRename({ value, onSave, onDone }: { value: string; onSave:
 	};
 	return (
 		<input
-			className="side-rename"
+			className={className}
 			value={text}
 			autoFocus
 			onFocus={(e) => e.currentTarget.select()}
@@ -136,7 +136,33 @@ export function InlineRename({ value, onSave, onDone }: { value: string; onSave:
 				if (e.key === "Enter") finish(true);
 				if (e.key === "Escape") finish(false);
 			}}
-			maxLength={120}
+			maxLength={maxLength}
 		/>
+	);
+}
+
+/**
+ * A name shown as text that turns into a text box on double-click (Enter/blur saves,
+ * Escape cancels). Read-only when `onSave` is absent.
+ */
+export function EditableLabel({ value, onSave, className, maxLength }: { value: string; onSave?: (v: string) => Promise<unknown>; className?: string; maxLength?: number }) {
+	const [editing, setEditing] = useState(false);
+	if (editing && onSave) return <InlineRename value={value} onSave={onSave} onDone={() => setEditing(false)} className={`label-rename ${className ?? ""}`} maxLength={maxLength} />;
+	return (
+		<span
+			className={`${className ?? ""} ${onSave ? "renamable" : ""}`}
+			title={onSave ? `${value} — double-click to rename` : value}
+			onDoubleClick={
+				onSave &&
+				((e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					getSelection()?.removeAllRanges();
+					setEditing(true);
+				})
+			}
+		>
+			{value}
+		</span>
 	);
 }

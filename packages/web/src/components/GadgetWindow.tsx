@@ -3,6 +3,7 @@ import { api, type Gadget, type LogLine, type User, type WorkspaceDocs } from ".
 import { socket } from "../socket";
 import { Avatar } from "./bits";
 import { ResourcesPanel } from "./Resources";
+import { EditableLabel } from "./RowMenu";
 
 type Tab = "app" | "code" | "logs" | "data" | "share" | "access";
 type Detail = { gadget: Gadget; files?: Record<string, string>; server: { methods: string[]; readonly: string[]; error?: string }; shares?: any[]; links?: any[] };
@@ -120,7 +121,9 @@ export function GadgetWindow({
 			<div className="gwin-bar">
 				<span className="icon">{g?.icon ?? "◆"}</span>
 				<div className="grow" style={{ minWidth: 0 }}>
-					<div className="title">{g?.name ?? "…"}</div>
+					<div className="title">
+						{g ? <EditableLabel value={g.name} maxLength={80} onSave={role === "owner" || role === "editor" ? (name) => api.patch(`/api/gadgets/${gadgetId}`, { name }).then(load) : undefined} /> : "…"}
+					</div>
 					{g && (
 						<div className="mono muted" style={{ fontSize: 10.5 }}>
 							{role} · {g.workspaceName}

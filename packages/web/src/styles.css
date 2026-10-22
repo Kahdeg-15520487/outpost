@@ -298,3 +298,19 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .files-drop { border: 1.5px dashed var(--line-2); border-radius: 14px; padding: 22px; text-align: center; color: var(--muted); margin-bottom: 18px; cursor: pointer; transition: border-color .15s, background .15s; }
 .files-drop:hover, .files-drop.on { border-color: var(--signal); background: var(--signal-wash); color: var(--signal-ink); }
 .preview { max-height: 60vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+/* OAuth sign-in (Settings → Model providers) */
+.oauth { width: 100%; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); display: grid; gap: 10px; animation: rise .25s ease-out; }
+.oauth-prompt { display: grid; gap: 6px; }
+.oauth-device { display: grid; gap: 8px; justify-items: start; }
+.oauth-step { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.oauth-n { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--ink); color: var(--ink-text); font: 600 11px var(--mono); }
+.oauth-code { display: inline-flex; align-items: baseline; gap: 12px; padding: 8px 14px; border: 1px dashed var(--line-2); border-radius: 10px; background: var(--card); font: 600 26px/1 var(--mono); letter-spacing: .14em; color: var(--text); cursor: copy; }
+.oauth-code:hover { border-color: var(--signal); }
+.oauth-copy { font: 11px var(--mono); letter-spacing: 0; color: var(--signal-ink); }
+.oauth-progress { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oauth-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--signal); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.oauth-done { font-size: 13px; color: var(--ok); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .oauth, .oauth-spin { animation: none; } }
+.oauth a.btn { text-decoration: none; }

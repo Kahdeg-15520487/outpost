@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type ModelInfo, type Workspace } from "../api";
+import { OAuthSignIn, type LoginView } from "./OAuthSignIn";
 
-type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number };
+type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number;
+	/** Present when pi-os offers a sign-in flow for this provider (GitHub Copilot). */
+	oauth?: { button: string; signedIn: boolean; account?: string; login?: LoginView | null };
+};
 
 export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () => void }) {
 	const [providers, setProviders] = useState<Provider[]>([]);
@@ -18,11 +22,15 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 	const [keyFor, setKeyFor] = useState<string>();
 	const [key, setKey] = useState("");
 	const [filter, setFilter] = useState("");
+	const [signInFor, setSignInFor] = useState<string>();
 	const isOwner = ws.role === "owner";
 
 	const loadProviders = () =>
 		api.get("/api/providers").then((r) => {
 			setProviders(r.providers);
+			// Rejoin a sign-in that is still running (page reload, another tab).
+			const running = (r.providers as Provider[]).find((p) => p.oauth?.login?.status === "running");
+			if (running) setSignInFor((cur) => cur ?? running.id);
 			setCfg({ configPath: r.configPath, configFound: r.configFound, ambientEnv: r.ambientEnv });
 		});
 	const loadModels = () => api.get("/api/models").then((r) => setModels(r.models));
@@ -136,19 +144,42 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 							<div style={{ maxHeight: 520, overflowY: "auto" }}>
 								{providers
 									.filter((p) => !filter || p.name.toLowerCase().includes(filter.toLowerCase()))
-									.sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name))
+									.sort((a, b) => Number(b.configured) - Number(a.configured) || Number(!!b.oauth) - Number(!!a.oauth) || a.name.localeCompare(b.name))
 									.map((p) => (
 										<div key={p.id} className="list-row" style={{ flexWrap: "wrap" }}>
 											<span className="grow">
 												{p.name} <span className="mono muted" style={{ fontSize: 11 }}>{p.id} · {p.models} models</span>
-												{p.source && (
+												{p.oauth?.signedIn ? (
 													<div className="mono muted" style={{ fontSize: 11 }}>
-														key from {p.source}
+														signed in{p.oauth.account ? ` as ${p.oauth.account}` : ""} · token refreshes automatically
 													</div>
+												) : (
+													p.source && (
+														<div className="mono muted" style={{ fontSize: 11 }}>
+															key from {p.source}
+														</div>
+													)
 												)}
 											</span>
 											{p.configured ? <span className="pill ok">ready</span> : <span className="pill">not set</span>}
-											{p.oauthOnly ? (
+											{p.oauth && p.editable ? (
+												p.oauth.signedIn ? (
+													<button className="btn ghost small" onClick={() => api.del(`/api/providers/${p.id}/oauth`).then(() => (loadProviders(), loadModels(), onChanged()))}>
+														Sign out
+													</button>
+												) : (
+													<>
+														{p.stored && (
+															<button className="btn ghost small" onClick={() => api.post(`/api/providers/${p.id}/key`, { key: "" }).then(() => (loadProviders(), loadModels(), onChanged()))}>
+																Remove key
+															</button>
+														)}
+														<button className="btn primary small" disabled={signInFor === p.id} onClick={() => (setSignInFor(p.id), setKeyFor(undefined))}>
+															{p.oauth.button}
+														</button>
+													</>
+												)
+											) : p.oauthOnly ? (
 												<span className="mono muted" style={{ fontSize: 11 }}>
 													subscription login not supported
 												</span>
@@ -167,6 +198,14 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 												<span className="pill" title="Set in the config file">
 													config
 												</span>
+											)}
+											{signInFor === p.id && (
+												<OAuthSignIn
+													provider={p.id}
+													initial={p.oauth?.login}
+													onFinished={() => (loadProviders(), loadModels(), onChanged())}
+													onClose={() => (setSignInFor(undefined), loadProviders())}
+												/>
 											)}
 											{keyFor === p.id && (
 												<form

@@ -115,7 +115,7 @@ export async function listProviders() {
 		if (p.id === DEMO_MODEL.provider) continue;
 		const managed = credentials.managedByConfig(p.id);
 		const check = await models.checkAuth(p.id).catch(() => undefined);
-		const source = managed ?? (credentials.stored(p.id) ? "Settings (encrypted store)" : check?.source ? `environment (${check.source})` : check ? "environment" : undefined);
+		const source = managed ?? (credentials.oauth(p.id) ? "OAuth sign-in (encrypted store)" : credentials.stored(p.id) ? "Settings (encrypted store)" : check?.source ? `environment (${check.source})` : check ? "environment" : undefined);
 		result.push({
 			id: p.id,
 			name: p.name ?? p.id,

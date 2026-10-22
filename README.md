@@ -69,7 +69,9 @@ pi-os can use every provider pi-ai supports: Anthropic, OpenAI, Google, Azure, B
 2. **Settings → Model providers → Add key.** These are stored in `<dataDir>/credentials.enc.json`, encrypted with AES-256-GCM using the instance secret (`<dataDir>/secret.key`, or `PI_OS_SECRET`).
 3. The provider's **standard env var** (`ANTHROPIC_API_KEY`, …). Set `models.ambientEnv: false` to turn this off.
 
-Subscription (OAuth) logins aren't supported yet; only API keys work. Unknown provider IDs and `$VAR`s that aren't set produce warnings at startup.
+**GitHub Copilot** uses a subscription sign-in instead of a key. Go to **Settings → Model providers → Sign in with GitHub**, copy the code, and approve it at github.com/login/device. Leave the domain prompt blank for github.com, or enter your GitHub Enterprise domain. The flow runs on the server (device code, so the browser doesn't need to be on the same machine). The token is stored in the encrypted credential store and refreshed automatically. The model picker shows only the models your Copilot plan allows. Other subscription logins aren't offered; those providers take API keys.
+
+Unknown provider IDs and `$VAR`s that aren't set produce warnings at startup.
 
 New chats use `models.default`, unless the workspace sets its own, falling back to the first available model. You can change the model per chat. With no keys at all, an offline **Demo** model follows a few scripts ("make a todo list", "make slides", …).
 

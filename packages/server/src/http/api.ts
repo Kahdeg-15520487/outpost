@@ -3,6 +3,7 @@ import { config } from "../config.ts";
 import { describeGatekeeper, GATEKEEPERS } from "../gatekeepers/catalog.ts";
 import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
+import { oauthLogins } from "../kernel/oauth.ts";
 import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { hub } from "../collab/hub.ts";
@@ -66,7 +67,22 @@ export function createApi(): Router {
 	});
 	r.get("/api/providers", async (req) => {
 		req.need();
-		return { providers: await listProviders(), configPath: config.configPath, configFound: config.configFound, ambientEnv: config.ambientEnv };
+		const providers = await Promise.all((await listProviders()).map(async (p) => ({ ...p, oauth: await oauthLogins.describe(p.id) })));
+		return { providers, configPath: config.configPath, configFound: config.configFound, ambientEnv: config.ambientEnv };
+	});
+	// OAuth sign-in (device-code flows, e.g. GitHub Copilot). The flow runs here; Settings polls it.
+	r.post("/api/providers/:id/oauth", async (req) => ({ login: oauthLogins.start(req.params.id!, req.need().displayName) }));
+	r.get("/api/providers/:id/oauth", async (req) => (req.need(), { login: oauthLogins.get(req.params.id!) ?? null }));
+	r.post("/api/providers/:id/oauth/answer", async (req) => {
+		req.need();
+		const { promptId, value } = await req.body();
+		return { login: oauthLogins.answer(req.params.id!, Number(promptId), String(value ?? "")) };
+	});
+	r.post("/api/providers/:id/oauth/cancel", async (req) => (req.need(), { login: oauthLogins.cancel(req.params.id!) ?? null }));
+	r.delete("/api/providers/:id/oauth", async (req) => {
+		req.need();
+		await oauthLogins.signOut(req.params.id!);
+		return { ok: true };
 	});
 	r.post("/api/providers/:id/key", async (req) => {
 		req.need();

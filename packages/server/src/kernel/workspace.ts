@@ -32,6 +32,7 @@ import {
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
 import { ProjectManager } from "../projects/manager.ts";
+import { agentEnv } from "../projects/env.ts";
 import { blueprints, gadgets, HttpError, newId, users, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
 
 const open = new Map<string, Promise<Workspace>>();
@@ -91,7 +92,8 @@ export class Workspace {
 				registry,
 				identity: { attribution: { name: "pi-os", url: "https://pi.dev" } },
 				// Project agents' file/bash tools run in their own worktree (their agent `cwd`).
-				env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? config.dataDir }),
+				// (Git Bash paths translated; file writes confined to the worktree — see projects/env.ts.)
+				env: ({ cwd }) => (cwd ? agentEnv(cwd) : new NodeExecutionEnv({ cwd: config.dataDir })),
 				settings: () => ({
 					extensions: chatExtensions,
 					toolExecution: "parallel",

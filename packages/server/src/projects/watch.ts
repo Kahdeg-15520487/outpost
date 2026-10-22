@@ -70,6 +70,16 @@ export function describeTool(name: string, args: any): string {
 			return "publishing to main";
 		case "sync_main":
 			return "syncing with main";
+		case "backlog_add":
+			return `adding ${Array.isArray(a.items) ? a.items.length : ""} backlog item${Array.isArray(a.items) && a.items.length === 1 ? "" : "s"}`;
+		case "backlog_update":
+			return `updating ${a.id ?? "backlog"}${a.status ? ` → ${a.status}` : ""}`;
+		case "backlog_remove":
+			return `removing ${a.id ?? "an item"}`;
+		case "backlog_list":
+			return "reading the backlog";
+		case "backlog_request_approval":
+			return "asking you to approve the backlog";
 		default:
 			return name.replace(/_/g, " ");
 	}

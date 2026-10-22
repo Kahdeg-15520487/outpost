@@ -151,6 +151,20 @@ export class ProjectRepo {
 		});
 	}
 
+	/** pi-os's own file on `main` (e.g. docs/backlog.md): written and committed if it changed. */
+	writeMain(path: string, content: string, message: string): Promise<boolean> {
+		return withLock(this.projectId, async () => {
+			const file = join(this.main, path);
+			if (existsSync(file) && readFileSync(file, "utf8") === content) return false;
+			mkdirSync(join(file, ".."), { recursive: true });
+			writeFileSync(file, content);
+			await git(this.main, ["add", "--", path]);
+			if (!(await git(this.main, ["diff", "--cached", "--name-only"])).trim()) return false;
+			await git(this.main, ["commit", "-q", "-m", message]);
+			return true;
+		});
+	}
+
 	// ---------------------------------------------------------------- reads of main (for the UI)
 
 	async files(): Promise<string[]> {

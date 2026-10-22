@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
-import { api, type AgentSummary, type Gadget, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
+import { api, type AgentSummary, type Backlog, type Gadget, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -96,8 +96,8 @@ export const projectHref = (ws: string, project: string, tab?: string) => `#/w/$
 
 // ------------------------------------------------------------------ projects (agent teams)
 
-export type ProjectLive = { project?: ProjectMeta; state: ProjectState; summaries: Record<string, AgentSummary>; head: string; repoTick: number };
-const emptyProject: ProjectLive = { state: { agents: {}, order: [], questions: {}, activity: [] }, summaries: {}, head: "", repoTick: 0 };
+export type ProjectLive = { project?: ProjectMeta; state: ProjectState; backlog: Backlog; summaries: Record<string, AgentSummary>; head: string; repoTick: number };
+const emptyProject: ProjectLive = { state: { agents: {}, order: [], questions: {}, activity: [] }, backlog: { items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 }, summaries: {}, head: "", repoTick: 0 };
 
 /** A project's team, agent summaries and repo head, live over the socket. */
 export function useProject(ws: string, project: string): ProjectLive {
@@ -106,9 +106,10 @@ export function useProject(ws: string, project: string): ProjectLive {
 		setLive(emptyProject);
 		const off = socket.on((m) => {
 			if (m.ws !== ws) return;
-			if (m.t === "project.snapshot" && m.projectId === project) setLive((l) => ({ project: m.project, state: m.state, summaries: m.summaries, head: m.head, repoTick: l.repoTick + 1 }));
+			if (m.t === "project.snapshot" && m.projectId === project) setLive((l) => ({ project: m.project, state: m.state, backlog: m.backlog ?? l.backlog, summaries: m.summaries, head: m.head, repoTick: l.repoTick + 1 }));
 			else if (m.project !== project) return;
 			else if (m.t === "project.state") setLive((l) => ({ ...l, state: m.state }));
+			else if (m.t === "project.backlog") setLive((l) => ({ ...l, backlog: m.backlog }));
 			else if (m.t === "project.agent") setLive((l) => ({ ...l, summaries: { ...l.summaries, [m.key]: m.summary } }));
 			else if (m.t === "project.repo") setLive((l) => ({ ...l, head: m.head ?? l.head, repoTick: l.repoTick + 1 }));
 			else if (m.t === "project.meta") api.get(`/api/w/${ws}/projects/${project}`).then((r) => setLive((l) => ({ ...l, project: r.project })));

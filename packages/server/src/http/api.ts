@@ -259,6 +259,35 @@ export function createApi(): Router {
 		await ws.projects.stopAll(req.params.p!);
 		return { ok: true };
 	});
+	// Backlog: the user's side of the approval gate, and edits from the board.
+	r.post("/api/w/:ws/projects/:p/backlog/approve", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { comment } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.approveBacklog(req.params.p!, user, comment ? String(comment) : undefined);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/backlog/changes", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { comment } = await req.body();
+		if (!String(comment ?? "").trim()) throw new HttpError(400, "Say what should change");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.requestBacklogChanges(req.params.p!, user, String(comment));
+		return { ok: true };
+	});
+	r.patch("/api/w/:ws/projects/:p/backlog/:id", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { title, description, status, assignee, estimate, area, acceptance } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.updateItem(req.params.p!, req.params.id!, { title, description, status, assignee, estimate, area, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined }, user);
+		return { ok: true };
+	});
+	r.delete("/api/w/:ws/projects/:p/backlog/:id", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.removeItem(req.params.p!, req.params.id!, user);
+		return { ok: true };
+	});
 	r.post("/api/w/:ws/projects/:p/agents/:key/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { text, files } = await req.body();

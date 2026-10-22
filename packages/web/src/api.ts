@@ -121,3 +121,9 @@ export type Activity = { at: number; agent?: string; kind: "team" | "message" | 
 export type AttachmentRecord = { name: string; fileId: string; original: string; kind: string; mime: string; size: number; at: number; by: string };
 export type ProjectState = { agents: Record<string, AgentRecord>; order: string[]; questions: Record<string, Question>; activity: Activity[]; attachments?: Record<string, AttachmentRecord> };
 export type AgentSummary = { busy: boolean; status: "idle" | "thinking" | "writing" | "tool" | "error"; activity?: string; tail: string; tokens: number; cost: number; queued: number; error?: string; updatedAt: number };
+
+export type ItemType = "feature" | "pbi" | "task";
+export type ItemStatus = "todo" | "doing" | "review" | "done" | "blocked";
+export type BacklogItem = { id: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; status: ItemStatus; assignee?: string; deps: string[]; area?: string; estimate?: "S" | "M" | "L"; order: number; createdBy: string; updatedAt: number };
+export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
+export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number };

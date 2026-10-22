@@ -5,6 +5,7 @@ import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, FileChips, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
+import { BacklogTab } from "./Backlog";
 
 const STAGES: { id: ProjectStage; label: string }[] = [
 	{ id: "kickoff", label: "Kickoff" },
@@ -61,6 +62,14 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 	const live = useProject(ws.id, projectId);
 	const { project, state, summaries } = live;
 	const [open, setOpen] = useState<string>();
+	// Wide viewer: agent tiles shrink to avatars. Default on for the board and the app; remembered per tab kind.
+	const [widePref, setWidePref] = useState<Record<string, boolean>>(() => {
+		try {
+			return JSON.parse(localStorage.getItem("pios.viewer.wide") ?? "{}");
+		} catch {
+			return {};
+		}
+	});
 	const canEdit = ws.role !== "viewer";
 	const agents = state.order.map((k) => state.agents[k]!).filter((a) => a && !a.removed);
 	const openQuestions = Object.values(state.questions).filter((q) => !q.answeredAt);
@@ -73,8 +82,16 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 	if (!project) return <div className="main project-loading">Loading project…</div>;
 	const stageIdx = STAGES.findIndex((s) => s.id === project.stage);
 
+	const wide = widePref[current] ?? (current === "backlog" || current === "app");
+	const toggleWide = () => {
+		const next = { ...widePref, [current]: !wide };
+		setWidePref(next);
+		localStorage.setItem("pios.viewer.wide", JSON.stringify(next));
+	};
 	const tiles = (list: AgentRecord[]) =>
-		list.map((a, i) => <AgentTile key={a.key} agent={a} summary={summaries[a.key]} asking={asking.has(a.key)} index={i} onOpen={() => setOpen(a.key)} />);
+		list.map((a, i) =>
+			wide ? <AgentMini key={a.key} agent={a} summary={summaries[a.key]} asking={asking.has(a.key)} onOpen={() => setOpen(a.key)} /> : <AgentTile key={a.key} agent={a} summary={summaries[a.key]} asking={asking.has(a.key)} index={i} onOpen={() => setOpen(a.key)} />,
+		);
 
 	return (
 		<div className="main project">
@@ -117,7 +134,7 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 				)}
 			</header>
 
-			<div className="project-body">
+			<div className={`project-body ${wide ? "wide" : ""}`}>
 				<section className="tiles" aria-label="Agents">
 					{tiles(agents.slice(0, half))}
 					{agents.length === 0 && <div className="tile-empty">The lead is getting ready…</div>}
@@ -129,9 +146,19 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 							<a key={t.id} href={projectHref(ws.id, projectId, t.id === "overview" ? undefined : t.id)} className={current === t.id ? "on" : ""}>
 								{t.label}
 								{t.id === "overview" && openQuestions.length > 0 && <span className="vt-badge">{openQuestions.length}</span>}
+								{t.id === "backlog" && live.backlog.approval.status === "pending" && <span className="vt-badge">!</span>}
 							</a>
 						))}
+						<span className="grow" />
+						<button className="vt-wide" onClick={toggleWide} title={wide ? "Show the agent tiles" : "Expand: shrink the agent tiles to avatars"} aria-pressed={wide}>
+							{wide ? "⤡" : "⤢"}
+						</button>
 					</nav>
+					{live.backlog.approval.status === "pending" && current !== "backlog" && (
+						<a className="viewer-ask" href={projectHref(ws.id, projectId, "backlog")}>
+							<span className="va-dot" /> The backlog is waiting for your approval — open Backlog
+						</a>
+					)}
 					{openQuestions.length > 0 && current !== "overview" && (
 						<a className="viewer-ask" href={projectHref(ws.id, projectId)}>
 							<span className="va-dot" /> {state.agents[openQuestions[0]!.agent]?.name ?? "An agent"} is waiting for your answer — open Overview
@@ -143,7 +170,7 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 						{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
 						{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 						{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-						{current === "backlog" && <Placeholder icon="▤" title="Backlog" text="Features → PBIs → tasks appear here once the planner starts. You approve the backlog before building begins." />}
+						{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} />}
 						{current === "app" && <Placeholder icon="▶" title="Live app" text="The running product appears here once the architect defines how to run it (.pios/project.json). Live preview arrives in milestone 5." />}
 						{current === "repo" && <RepoTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 					</div>
@@ -160,6 +187,18 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 }
 
 // ------------------------------------------------------------------ tiles
+
+/** An agent as an avatar with a live status dot (wide viewer). */
+function AgentMini({ agent, summary, asking, onOpen }: { agent: AgentRecord; summary?: AgentSummary; asking: boolean; onOpen: () => void }) {
+	const s = summary ?? { busy: false, status: "idle", tail: "", tokens: 0, cost: 0, queued: 0, updatedAt: 0 };
+	const state = asking && !s.busy ? "asking" : s.status === "error" ? "error" : s.busy ? "busy" : "idle";
+	return (
+			<button className={`agent-mini ${state}`} style={{ ["--role" as any]: roleColor(agent) }} onClick={onOpen} title={`${agent.name} (${roleTitle(agent.role)}) — ${asking && !s.busy ? "needs you" : s.busy ? (s.activity ?? s.status) : "idle"}`}>
+				<span className="at-glyph">{initials(agent.name)}</span>
+				<i />
+			</button>
+	);
+}
 
 function AgentTile({ agent, summary, asking, index, onOpen }: { agent: AgentRecord; summary?: AgentSummary; asking: boolean; index: number; onOpen: () => void }) {
 	const s = summary ?? { busy: false, status: "idle", tail: "", tokens: 0, cost: 0, queued: 0, updatedAt: 0 };

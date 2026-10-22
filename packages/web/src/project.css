@@ -168,3 +168,17 @@
 .dr-list button.on { background: var(--text); color: var(--paper); }
 .dr-list button.on .mono { color: #ffb08f; }
 .dr .doc { overflow-y: auto; margin: 0; max-width: none; }
+
+/* wide viewer: tiles shrink to avatars */
+.vt-wide { align-self: center; margin-bottom: 4px; border: 1px solid var(--line); background: var(--card); border-radius: 7px; width: 28px; height: 26px; font-size: 14px; color: var(--muted); cursor: pointer; flex: none; }
+.vt-wide:hover, .vt-wide[aria-pressed="true"] { color: var(--text); border-color: var(--line-2); }
+.project-body.wide { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+.project-body.wide .tiles { grid-template-columns: 1fr; grid-auto-rows: 44px; gap: 8px; }
+.agent-mini { --role: var(--signal); position: relative; width: 40px; height: 40px; padding: 0; border: 1px solid var(--ink-3); border-radius: 12px; background: var(--ink-2); display: grid; place-items: center; cursor: pointer; }
+.agent-mini .at-glyph { width: 30px; height: 30px; }
+.agent-mini i { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; background: #5a5442; border: 2px solid var(--ink); }
+.agent-mini.busy { border-color: color-mix(in srgb, var(--role) 55%, var(--ink-3)); box-shadow: 0 0 14px -4px var(--role); }
+.agent-mini.busy i { background: var(--role); animation: blink 1s ease-in-out infinite; }
+.agent-mini.asking i { background: #fbbf24; }
+.agent-mini.error i { background: #ff8a6b; }
+.agent-mini:hover { border-color: #4a4434; }

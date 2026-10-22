@@ -9,6 +9,7 @@ import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, type Activity, type AgentRecord, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
 import { ProjectRepo } from "./repo.ts";
 import { join } from "node:path";
+import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
 import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 
@@ -74,7 +75,15 @@ export class ProjectManager {
 		for (const p of Object.values(projects)) {
 			if (p.archived) continue;
 			const state = await this.state(p.id);
-			for (const a of Object.values(state.agents)) if (!a.removed) this.#follow(p.id, a);
+			for (const a of Object.values(state.agents)) {
+				if (a.removed) continue;
+				this.#follow(p.id, a);
+				// Agents keep the instructions they were created with; bring them up to date with this version
+				// of pi-os (new tools, repo layout), so a running project picks up improvements on restart.
+				const c = await this.ws.harness.conversation(Number(a.conversationId) as any, ctx).catch(() => undefined);
+				const instructions = agentInstructions({ role: a.role, title: titleFor(a.role), key: a.key, name: a.name, project: p, brief: a.brief, attachmentsDir: this.repo(p.id).attachmentsDir });
+				await c?.configure({ instructions }, ctx).catch((e) => console.warn(`[project ${p.id}] refresh ${a.key}:`, e?.message ?? e));
+			}
 		}
 	}
 
@@ -96,22 +105,108 @@ export class ProjectManager {
 	}
 
 	async snapshot(projectId: string) {
-		const [meta, state] = await Promise.all([this.meta(projectId), this.state(projectId)]);
-		return { project: meta, state, summaries: this.summaries.get(projectId) ?? {}, head: await this.repo(projectId).head().catch(() => "") };
+		const [meta, state, backlog] = await Promise.all([this.meta(projectId), this.state(projectId), this.backlog(projectId)]);
+		return { project: meta, state, backlog, summaries: this.summaries.get(projectId) ?? {}, head: await this.repo(projectId).head().catch(() => "") };
 	}
 
-	/** Mirror the project doc to `project:<ws>:<id>` subscribers (started on first subscription). */
+	async backlog(projectId: string): Promise<Backlog> {
+		return ((await this.ws.harness.snapshot(BacklogDoc, projectId, ctx)) as Backlog | undefined) ?? emptyBacklog();
+	}
+
+	/** Mirror the project and backlog docs to `project:<ws>:<id>` subscribers (started on first subscription). */
 	watch(projectId: string) {
 		if (!this.#docWatches.has(projectId)) {
 			const started = (async () => {
-				await this.ws.harness.commit(async (tx) => void (await tx.doc(ProjectDoc, projectId, null)), ctx);
+				await this.ws.harness.commit(async (tx) => {
+					await tx.doc(ProjectDoc, projectId, null);
+					await tx.doc(BacklogDoc, projectId, null);
+				}, ctx);
 				const w = await this.ws.harness.watchDoc(ProjectDoc, projectId, ctx);
 				w?.start(async (value) => hub.publish(this.channel(projectId), { t: "project.state", ws: this.ws.id, project: projectId, state: value }));
+				const b = await this.ws.harness.watchDoc(BacklogDoc, projectId, ctx);
+				b?.start(async (value) => hub.publish(this.channel(projectId), { t: "project.backlog", ws: this.ws.id, project: projectId, backlog: value }));
 			})();
 			started.catch(() => this.#docWatches.delete(projectId));
 			this.#docWatches.set(projectId, started);
 		}
 		return this.#docWatches.get(projectId)!;
+	}
+
+	// ------------------------------------------------------------------ backlog
+
+	/** Change the backlog in one commit, then refresh docs/backlog.md on main (debounced). */
+	async editBacklog<T>(projectId: string, fn: (b: Backlog) => T): Promise<T> {
+		let result!: T;
+		await this.ws.harness.commit(async (tx) => {
+			const b = (await tx.doc(BacklogDoc, projectId, null)) as Backlog;
+			result = fn(b);
+			b.revision += 1;
+		}, ctx);
+		this.#scheduleSnapshot(projectId);
+		return result;
+	}
+
+	readonly #snapshotTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	#scheduleSnapshot(projectId: string) {
+		clearTimeout(this.#snapshotTimers.get(projectId));
+		this.#snapshotTimers.set(
+			projectId,
+			setTimeout(async () => {
+				this.#snapshotTimers.delete(projectId);
+				try {
+					const [meta, b] = await Promise.all([this.meta(projectId), this.backlog(projectId)]);
+					const repo = this.repo(projectId);
+					if (await repo.writeMain("docs/backlog.md", renderBacklog(b, meta.name), `Backlog snapshot (revision ${b.revision})`))
+						hub.publish(this.channel(projectId), { t: "project.repo", ws: this.ws.id, project: projectId, head: await repo.head(), files: ["docs/backlog.md"] });
+				} catch (e: any) {
+					console.warn(`[project ${projectId}] backlog snapshot:`, e?.message ?? e);
+				}
+			}, 4000),
+		);
+	}
+
+	/** The user approves the backlog (Backlog tab); the Lead is told to start building. */
+	async approveBacklog(projectId: string, user: User, comment?: string) {
+		const rev = await this.editBacklog(projectId, (b) => {
+			b.approval = Object.fromEntries(Object.entries({ ...b.approval, status: "approved", decidedBy: user.displayName, decidedAt: Date.now(), comment: comment || undefined, revision: b.revision + 1 }).filter(([, v]) => v !== undefined)) as Backlog["approval"];
+			return b.revision + 1;
+		});
+		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} approved the backlog${comment ? `: ${clip(comment, 140)}` : ""}` });
+		await this.#tellLead(projectId, `The user (${user.displayName}) **approved the backlog** (revision ${rev}).${comment ? `\n\nTheir note: ${comment}` : ""}\n\nYou can start the build: assign ready tasks (dependencies done) to developers, and keep task status current with backlog_update.`);
+	}
+
+	/** The user sends the backlog back with a comment; the Lead gets it to the planner. */
+	async requestBacklogChanges(projectId: string, user: User, comment: string) {
+		await this.editBacklog(projectId, (b) => {
+			b.approval = { ...b.approval, status: "changes", decidedBy: user.displayName, decidedAt: Date.now(), comment };
+		});
+		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for backlog changes: ${clip(comment, 160)}` });
+		await this.#tellLead(projectId, `The user (${user.displayName}) **requested changes to the backlog**:\n\n${comment}\n\nHave the backlog revised with the backlog tools, then request approval again with backlog_request_approval.`);
+	}
+
+	/** The user edits an item on the board (status, title, description, assignee...). */
+	async updateItem(projectId: string, id: string, patch: Partial<Pick<BacklogItem, "title" | "description" | "status" | "assignee" | "estimate" | "area" | "acceptance">>, user: User) {
+		const before = await this.editBacklog(projectId, (b) => {
+			const item = b.items[id];
+			if (!item) throw new HttpError(404, `No backlog item ${id}`);
+			const old = { ...item };
+			if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new HttpError(400, "Bad status");
+			Object.assign(item, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), { updatedAt: Date.now() });
+			if (patch.assignee === "") delete item.assignee;
+			return old;
+		});
+		if (patch.status && patch.status !== before.status) await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} moved ${id} “${clip(before.title, 60)}” to ${STATUS_LABEL[patch.status]}` });
+	}
+
+	async removeItem(projectId: string, id: string, user: User) {
+		const removed = await this.editBacklog(projectId, (b) => removeWithChildren(b, id));
+		if (!removed.length) throw new HttpError(404, `No backlog item ${id}`);
+		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} removed ${removed.join(", ")} from the backlog` });
+	}
+
+	async #tellLead(projectId: string, text: string) {
+		const state = await this.state(projectId);
+		if (state.agents.lead && !state.agents.lead.removed) await this.deliver(projectId, "lead", { from: "pi-os", fromKey: "pi-os", text, kind: "message" });
 	}
 
 	// ------------------------------------------------------------------ lifecycle
@@ -147,7 +242,7 @@ export class ProjectManager {
 		const meta = await this.meta(projectId);
 		const repo = this.repo(projectId);
 		const def = roleDef(o.role);
-		const title = o.title ?? def?.title ?? o.role.replace(/(^|-)(\w)/g, (_m, s, c) => `${s ? " " : ""}${c.toUpperCase()}`);
+		const title = o.title ?? titleFor(o.role);
 		const state = await this.state(projectId);
 		const base = keyBase(o.role, o.role === "worker" ? undefined : o.name);
 		let key = o.role === "worker" ? `${base}-1` : base;
@@ -401,9 +496,134 @@ export class ProjectManager {
 					return text(`Stage is now ${args.stage}.`);
 				},
 			}),
+			...this.#backlogTools(),
+		];
+	}
+
+	#backlogTools() {
+		const ItemInput = Type.Object({
+			ref: Type.Optional(Type.String({ description: "your local name for this item, so later items in the same call can use it as parent or dependency" })),
+			type: Type.Union([Type.Literal("feature"), Type.Literal("pbi"), Type.Literal("task")]),
+			parent: Type.Optional(Type.String({ description: "PBIs: their feature; tasks: their PBI. An id (F1, P2) or a ref from this call" })),
+			title: Type.String(),
+			description: Type.Optional(Type.String({ description: "markdown" })),
+			acceptance: Type.Optional(Type.Array(Type.String(), { description: "PBIs: acceptance criteria, one per entry" })),
+			deps: Type.Optional(Type.Array(Type.String(), { description: "items (ids or refs) that must be done first" })),
+			area: Type.Optional(Type.String({ description: "tasks: the part of app/ they touch, e.g. app/src/api" })),
+			estimate: Type.Optional(Type.Union([Type.Literal("S"), Type.Literal("M"), Type.Literal("L")])),
+		});
+		return [
+			defineTool({
+				name: "backlog_add",
+				description:
+					"Add backlog items: features → PBIs (with acceptance criteria) → tasks (one developer, one sitting; with dependencies and area). Add many in one call; use `ref` to link items created in the same call. Returns their ids.",
+				parameters: Type.Object({ items: Type.Array(ItemInput, { minItems: 1, maxItems: 200 }) }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					const created = await this.editBacklog(projectId, (b) => addItems(b, args.items as ItemInput[], me.key));
+					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} added ${created.length} backlog item${created.length === 1 ? "" : "s"}` });
+					return text(created.map((c) => `${c.id} ${c.title}${c.parent ? ` (under ${c.parent})` : ""}`).join("\n"));
+				},
+			}),
+			defineTool({
+				name: "backlog_update",
+				description: "Change a backlog item: its status (todo, doing, review, done, blocked), assignee (agent key), title, description, acceptance criteria, dependencies, area, estimate or parent. Keep the status of your own tasks current.",
+				parameters: Type.Object({
+					id: Type.String(),
+					status: Type.Optional(Type.Union(STATUSES.map((s) => Type.Literal(s)))),
+					assignee: Type.Optional(Type.String({ description: "agent key, or empty to unassign" })),
+					title: Type.Optional(Type.String()),
+					description: Type.Optional(Type.String()),
+					acceptance: Type.Optional(Type.Array(Type.String())),
+					deps: Type.Optional(Type.Array(Type.String())),
+					area: Type.Optional(Type.String()),
+					estimate: Type.Optional(Type.Union([Type.Literal("S"), Type.Literal("M"), Type.Literal("L")])),
+					parent: Type.Optional(Type.String()),
+				}),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					const moved = await this.editBacklog(projectId, (b) => {
+						const item = b.items[args.id];
+						if (!item) throw new Error(`No backlog item ${args.id}. Use backlog_list.`);
+						const was = item.status;
+						if (args.parent !== undefined) {
+							if (b.items[args.parent]?.type !== PARENT_TYPE[item.type]) throw new Error(`A ${item.type}'s parent must be an existing ${PARENT_TYPE[item.type] ?? "(none)"}`);
+							item.parent = args.parent;
+						}
+						if (args.deps) {
+							const missing = args.deps.filter((d) => !b.items[d]);
+							if (missing.length) throw new Error(`Unknown dependencies: ${missing.join(", ")}`);
+							item.deps = args.deps.filter((d) => d !== item.id);
+						}
+						if (args.assignee !== undefined) {
+							if (args.assignee) item.assignee = args.assignee;
+							else delete item.assignee;
+						}
+						for (const k of ["status", "title", "description", "acceptance", "area", "estimate"] as const) if (args[k] !== undefined) (item as any)[k] = args[k];
+						item.updatedAt = Date.now();
+						return was !== item.status ? `${item.id} “${clip(item.title, 60)}” → ${STATUS_LABEL[item.status]}` : undefined;
+					});
+					if (moved) await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} moved ${moved}` });
+					return text(`Updated ${args.id}.`);
+				},
+			}),
+			defineTool({
+				name: "backlog_remove",
+				description: "Remove a backlog item and everything under it (a feature's PBIs and their tasks).",
+				parameters: Type.Object({ id: Type.String() }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					const removed = await this.editBacklog(projectId, (b) => removeWithChildren(b, args.id));
+					if (!removed.length) throw new Error(`No backlog item ${args.id}.`);
+					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} removed ${removed.join(", ")} from the backlog` });
+					return text(`Removed ${removed.join(", ")}.`);
+				},
+			}),
+			defineTool({
+				name: "backlog_list",
+				description: "The backlog as an outline: features, PBIs with acceptance criteria, tasks with status, assignee, estimate, dependencies and area; plus the approval state.",
+				parameters: Type.Object({}),
+				execute: async (_args, api) => {
+					const { projectId } = await this.#caller(api);
+					return text(backlogOutline(await this.backlog(projectId)));
+				},
+			}),
+			defineTool({
+				name: "backlog_request_approval",
+				description:
+					"Lead or planner: submit the backlog for the user's approval. They review it as a board in the Backlog tab and approve or request changes; you'll get their decision as a message. Don't start the build before approval, and don't also ask with ask_user.",
+				parameters: Type.Object({ summary: Type.String({ description: "a few lines: scope, how many features/PBIs/tasks, how the work splits across developers, open points" }) }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					if (!["lead", "planner"].includes(me.role)) throw new Error("Only the lead or the planner requests backlog approval.");
+					const n = await this.editBacklog(projectId, (b) => {
+						const tasks = Object.values(b.items).filter((i) => i.type === "task").length;
+						if (!tasks) throw new Error("The backlog has no tasks yet. Add them with backlog_add first.");
+						b.approval = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now() };
+						return tasks;
+					});
+					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the backlog (${n} tasks) — see the Backlog tab` });
+					return { ...text("Submitted. The user reviews it in the Backlog tab; their decision arrives as a message. End your turn now."), control: { terminate: true } };
+				},
+			}),
 		];
 	}
 }
+
+/** Remove an item, everything under it, and dependencies on any of them. Returns the removed ids. */
+function removeWithChildren(b: Backlog, id: string): string[] {
+	if (!b.items[id]) return [];
+	const gone = new Set([id]);
+	for (let grew = true; grew; ) {
+		grew = false;
+		for (const i of Object.values(b.items)) if (i.parent && gone.has(i.parent) && !gone.has(i.id)) (gone.add(i.id), (grew = true));
+	}
+	for (const g of gone) delete b.items[g];
+	for (const i of Object.values(b.items)) i.deps = i.deps.filter((d) => !gone.has(d));
+	return [...gone];
+}
+
+const titleFor = (role: string) => roleDef(role)?.title ?? role.replace(/(^|-)(\w)/g, (_m, s, c) => `${s ? " " : ""}${c.toUpperCase()}`);
 
 function pushActivity(st: ProjectState, a: Activity) {
 	st.activity.push(a);

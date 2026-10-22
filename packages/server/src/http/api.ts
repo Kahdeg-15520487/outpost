@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { config } from "../config.ts";
 import { describeGatekeeper, GATEKEEPERS } from "../gatekeepers/catalog.ts";
 import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
-import { credentials, listModels, listProviders, models } from "../kernel/models.ts";
+import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
 import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { hub } from "../collab/hub.ts";
@@ -56,8 +56,11 @@ export function createApi(): Router {
 
 	// ------------------------------------------------------------ models & providers
 	r.get("/api/models", async (req) => {
-		req.need();
-		return { models: await listModels() };
+		const user = req.need();
+		const ws = req.query.get("ws");
+		const settings = ws && workspaces.role(ws, user.id) ? workspaces.get(ws)?.settings : undefined;
+		// What a new chat would get, so the picker can show it before the chat exists.
+		return { models: await listModels(), default: await defaultModel(settings?.defaultModel) };
 	});
 	r.get("/api/providers", async (req) => {
 		req.need();

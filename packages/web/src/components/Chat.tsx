@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ChatMeta, type ModelInfo, type Workspace, type WorkspaceDocs } from "../api";
+import { api, type ChatMeta, type ModelInfo, type ModelRef, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
@@ -18,6 +18,7 @@ export function ChatView(props: {
 	chatId?: string;
 	chats: Record<string, ChatMeta>;
 	models: ModelInfo[];
+	defaultModel?: ModelRef;
 	grants: WorkspaceDocs["grants"];
 	openGadget?: string;
 	onNewChat: () => void;
@@ -26,6 +27,8 @@ export function ChatView(props: {
 	const state = useChat(ws.id, chatId);
 	const meta = chatId ? props.chats[chatId] : undefined;
 	const [resources, setResources] = useState(false);
+	/** Model picked before the chat exists; the chat is created with it on first send. */
+	const [pendingModel, setPendingModel] = useState<ModelRef>();
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const canEdit = ws.role !== "viewer";
@@ -47,7 +50,7 @@ export function ChatView(props: {
 	const send = async (content: string, mode?: "steer") => {
 		let id = chatId;
 		if (!id) {
-			id = (await api.post(`/api/w/${ws.id}/chats`, {})).id as string;
+			id = (await api.post(`/api/w/${ws.id}/chats`, { model: pendingModel })).id as string;
 			navigate(chatHref(ws.id, id, props.openGadget));
 		}
 		stick.current = true;
@@ -56,7 +59,8 @@ export function ChatView(props: {
 
 	const chatGrants = Object.values(props.grants.grants).filter((g) => g.holder.kind === "conversation" && g.holder.id === chatId);
 	const empty = !chatId || (state.ready && state.entries.filter((e) => e.kind === "os.user" || e.kind === "pi.user").length === 0);
-	const model = state.agent?.model as { provider: string; modelId: string } | undefined;
+	const model: ModelRef | undefined = chatId ? state.agent?.model : (pendingModel ?? props.defaultModel);
+	const chooseModel = (m: ModelRef) => (chatId ? api.patch(`/api/w/${ws.id}/chats/${chatId}`, { model: m }) : setPendingModel(m));
 
 	return (
 		<div className="main">
@@ -117,7 +121,7 @@ export function ChatView(props: {
 					)}
 				</div>
 			</div>
-			{canEdit && <Composer ws={ws} chatId={chatId} state={state} models={props.models} model={model} onSend={send} />}
+			{canEdit && <Composer chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} />}
 			{resources && chatId && <ResourcesDialog ws={ws} holder={{ kind: "conversation", id: chatId }} grants={props.grants} onClose={() => setResources(false)} />}
 		</div>
 	);
@@ -300,7 +304,7 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ ws, chatId, state, models, model, onSend }: { ws: Workspace; chatId?: string; state: ChatState; models: ModelInfo[]; model?: { provider: string; modelId: string }; onSend: (text: string, mode?: "steer") => Promise<void> }) {
+function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void> }) {
 	const [text, setText] = useState("");
 	const [error, setError] = useState("");
 	const ref = useRef<HTMLTextAreaElement>(null);
@@ -357,14 +361,13 @@ function Composer({ ws, chatId, state, models, model, onSend }: { ws: Workspace;
 				<div className="bar">
 					<select
 						value={value}
-						disabled={!chatId}
-						title={chatId ? "Model for this chat" : "Start a chat to choose its model"}
+						title={chatId ? "Model for this chat" : "Model for the new chat"}
 						onChange={(e) => {
 							const [provider, ...rest] = e.target.value.split("/");
-							api.patch(`/api/w/${ws.id}/chats/${chatId}`, { model: { provider, modelId: rest.join("/") } });
+							if (provider && rest.length) onModel({ provider, modelId: rest.join("/") });
 						}}
 					>
-						{!value && <option value="">default model</option>}
+						{!value && <option value="">{models.length ? "choose a model" : "loading models…"}</option>}
 						{value && !models.some((m) => `${m.provider}/${m.id}` === value) && <option value={value}>{value}</option>}
 						{[...byProvider].map(([p, list]) => (
 							<optgroup key={p} label={p}>
@@ -382,7 +385,7 @@ function Composer({ ws, chatId, state, models, model, onSend }: { ws: Workspace;
 							<button className="btn small" onClick={() => submit("steer")} disabled={!text.trim()} title="Inject now, after the current tool round (Ctrl+Enter)">
 								Steer
 							</button>
-							<button className="btn small" onClick={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} title="Stop the agent">
+							<button className="btn small" onClick={onAbort} title="Stop the agent">
 								■ Stop
 							</button>
 						</>

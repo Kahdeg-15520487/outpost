@@ -155,7 +155,7 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 											) : p.editable ? (
 												<>
 													{p.stored && (
-														<button className="btn ghost small" onClick={() => api.post(`/api/providers/${p.id}/key`, { key: "" }).then(() => (loadProviders(), loadModels()))}>
+														<button className="btn ghost small" onClick={() => api.post(`/api/providers/${p.id}/key`, { key: "" }).then(() => (loadProviders(), loadModels(), onChanged()))}>
 															Remove
 														</button>
 													)}
@@ -179,6 +179,7 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 															setKeyFor(undefined);
 															loadProviders();
 															loadModels();
+															onChanged();
 														} catch (err: any) {
 															setKeyErr(err.message);
 														}

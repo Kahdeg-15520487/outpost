@@ -101,3 +101,33 @@
 .ip-link span { font: 13px var(--sans); color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ip-link:hover { background: var(--paper-2); }
 .ip-meta { font-size: 10.5px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- build bar (after approval) */
+.bl-build { margin: 14px 16px 0; padding: 10px 14px 0; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 13px; overflow: hidden; }
+.bb-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-bottom: 10px; }
+.bb-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+.bb-state i { width: 8px; height: 8px; border-radius: 50%; background: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .15); animation: bb-pulse 1.6s ease-in-out infinite; }
+.bl-build.paused .bb-state i { background: #b45309; box-shadow: 0 0 0 3px rgba(180, 83, 9, .15); animation: none; }
+.bl-build.done { border-color: #bfe0c8; background: var(--ok-wash); }
+.bl-build.done .bb-state { color: #1d5a33; }
+.bl-build.done .bb-state i { background: #16a34a; box-shadow: none; animation: none; }
+.bb-counts { font-size: 11.5px; color: var(--muted); }
+.bb-blocked { color: #b91c1c; }
+.bb-approved { font-size: 12px; color: #1d5a33; }
+.bb-bar { display: flex; height: 4px; margin: 0 -14px; background: var(--paper-2); }
+.bb-bar span { transition: width .5s ease; }
+.bb-done { background: #16a34a; }
+.bb-review { background: #a855f7; }
+.bb-doing { background: #2563eb; opacity: .7; }
+@keyframes bb-pulse { 50% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); } }
+.kc-who.review { background: #f3e8ff; color: #7e22ce; }
+.kc-who.waiting { background: var(--paper-2); color: var(--muted); }
+.ip-work { display: grid; gap: 6px; font-size: 13px; }
+.ip-work .mono { font-size: 11px; }
+.ip-work-summary { margin-top: 3px; white-space: pre-wrap; }
+.ip-files { font-size: 10.5px; color: var(--muted); word-break: break-all; }
+.ip-merged { color: #15803d; }
+.ip-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12.5px; }
+.ip-history li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
+.ip-history li .mono { font-size: 10.5px; padding-top: 2px; }
+.ip-history b { font-weight: 600; }

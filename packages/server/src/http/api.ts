@@ -273,6 +273,37 @@ export function createApi(): Router {
 		await ws.projects.stopAll(req.params.p!);
 		return { ok: true };
 	});
+	// Build (milestone 4): pause/resume assignments.
+	r.post("/api/w/:ws/projects/:p/build", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { paused } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.build.setPaused(req.params.p!, !!paused, user.displayName);
+		return { ok: true };
+	});
+	// Live preview (milestone 5).
+	r.get("/api/w/:ws/projects/:p/preview", async (req) => {
+		const { ws } = await member(req, "viewer");
+		await ws.projects.meta(req.params.p!);
+		return { preview: ws.projects.previews.info(req.params.p!) };
+	});
+	r.post("/api/w/:ws/projects/:p/preview/start", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		await ws.projects.meta(req.params.p!);
+		void ws.projects.previews.start(req.params.p!, `started by ${user.displayName}`).catch(() => {});
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/preview/stop", async (req) => {
+		const { ws } = await member(req, "editor");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.previews.stop(req.params.p!, true);
+		return { ok: true };
+	});
+	r.get("/api/w/:ws/projects/:p/preview/logs", async (req) => {
+		const { ws } = await member(req, "viewer");
+		await ws.projects.meta(req.params.p!);
+		return ws.projects.previews.logs(req.params.p!, Number(req.query.get("since") ?? 0) || 0);
+	});
 	// Backlog: the user's side of the approval gate, and edits from the board.
 	r.post("/api/w/:ws/projects/:p/backlog/approve", async (req) => {
 		const { user, ws } = await member(req, "editor");

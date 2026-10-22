@@ -156,13 +156,7 @@ function ApprovalBar({ base, backlog, canEdit }: { base: string; backlog: Backlo
 			setBusy(false);
 		}
 	};
-	if (a.status === "approved")
-		return (
-			<div className="bl-approval ok">
-				<b>✓ Approved</b> by {a.decidedBy} {a.decidedAt ? timeAgo(a.decidedAt) : ""}
-				{a.revision !== undefined && backlog.revision > a.revision + 0 && <span className="muted"> · changed since approval (revision {a.revision} → {backlog.revision})</span>}
-			</div>
-		);
+	if (a.status === "approved") return <BuildBar base={base} backlog={backlog} canEdit={canEdit} />;
 	if (a.status === "changes")
 		return (
 			<div className="bl-approval changes">
@@ -212,6 +206,61 @@ function ApprovalBar({ base, backlog, canEdit }: { base: string; backlog: Backlo
 	);
 }
 
+/** After approval: the build's progress and its pause switch (pi-os's scheduler runs it). */
+function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; canEdit: boolean }) {
+	const [busy, setBusy] = useState(false);
+	const a = backlog.approval;
+	const b = backlog.build ?? {};
+	const tasks = Object.values(backlog.items).filter((i) => i.type === "task");
+	const n = (s: ItemStatus) => tasks.filter((t) => t.status === s).length;
+	const done = n("done");
+	const state = b.finishedAt ? "done" : b.paused ? "paused" : "running";
+	const toggle = async () => {
+		setBusy(true);
+		try {
+			await api.post(base.replace(/\/backlog$/, "/build"), { paused: !b.paused });
+		} catch (e: any) {
+			alert(e.message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className={`bl-build ${state}`}>
+			<div className="bb-main">
+				<span className="bb-state">
+					<i />
+					{state === "done" ? "Build complete" : state === "paused" ? "Build paused" : "Building"}
+				</span>
+				<span className="bb-counts mono">
+					{state === "done" ? (
+						`all ${tasks.length} tasks merged`
+					) : (
+						<>
+							{n("doing")} in progress · {n("review")} in review
+							{n("blocked") > 0 && <b className="bb-blocked"> · {n("blocked")} blocked</b>} · {done}/{tasks.length} merged
+						</>
+					)}
+				</span>
+				<span className="grow" />
+				<span className="bb-approved">
+					✓ approved by {a.decidedBy} {a.decidedAt ? timeAgo(a.decidedAt) : ""}
+				</span>
+				{canEdit && state !== "done" && (
+					<button className="btn small" disabled={busy} onClick={toggle} title={b.paused ? "Hand out tasks again" : "Stop handing out new tasks; work in progress continues"}>
+						{b.paused ? "Resume build" : "Pause build"}
+					</button>
+				)}
+			</div>
+			<div className="bb-bar" aria-hidden>
+				<span className="bb-done" style={{ width: `${tasks.length ? (done / tasks.length) * 100 : 0}%` }} />
+				<span className="bb-review" style={{ width: `${tasks.length ? (n("review") / tasks.length) * 100 : 0}%` }} />
+				<span className="bb-doing" style={{ width: `${tasks.length ? (n("doing") / tasks.length) * 100 : 0}%` }} />
+			</div>
+		</div>
+	);
+}
+
 function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEdit: boolean; onOpen: () => void }) {
 	const f = ctx.featureOf(t);
 	const p = ctx.pbiOf(t);
@@ -241,7 +290,8 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 					</span>
 				)}
 				{t.area && <span className="kc-area mono" title={t.area}>{t.area}</span>}
-				{t.assignee && <span className="kc-who mono">@{t.assignee}</span>}
+				{t.status === "review" && t.reviewer ? <span className="kc-who review mono" title={`${t.reviewer} is reviewing it`}>⌕ @{t.reviewer}</span> : t.assignee && <span className="kc-who mono">@{t.assignee}</span>}
+				{t.status === "review" && !t.reviewer && <span className="kc-who waiting mono">waiting for review</span>}
 			</div>
 		</button>
 	);
@@ -437,6 +487,37 @@ function ItemPanel({ item, ctx, agents, canEdit, onPatch, onDelete, onOpen, onCl
 						{kids.map((k) => link(k.id))}
 					</div>
 				)}
+				{item.type === "task" && (item.submitted || item.merged) && (
+					<div className="ip-section">
+						<div className="label">Work</div>
+						<div className="ip-work">
+							{item.submitted && (
+								<div>
+									<span className="mono muted">submitted {item.submitted.commit.slice(0, 8)} by @{item.submitted.by} · {timeAgo(item.submitted.at)}</span>
+									<div className="ip-work-summary">{item.submitted.summary}</div>
+									{item.submitted.files.length > 0 && <div className="ip-files mono">{item.submitted.files.join(" · ")}</div>}
+								</div>
+							)}
+							{item.reviewer && item.status === "review" && <div className="mono">under review by @{item.reviewer} (round {item.reviewRound ?? 1})</div>}
+							{item.merged && <div className="mono ip-merged">✓ merged into main as {item.merged}</div>}
+						</div>
+					</div>
+				)}
+				{item.history?.length ? (
+					<div className="ip-section">
+						<div className="label">History</div>
+						<ol className="ip-history">
+							{[...item.history].reverse().map((h, i) => (
+								<li key={i}>
+									<span className="mono muted">{timeAgo(h.at)}</span>
+									<span>
+										<b>{h.by}</b> {h.text}
+									</span>
+								</li>
+							))}
+						</ol>
+					</div>
+				) : null}
 				<div className="ip-meta mono">
 					created by @{item.createdBy} · updated {timeAgo(item.updatedAt)}
 				</div>

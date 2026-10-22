@@ -80,6 +80,14 @@ export function describeTool(name: string, args: any): string {
 			return "reading the backlog";
 		case "backlog_request_approval":
 			return "asking you to approve the backlog";
+		case "task_done":
+			return "handing in the task";
+		case "task_blocked":
+			return "reporting a blocker";
+		case "review_verdict":
+			return `${a.verdict === "approve" ? "approving" : "sending back"} ${a.task ?? "a task"}`;
+		case "preview":
+			return a.action === "restart" ? "restarting the preview" : "checking the preview";
 		default:
 			return name.replace(/_/g, " ");
 	}

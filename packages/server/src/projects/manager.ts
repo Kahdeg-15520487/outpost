@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
 import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
+import { BuildScheduler } from "./build.ts";
+import { PreviewManager } from "./preview.ts";
 
 type ModelRef = { provider: string; modelId: string };
 /** A user file handed to the team: its absolute path in the attachments folder, plus what the transcript's file chips need. */
@@ -53,8 +55,14 @@ export class ProjectManager {
 	readonly #watchers = new Map<string, AgentWatcher>();
 	readonly summaries = new Map<string, Record<string, AgentSummary>>();
 	readonly #docWatches = new Map<string, Promise<unknown>>();
+	/** Milestone 4: assigns tasks, routes reviews, merges. */
+	readonly build: BuildScheduler;
+	/** Milestone 5: runs the app from main for the App tab. */
+	readonly previews: PreviewManager;
 
 	constructor(readonly ws: Workspace) {
+		this.build = new BuildScheduler(this);
+		this.previews = new PreviewManager(this);
 		this.coding = createCodingTools();
 		const tools = this.#tools();
 		this.#leadOnly = tools.filter((t) => ["team_add", "set_stage"].includes(t.name));
@@ -85,6 +93,8 @@ export class ProjectManager {
 				const instructions = agentInstructions({ role: a.role, title: titleFor(a.role), key: a.key, name: a.name, project: p, brief: a.brief, attachmentsDir: this.repo(p.id).attachmentsDir });
 				await c?.configure({ instructions }, ctx).catch((e) => console.warn(`[project ${p.id}] refresh ${a.key}:`, e?.message ?? e));
 			}
+			// Resume the build: re-send briefs that never went out, assign what's ready.
+			this.build.kick(p.id, 3000);
 		}
 	}
 
@@ -107,7 +117,7 @@ export class ProjectManager {
 
 	async snapshot(projectId: string) {
 		const [meta, state, backlog] = await Promise.all([this.meta(projectId), this.state(projectId), this.backlog(projectId)]);
-		return { project: meta, state, backlog, summaries: this.summaries.get(projectId) ?? {}, head: await this.repo(projectId).head().catch(() => "") };
+		return { project: meta, state, backlog, summaries: this.summaries.get(projectId) ?? {}, head: await this.repo(projectId).head().catch(() => ""), preview: this.previews.info(projectId) };
 	}
 
 	async backlog(projectId: string): Promise<Backlog> {
@@ -143,12 +153,14 @@ export class ProjectManager {
 			result = fn(b);
 			b.revision += 1;
 		}, ctx);
-		this.#scheduleSnapshot(projectId);
+		this.snapshotSoon(projectId);
+		this.build.kick(projectId);
 		return result;
 	}
 
 	readonly #snapshotTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	#scheduleSnapshot(projectId: string) {
+	/** Rewrite docs/backlog.md on main a few seconds after the last backlog change. */
+	snapshotSoon(projectId: string) {
 		clearTimeout(this.#snapshotTimers.get(projectId));
 		this.#snapshotTimers.set(
 			projectId,
@@ -172,8 +184,8 @@ export class ProjectManager {
 			b.approval = Object.fromEntries(Object.entries({ ...b.approval, status: "approved", decidedBy: user.displayName, decidedAt: Date.now(), comment: comment || undefined, revision: b.revision + 1 }).filter(([, v]) => v !== undefined)) as Backlog["approval"];
 			return b.revision + 1;
 		});
-		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} approved the backlog${comment ? `: ${clip(comment, 140)}` : ""}` });
-		await this.#tellLead(projectId, `The user (${user.displayName}) **approved the backlog** (revision ${rev}).${comment ? `\n\nTheir note: ${comment}` : ""}\n\nYou can start the build: assign ready tasks (dependencies done) to developers, and keep task status current with backlog_update.`);
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} approved the backlog${comment ? `: ${clip(comment, 140)}` : ""}` });
+		await this.tellLead(projectId, `The user (${user.displayName}) **approved the backlog** (revision ${rev}).${comment ? `\n\nTheir note: ${comment}` : ""}\n\nThe build starts now: pi-os assigns ready tasks to the developers (role \`worker\`), routes finished work to the reviewer and merges what passes. Make sure the team has the developers (and a reviewer) the backlog needs (team_add with start: false; they get tasks automatically). You handle blocked tasks and questions.`);
 	}
 
 	/** The user sends the backlog back with a comment; the Lead gets it to the planner. */
@@ -181,8 +193,8 @@ export class ProjectManager {
 		await this.editBacklog(projectId, (b) => {
 			b.approval = { ...b.approval, status: "changes", decidedBy: user.displayName, decidedAt: Date.now(), comment };
 		});
-		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for backlog changes: ${clip(comment, 160)}` });
-		await this.#tellLead(projectId, `The user (${user.displayName}) **requested changes to the backlog**:\n\n${comment}\n\nHave the backlog revised with the backlog tools, then request approval again with backlog_request_approval.`);
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for backlog changes: ${clip(comment, 160)}` });
+		await this.tellLead(projectId, `The user (${user.displayName}) **requested changes to the backlog**:\n\n${comment}\n\nHave the backlog revised with the backlog tools, then request approval again with backlog_request_approval.`);
 	}
 
 	/** The user edits an item on the board (status, title, description, assignee...). */
@@ -196,16 +208,16 @@ export class ProjectManager {
 			if (patch.assignee === "") delete item.assignee;
 			return old;
 		});
-		if (patch.status && patch.status !== before.status) await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} moved ${id} “${clip(before.title, 60)}” to ${STATUS_LABEL[patch.status]}` });
+		if (patch.status && patch.status !== before.status) await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} moved ${id} “${clip(before.title, 60)}” to ${STATUS_LABEL[patch.status]}` });
 	}
 
 	async removeItem(projectId: string, id: string, user: User) {
 		const removed = await this.editBacklog(projectId, (b) => removeWithChildren(b, id));
 		if (!removed.length) throw new HttpError(404, `No backlog item ${id}`);
-		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} removed ${removed.join(", ")} from the backlog` });
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} removed ${removed.join(", ")} from the backlog` });
 	}
 
-	async #tellLead(projectId: string, text: string) {
+	async tellLead(projectId: string, text: string) {
 		const state = await this.state(projectId);
 		if (state.agents.lead && !state.agents.lead.removed) await this.deliver(projectId, "lead", { from: "pi-os", fromKey: "pi-os", text, kind: "message" });
 	}
@@ -275,6 +287,7 @@ export class ProjectManager {
 		);
 		record.conversationId = String(conversation.id);
 		this.#follow(projectId, record);
+		this.build.kick(projectId);
 		if (o.start !== false) await this.deliver(projectId, key, o.role === "lead" ? { from: "pi-os", fromKey: "pi-os", text: o.brief, kind: "brief", files: o.files } : { from: "Lead", fromKey: "lead", text: o.brief, kind: "brief" });
 		return record;
 	}
@@ -340,7 +353,7 @@ export class ProjectManager {
 				await c?.abort(ctx).catch(() => {});
 			}),
 		);
-		await this.#log(projectId, { at: Date.now(), kind: "user", text: "All agents stopped" });
+		await this.log(projectId, { at: Date.now(), kind: "user", text: "All agents stopped" });
 	}
 
 	/**
@@ -369,7 +382,7 @@ export class ProjectManager {
 		const a = (await this.state(projectId)).agents[key];
 		if (!a || a.removed) throw new HttpError(404, `No agent ${key}`);
 		await this.#setAgentModel(projectId, a, model);
-		await this.#log(projectId, { at: Date.now(), agent: key, kind: "user", text: `${user.displayName} switched ${a.name} to ${model.provider}/${model.modelId}` });
+		await this.log(projectId, { at: Date.now(), agent: key, kind: "user", text: `${user.displayName} switched ${a.name} to ${model.provider}/${model.modelId}` });
 	}
 
 	async #setAgentModel(projectId: string, a: AgentRecord, model: ModelRef) {
@@ -383,6 +396,7 @@ export class ProjectManager {
 
 	async archive(projectId: string) {
 		await this.stopAll(projectId);
+		await this.previews.stop(projectId);
 		await this.ws.harness.commit(async (tx) => {
 			const all = await tx.doc(ProjectsDoc);
 			if (all.projects[projectId]) all.projects[projectId]!.archived = true;
@@ -402,7 +416,9 @@ export class ProjectManager {
 		if (this.#watchers.has(a.conversationId)) return;
 		const w = new AgentWatcher(this.ws.harness, a.conversationId, (summary) => {
 			const all = this.summaries.get(projectId) ?? {};
+			const wasBusy = all[a.key]?.busy;
 			all[a.key] = summary;
+			if (wasBusy && !summary.busy) setTimeout(() => void this.build.agentIdle(projectId, a.key).catch((e) => console.warn(`[build ${projectId}] idle ${a.key}:`, e?.message ?? e)), 800);
 			this.summaries.set(projectId, all);
 			hub.publish(this.channel(projectId), { t: "project.agent", ws: this.ws.id, project: projectId, key: a.key, summary });
 		});
@@ -414,7 +430,23 @@ export class ProjectManager {
 		hub.publish(this.ws.channel, { t: "ws.projects", ws: this.ws.id });
 	}
 
-	async #log(projectId: string, entry: Activity) {
+	/** Main moved (a merge or publish): the preview restarts if the app changed. */
+	mainChanged(projectId: string, files: string[]) {
+		this.previews.mainChanged(projectId, files);
+	}
+
+	async setStage(projectId: string, stage: ProjectStage, note?: string, agent?: string) {
+		await this.ws.harness.commit(async (tx) => {
+			const all = await tx.doc(ProjectsDoc);
+			if (all.projects[projectId]) all.projects[projectId]!.stage = stage;
+			pushActivity((await tx.doc(ProjectDoc, projectId, null)) as ProjectState, { at: Date.now(), ...(agent ? { agent } : {}), kind: "stage", text: `Stage: ${stage}${note ? ` — ${note}` : ""}` });
+		}, ctx);
+		this.#publishList();
+		hub.publish(this.channel(projectId), { t: "project.meta", ws: this.ws.id, project: projectId });
+	}
+
+	async log(projectId: string, entry: Activity) {
+		if (entry.agent === undefined) delete entry.agent;
 		await this.ws.harness.commit(async (tx) => pushActivity((await tx.doc(ProjectDoc, projectId, null)) as ProjectState, entry), ctx);
 	}
 
@@ -452,7 +484,7 @@ export class ProjectManager {
 					const { projectId, me } = await this.#caller(api);
 					if (args.to === me.key) throw new Error("That's you.");
 					await this.deliver(projectId, args.to, { from: me.name, fromKey: me.key, text: args.text, kind: "message" }, `msg:${api.taskId}`);
-					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "message", text: `${me.name} → ${args.to}: ${clip(args.text, 140)}` });
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "message", text: `${me.name} → ${args.to}: ${clip(args.text, 140)}` });
 					return text(`Delivered to ${args.to}.`);
 				},
 			}),
@@ -480,11 +512,16 @@ export class ProjectManager {
 				execute: async (args, api) => {
 					const { projectId, me } = await this.#caller(api);
 					if (me.role === "lead") throw new Error("The lead works in main directly and doesn't publish; ask a teammate to make changes.");
+					const held = await this.build.heldBy(projectId, me.key);
+					if (held.working) throw new Error(`You're working on ${held.working.id}: call task_done when it's complete. pi-os reviews and merges task work; don't publish it.`);
+					if (await this.repo(projectId).isDetached(me.key))
+						throw new Error(held.reviewing.length ? `Your worktree holds ${held.reviewing.map((t) => t.id).join(", ")} for review; you can't publish from it. Call review_verdict.` : `Your worktree is detached from your branch; run \`git checkout agent/${me.key}\` first.`);
 					const r = await this.repo(projectId).publish(me.key, args.message);
 					if (r.conflict) return text(r.conflict);
 					if (!r.merged) return text("Nothing new to publish: your branch has no changes that main doesn't already have.");
-					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "publish", text: `${me.name} published “${clip(args.message, 100)}” (${r.files.length} file${r.files.length === 1 ? "" : "s"})` });
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "publish", text: `${me.name} published “${clip(args.message, 100)}” (${r.files.length} file${r.files.length === 1 ? "" : "s"})` });
 					hub.publish(this.channel(projectId), { t: "project.repo", ws: this.ws.id, project: projectId, head: r.commit, files: r.files });
+					this.mainChanged(projectId, r.files);
 					return text(`Merged into main as ${r.commit}: ${r.files.join(", ")}`);
 				},
 			}),
@@ -525,17 +562,63 @@ export class ProjectManager {
 					const { projectId, me } = await this.#caller(api);
 					if (me.role !== "lead") throw new Error("Only the lead sets the stage.");
 					if (!STAGES.includes(args.stage as ProjectStage)) throw new Error(`Unknown stage. Use one of: ${STAGES.join(", ")}`);
-					await this.ws.harness.commit(async (tx) => {
-						const all = await tx.doc(ProjectsDoc);
-						if (all.projects[projectId]) all.projects[projectId]!.stage = args.stage as ProjectStage;
-						pushActivity((await tx.doc(ProjectDoc, projectId, null)) as ProjectState, { at: Date.now(), agent: me.key, kind: "stage", text: `Stage: ${args.stage}${args.note ? ` — ${args.note}` : ""}` });
-					}, ctx);
-					this.#publishList();
-					hub.publish(this.channel(projectId), { t: "project.meta", ws: this.ws.id, project: projectId });
+					await this.setStage(projectId, args.stage as ProjectStage, args.note, me.key);
 					return text(`Stage is now ${args.stage}.`);
 				},
 			}),
 			...this.#backlogTools(),
+			...this.#buildTools(),
+		];
+	}
+
+	#buildTools() {
+		return [
+			defineTool({
+				name: "task_done",
+				description: "Developers: hand in the task you're working on. pi-os commits your branch (with the latest main merged in), has it reviewed, and merges it into main. End your turn after it.",
+				parameters: Type.Object({
+					summary: Type.String({ description: "what you did and how you tested it, in a few lines" }),
+					no_changes: Type.Optional(Type.Boolean({ description: "true only if the task needed no code change (say why in the summary)" })),
+				}),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					const out = await this.build.taskDone(projectId, me, args.summary, !!args.no_changes);
+					return out.startsWith("Submitted") ? { ...text(out), control: { terminate: true } } : text(out);
+				},
+			}),
+			defineTool({
+				name: "task_blocked",
+				description: "Developers: you can't finish your task (missing decision, broken dependency, unclear requirement). The task is marked blocked and the lead gets your reason. End your turn after it.",
+				parameters: Type.Object({ reason: Type.String({ description: "what's in the way and what you need" }) }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					return { ...text(await this.build.taskBlocked(projectId, me, args.reason)), control: { terminate: true } };
+				},
+			}),
+			defineTool({
+				name: "review_verdict",
+				description: "Reviewers: your verdict on a task pi-os gave you to review. approve: pi-os merges it into main; changes: it goes back to the developer with your notes. End your turn after it.",
+				parameters: Type.Object({
+					task: Type.String({ description: "task id, e.g. T4" }),
+					verdict: Type.Union([Type.Literal("approve"), Type.Literal("changes")]),
+					notes: Type.String({ description: "changes: concrete, actionable findings; approve: optional remarks" }),
+				}),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					return { ...text(await this.build.verdict(projectId, me, args.task, args.verdict, args.notes)), control: { terminate: true } };
+				},
+			}),
+			defineTool({
+				name: "preview",
+				description: "The live preview: pi-os runs the app from main (per .pios/project.json) and shows it in the App tab. Get its status and recent logs, or restart it after fixing the run config.",
+				parameters: Type.Object({ action: Type.Optional(Type.Union([Type.Literal("status"), Type.Literal("restart")])) }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					const info = args.action === "restart" ? await this.previews.start(projectId, `restart by ${me.name}`) : this.previews.info(projectId);
+					const where = info.port ? ` at http://${info.host ?? "127.0.0.1"}:${info.port}` : "";
+					return text(`Preview: ${info.status}${where}${info.head ? ` (main @ ${info.head})` : ""}${info.error ? `\n${info.error}` : ""}\n\nRecent logs:\n${this.previews.tail(projectId) || "(none)"}`);
+				},
+			}),
 		];
 	}
 
@@ -560,7 +643,7 @@ export class ProjectManager {
 				execute: async (args, api) => {
 					const { projectId, me } = await this.#caller(api);
 					const created = await this.editBacklog(projectId, (b) => addItems(b, args.items as ItemInput[], me.key));
-					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} added ${created.length} backlog item${created.length === 1 ? "" : "s"}` });
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} added ${created.length} backlog item${created.length === 1 ? "" : "s"}` });
 					return text(created.map((c) => `${c.id} ${c.title}${c.parent ? ` (under ${c.parent})` : ""}`).join("\n"));
 				},
 			}),
@@ -584,6 +667,8 @@ export class ProjectManager {
 					const moved = await this.editBacklog(projectId, (b) => {
 						const item = b.items[args.id];
 						if (!item) throw new Error(`No backlog item ${args.id}. Use backlog_list.`);
+						if (item.type === "task" && me.role !== "lead" && b.approval.status === "approved" && (args.status === "review" || args.status === "done") && item.status !== args.status)
+							throw new Error("Tasks reach review and done through pi-os: the developer calls task_done, the reviewer review_verdict.");
 						const was = item.status;
 						if (args.parent !== undefined) {
 							if (b.items[args.parent]?.type !== PARENT_TYPE[item.type]) throw new Error(`A ${item.type}'s parent must be an existing ${PARENT_TYPE[item.type] ?? "(none)"}`);
@@ -602,7 +687,7 @@ export class ProjectManager {
 						item.updatedAt = Date.now();
 						return was !== item.status ? `${item.id} “${clip(item.title, 60)}” → ${STATUS_LABEL[item.status]}` : undefined;
 					});
-					if (moved) await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} moved ${moved}` });
+					if (moved) await this.log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} moved ${moved}` });
 					return text(`Updated ${args.id}.`);
 				},
 			}),
@@ -614,7 +699,7 @@ export class ProjectManager {
 					const { projectId, me } = await this.#caller(api);
 					const removed = await this.editBacklog(projectId, (b) => removeWithChildren(b, args.id));
 					if (!removed.length) throw new Error(`No backlog item ${args.id}.`);
-					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} removed ${removed.join(", ")} from the backlog` });
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} removed ${removed.join(", ")} from the backlog` });
 					return text(`Removed ${removed.join(", ")}.`);
 				},
 			}),
@@ -641,7 +726,7 @@ export class ProjectManager {
 						b.approval = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now() };
 						return tasks;
 					});
-					await this.#log(projectId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the backlog (${n} tasks) — see the Backlog tab` });
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the backlog (${n} tasks) — see the Backlog tab` });
 					return { ...text("Submitted. The user reviews it in the Backlog tab; their decision arrives as a message. End your turn now."), control: { terminate: true } };
 				},
 			}),

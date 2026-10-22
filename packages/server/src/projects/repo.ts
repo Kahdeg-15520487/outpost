@@ -121,7 +121,11 @@ export class ProjectRepo {
 	}
 
 	/** Bring `main` into the agent's worktree (its own commits stay). */
-	async sync(agentKey: string): Promise<string> {
+	sync(agentKey: string): Promise<string> {
+		return withLock(this.projectId, () => this.#sync(agentKey));
+	}
+
+	async #sync(agentKey: string): Promise<string> {
 		const dir = await this.ensureWorktree(agentKey);
 		await git(dir, ["add", "-A"]);
 		if ((await git(dir, ["diff", "--cached", "--name-only"])).trim()) await git(dir, ["commit", "-q", "-m", "Work in progress"]);
@@ -131,6 +135,94 @@ export class ProjectRepo {
 			const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
 			return `Conflicts in: ${conflicted}. Resolve them in your worktree and commit. (${(e as Error).message.split("\n")[0]})`;
 		}
+	}
+
+	/**
+	 * A developer hands in a task: commit the worktree and merge the latest `main` into the branch, so
+	 * what gets reviewed is exactly what would land. Returns the commit to review and merge, the files it
+	 * changes against `main`, or the conflict for the developer to resolve.
+	 */
+	submit(agentKey: string, message: string): Promise<{ commit?: string; files: string[]; conflict?: string }> {
+		return withLock(this.projectId, async () => {
+			const dir = await this.ensureWorktree(agentKey);
+			await git(dir, ["add", "-A"]);
+			if ((await git(dir, ["diff", "--cached", "--name-only"])).trim()) await git(dir, ["commit", "-q", "-m", message]);
+			try {
+				await git(dir, ["merge", "-q", "--no-edit", "main"]);
+			} catch (e) {
+				const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+				await git(dir, ["merge", "--abort"]).catch(() => {});
+				return { files: [], conflict: `Merging the latest main into your branch conflicts in: ${conflicted || (e as Error).message}. Run \`git merge main\` in your worktree, resolve the conflicts, commit, and call task_done again.` };
+			}
+			const commit = (await git(dir, ["rev-parse", "HEAD"])).trim();
+			const files = (await git(this.main, ["diff", "--name-only", `main...${commit}`])).trim().split("\n").filter(Boolean);
+			return { commit, files };
+		});
+	}
+
+	/** Merge a reviewed commit into `main` (no-ff, so main's first-parent history reads one entry per task). */
+	mergeCommit(commit: string, message: string): Promise<{ commit?: string; files: string[]; conflict?: string }> {
+		return withLock(this.projectId, async () => {
+			const files = (await git(this.main, ["diff", "--name-only", `main...${commit}`])).trim().split("\n").filter(Boolean);
+			if ((await git(this.main, ["rev-list", "--count", `main..${commit}`])).trim() === "0") return { commit: await this.head(), files: [] };
+			try {
+				await git(this.main, ["merge", "-q", "--no-ff", "-m", message, commit]);
+			} catch (e) {
+				const conflicted = (await git(this.main, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+				await git(this.main, ["merge", "--abort"]).catch(() => {});
+				return { files: [], conflict: conflicted || (e as Error).message.split("\n")[0] };
+			}
+			return { commit: await this.head(), files };
+		});
+	}
+
+	/**
+	 * Put a commit in an agent's worktree, detached (the reviewer reads and tests exactly what was
+	 * submitted). Its own uncommitted changes are discarded; ignored files (node_modules) stay.
+	 */
+	async checkoutDetached(agentKey: string, commit: string) {
+		const dir = await this.ensureWorktree(agentKey);
+		await git(dir, ["reset", "-q", "--hard"]);
+		await git(dir, ["clean", "-fdq"]);
+		await git(dir, ["checkout", "-q", "--detach", commit]);
+	}
+
+	/** True when the worktree holds a detached commit (code under review) instead of its own branch. */
+	async isDetached(agentKey: string) {
+		return !(await git(this.worktree(agentKey), ["symbolic-ref", "-q", "HEAD"]).then(
+			(s) => s.trim(),
+			() => "",
+		));
+	}
+
+	/** Back to the agent's own branch after a review. */
+	async checkoutOwnBranch(agentKey: string) {
+		const dir = await this.ensureWorktree(agentKey);
+		if (!(await this.isDetached(agentKey))) return;
+		await git(dir, ["reset", "-q", "--hard"]);
+		await git(dir, ["clean", "-fdq"]);
+		await git(dir, ["checkout", "-q", this.branch(agentKey)]);
+	}
+
+	/** The live preview's own checkout of `main` (detached), so running the app never touches anyone's tree. */
+	get previewDir() {
+		return join(this.root, "preview");
+	}
+
+	/** Update the preview checkout to `main`'s HEAD; returns that commit. Ignored files (node_modules) stay. */
+	updatePreview(): Promise<string> {
+		return withLock(this.projectId, async () => {
+			const dir = this.previewDir;
+			if (!existsSync(join(dir, ".git"))) {
+				await git(this.main, ["worktree", "prune"]).catch(() => {});
+				await git(this.main, ["worktree", "add", "-q", "--detach", dir, "main"]);
+			} else {
+				await git(dir, ["reset", "-q", "--hard"]);
+				await git(dir, ["clean", "-fdq"]);
+				await git(dir, ["checkout", "-q", "--detach", "main"]);
+			}
+			return (await git(dir, ["rev-parse", "--short", "HEAD"])).trim();
+		});
 	}
 
 	/**

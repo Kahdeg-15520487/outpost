@@ -124,6 +124,14 @@ export type AgentSummary = { busy: boolean; status: "idle" | "thinking" | "writi
 
 export type ItemType = "feature" | "pbi" | "task";
 export type ItemStatus = "todo" | "doing" | "review" | "done" | "blocked";
-export type BacklogItem = { id: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; status: ItemStatus; assignee?: string; deps: string[]; area?: string; estimate?: "S" | "M" | "L"; order: number; createdBy: string; updatedAt: number };
+export type BacklogItem = { id: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; status: ItemStatus; assignee?: string; deps: string[]; area?: string; estimate?: "S" | "M" | "L"; order: number; createdBy: string; updatedAt: number;
+	attempt?: number; briefed?: boolean; reviewer?: string; reviewRound?: number; reviewBriefed?: boolean;
+	submitted?: { commit: string; summary: string; at: number; by: string; files: string[] }; merged?: string; nudges?: number;
+	history?: { at: number; by: string; text: string }[];
+};
+export type BuildState = { paused?: boolean; startedAt?: number; finishedAt?: number };
+export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
+export type PreviewInfo = { status: PreviewStatus; port?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
+export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "pi-os" };
 export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
-export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number };
+export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState };

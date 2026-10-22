@@ -29,6 +29,31 @@ export type BacklogItem = {
 	order: number;
 	createdBy: string;
 	updatedAt: number;
+	// ---- build (tasks; written by pi-os's scheduler, see build.ts)
+	/** Times the task has been handed to a developer. */
+	attempt?: number;
+	/** The assignee has been sent this attempt's brief (re-sent after a crash if not). */
+	briefed?: boolean;
+	/** Agent reviewing the submitted work. */
+	reviewer?: string;
+	/** Review rounds so far; the reviewer has been sent this round's brief when reviewBriefed. */
+	reviewRound?: number;
+	reviewBriefed?: boolean;
+	/** What the developer submitted with task_done: the commit that gets reviewed and merged. */
+	submitted?: { commit: string; summary: string; at: number; by: string; files: string[] };
+	/** The merge commit on main once done. */
+	merged?: string;
+	/** Reminders sent to the agent holding it while it sat idle. */
+	nudges?: number;
+	/** What happened to it, oldest first (bounded). */
+	history?: { at: number; by: string; text: string }[];
+};
+
+export type BuildState = {
+	/** No new assignments while paused; work in progress continues. */
+	paused?: boolean;
+	startedAt?: number;
+	finishedAt?: number;
 };
 
 export type Approval = {
@@ -51,6 +76,8 @@ export type Backlog = {
 	approval: Approval;
 	/** Bumped on every change. */
 	revision: number;
+	/** The build (after approval): see build.ts. */
+	build?: BuildState;
 };
 
 export const emptyBacklog = (): Backlog => ({ items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 });
@@ -70,6 +97,39 @@ export const STATUS_LABEL: Record<ItemStatus, string> = { todo: "To do", doing: 
 export const PARENT_TYPE: Record<ItemType, ItemType | undefined> = { feature: undefined, pbi: "feature", task: "pbi" };
 
 export const byOrder = (a: BacklogItem, b: BacklogItem) => a.order - b.order || a.id.localeCompare(b.id, undefined, { numeric: true });
+
+const HISTORY_LIMIT = 40;
+export function pushHistory(item: BacklogItem, by: string, text: string) {
+	item.history ??= [];
+	item.history.push({ at: Date.now(), by, text });
+	if (item.history.length > HISTORY_LIMIT) item.history.splice(0, item.history.length - HISTORY_LIMIT);
+}
+
+/** A PBI's or feature's status follows its children once it has any: done when all are, in progress when any started. */
+export function rollUp(b: Backlog): boolean {
+	let changed = false;
+	const derive = (kids: BacklogItem[]): ItemStatus | undefined => {
+		if (!kids.length) return undefined;
+		if (kids.every((k) => k.status === "done")) return "done";
+		if (kids.some((k) => k.status === "blocked")) return "blocked";
+		if (kids.some((k) => k.status !== "todo")) return kids.every((k) => k.status === "done" || k.status === "review") ? "review" : "doing";
+		return "todo";
+	};
+	for (const type of ["pbi", "feature"] as const) {
+		for (const parent of Object.values(b.items).filter((i) => i.type === type)) {
+			const s = derive(Object.values(b.items).filter((i) => i.parent === parent.id));
+			if (s && s !== parent.status) {
+				parent.status = s;
+				parent.updatedAt = Date.now();
+				changed = true;
+			}
+		}
+	}
+	return changed;
+}
+
+/** Every dependency is done (a dependency on a PBI or feature waits for all of it). */
+export const depsDone = (b: Backlog, item: BacklogItem) => item.deps.every((d) => !b.items[d] || b.items[d]!.status === "done");
 export const childrenOf = (b: Backlog, id: string | undefined, type: ItemType) =>
 	Object.values(b.items)
 		.filter((i) => i.type === type && (id === undefined ? !i.parent || !b.items[i.parent] : i.parent === id))

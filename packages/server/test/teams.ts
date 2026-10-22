@@ -2,24 +2,18 @@
  * Agent-team checks that need no model and no server: backlog edits against a real stored
  * document, and the agent environment's path handling. Run: pnpm --filter @pi-os/server test:teams
  */
+import { check, finish, sleep, testDir, until } from "./lib/harness.ts";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-process.env.PI_OS_DATA ??= mkdtempSync(join(tmpdir(), "pios-teams-"));
-process.env.PI_OS_CONFIG = "";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { addItems, renderBacklog } = await import("../src/projects/backlog.ts");
 const { agentEnv, fromGitBashPath } = await import("../src/projects/env.ts");
 
-let failed = 0;
-const check = (name: string, ok: unknown, detail?: unknown) => {
-	console.log(`${ok ? "  ✓" : "  ✗"} ${name}${ok ? "" : ` — ${JSON.stringify(detail)}`}`);
-	if (!ok) failed++;
-};
 
 // ---------------------------------------------------------------- backlog
 const u = users.create("teams", "password123");
@@ -104,6 +98,4 @@ if (process.platform === "win32") {
 	check("write outside the worktree refused", !(await env.writeFile(join(process.env.PI_OS_DATA!, "out.txt"), "x", ctx)).ok);
 }
 
-await Workspace.closeAll();
-console.log(failed ? `\n${failed} FAILED` : "\nALL GOOD");
-process.exit(failed ? 1 : 0);
+await finish();

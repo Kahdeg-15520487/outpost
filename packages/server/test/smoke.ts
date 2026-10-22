@@ -1,15 +1,14 @@
 /**
- * End-to-end smoke test against a running server (default http://127.0.0.1:8799).
- * Uses the offline demo model, so no API key is needed.
- *   PORT=8799 PI_OS_DATA=/tmp/pios npx tsx src/main.ts &   then   npx tsx test/smoke.ts
+ * End-to-end smoke test over HTTP and WebSocket: accounts, chat → gadget, gadget RPC, sharing, live
+ * sync, Gatekeepers, files, blueprints. Boots its own throwaway server (or uses $BASE). Uses the
+ * offline demo model, so no API key is needed. Run: pnpm --filter @pi-os/server test:smoke
  */
+import { finish, must, startServer } from "./lib/harness.ts";
 import WebSocket from "ws";
 
-const base = process.env.BASE ?? "http://127.0.0.1:8799";
-const assert = (cond: unknown, msg: string) => {
-	if (!cond) throw new Error(`ASSERT: ${msg}`);
-	console.log(`  ✓ ${msg}`);
-};
+const base = await startServer();
+const assert = (cond: unknown, msg: string) => must(msg, cond);
+process.on("unhandledRejection", (e) => void finish(e));
 
 function client() {
 	let cookie = "";
@@ -143,7 +142,7 @@ assert(snap.approvals.actions[sent.value.queuedForApproval].status === "approved
 
 console.log("files: upload, attachments, gadget ctx.files capability, safe download");
 const upload = async (c: ReturnType<typeof client>, name: string, body: Uint8Array | string, type: string) => {
-	const res = await fetch(`${base}/api/w/${ws}/files`, { method: "POST", headers: { "content-type": type, "x-file-name": encodeURIComponent(name), cookie: (c as any).cookie() }, body });
+	const res = await fetch(`${base}/api/w/${ws}/files`, { method: "POST", headers: { "content-type": type, "x-file-name": encodeURIComponent(name), cookie: (c as any).cookie() }, body: body as BodyInit });
 	if (!res.ok) throw new Error(`upload ${res.status} ${await res.text()}`);
 	return (await res.json()).file;
 };
@@ -191,5 +190,4 @@ const bps = await ben.call("GET", "/api/blueprints");
 assert(bps.blueprints.some((b: any) => b.name === `Mail list ${suffix}`), "published blueprint visible to others");
 assert(bps.blueprints.filter((b: any) => b.id.startsWith("bp_") && !b.authorId).length >= 5, "built-in blueprints installed");
 
-console.log("\nALL GOOD");
-process.exit(0);
+await finish();

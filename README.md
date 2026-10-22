@@ -99,7 +99,19 @@ Attach files to a message with 📎, drag-and-drop, or paste (Ctrl+V a screensho
 
 The **Backlog** tab is a Kanban board (To do / In progress / Review / Done) of the planner's features → PBIs → tasks, with a Structure view for review. You approve the backlog or send it back with a comment before building starts, and you can drag cards and edit items. `docs/backlog.md` is regenerated from it. Click the model in the project header to change the project's default model (optionally for every agent); each agent's drawer has its own model picker.
 
-Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. The file tools can't write outside it. Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Done: the team, tiles, transcripts, repo layout, and the backlog with its approval gate. Next: a scheduler that hands ready tasks to parallel developers, and a live app preview.
+**The build** starts when you approve the backlog, and pi-os runs it, not an LLM:
+- It hands each free developer the next ready task (dependencies done, preferring a part of `app/` nobody else is in).
+- `task_done` sends the work to the reviewer. **Approve** merges exactly that commit into `main`; **changes** sends it back to the developer with the notes.
+- An agent that stops mid-task is reminded twice, then the task is marked blocked and the Lead is told.
+- The Backlog tab shows the progress, with a Pause / Resume button. Each task's panel shows what was submitted and its history. Tiles show the task each agent is on.
+
+The **App** tab runs the product from `main`:
+- It uses `.pios/project.json`, which the architect writes: `install`, `dev` with `$PORT`, and `readyPath`.
+- It runs in its own checkout, on a free port, with logs.
+- It reinstalls when dependency manifests change and restarts after every merge that touches `app/`.
+- Agents check it with the `preview` tool.
+
+Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. The file tools can't write outside it. Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Done: the team, tiles, transcripts, repo layout, the backlog with its approval gate, the build scheduler (M4) and the live preview (M5). Next: dedicated approve buttons for requirements and design, and iteration on feedback.
 
 ## How it maps onto pi-durable
 
@@ -148,10 +160,21 @@ To add one, put a definition in `server/src/gatekeepers/catalog.ts`.
 ## Test
 
 ```bash
-PORT=8799 PI_OS_DATA=/tmp/pios pnpm --filter @pi-os/server start &
-pnpm smoke            # auth, chat→gadget via the demo model, RPC, rollback, CSP, sharing/roles/presence,
-                      # gatekeeper capability checks, deferred approval, overlay, blueprints
+pnpm test                                     # build + typecheck + every suite below (~1.5 min)
+pnpm --filter @pi-os/server test -- build ui  # just some suites
 ```
+
+Each suite runs in its own process with a throwaway data dir and never reads your `pi-os.config.json`, keys or data. Everything runs on the offline demo model, so no API key is needed. GitHub Actions runs `pnpm test` on Linux and Windows for every push to `master` and every pull request (`.github/workflows/test.yml`).
+
+| Suite | Covers |
+|---|---|
+| `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
+| `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
+| `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |
+| `render` | `gadget_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
+| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview) |
+
+Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 
 ## Not (yet) like Cloudflare OS
 

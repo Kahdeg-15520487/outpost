@@ -1,6 +1,6 @@
 # Agent teams: goal → plan → working product
 
-Status: **approved** — M1 done; M3 (backlog board + approval gate) done; per-project and per-agent model controls done. M2 gates for requirements/design still go through the Lead's question; M4 (scheduler) next.
+Status: **approved** — M1, M3, M4 (build scheduler: assign → task_done → review → merge) and M5 (live preview from `.pios/project.json`) done, with per-project and per-agent model controls. M2's requirements/design gates still go through the Lead's question (good enough for the MVP). A real-model run (Haiku) went from goal to a running, reviewed, merged app unattended in ~6 minutes. Covered by `pnpm test` (suites `build`, `teams`, `ui`). Next: M6 (iteration on feedback, resilience).
 
 ## What it is
 

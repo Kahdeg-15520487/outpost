@@ -6,7 +6,10 @@
 		"dev": "tsx watch src/main.ts",
 		"start": "tsx src/main.ts",
 		"typecheck": "tsc --noEmit",
+		"test": "tsx test/run.ts",
 		"smoke": "tsx test/smoke.ts",
+		"test:smoke": "tsx test/smoke.ts",
+		"test:ui": "tsx test/ui.ts",
 		"test:render": "tsx test/render-check.ts",
 		"test:build": "tsx test/build.ts",
 		"test:teams": "tsx test/teams.ts"

@@ -10,6 +10,7 @@
     "build": "pnpm --filter @pi-os/web build",
     "start": "pnpm build && pnpm --filter @pi-os/server start",
     "typecheck": "pnpm -r typecheck",
-    "smoke": "pnpm --filter @pi-os/server smoke"
+    "smoke": "pnpm --filter @pi-os/server smoke",
+    "test": "pnpm build && pnpm typecheck && pnpm --filter @pi-os/server test"
   }
 }

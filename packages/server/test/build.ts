@@ -4,34 +4,17 @@
  * test writes files into their worktrees and calls the same methods their tools call.
  * Run: pnpm --filter @pi-os/server test:build
  */
+import { check, finish, sleep, testDir, until } from "./lib/harness.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-process.env.PI_OS_DATA ??= mkdtempSync(join(tmpdir(), "pios-build-"));
-process.env.PI_OS_CONFIG = "";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { addItems } = await import("../src/projects/backlog.ts");
 const { git } = await import("../src/projects/repo.ts");
 
-let failed = 0;
-const check = (name: string, ok: unknown, detail?: unknown) => {
-	console.log(`${ok ? "  ✓" : "  ✗"} ${name}${ok ? "" : ` — ${JSON.stringify(detail)}`}`);
-	if (!ok) failed++;
-};
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until<T>(what: string, fn: () => Promise<T | undefined | false>, ms = 20000): Promise<T | undefined> {
-	const end = Date.now() + ms;
-	while (Date.now() < end) {
-		const v = await fn().catch(() => undefined);
-		if (v) return v as T;
-		await sleep(150);
-	}
-	console.log(`  … timed out waiting for ${what}`);
-	return undefined;
-}
 
 const u = users.create("builder", "password123");
 const ws = await Workspace.get(workspaces.create("build", u.id).id);
@@ -153,7 +136,4 @@ await pm.previews.stop(p.id, true);
 check("stop kills the dev server", !(await fetch(`http://127.0.0.1:${lastPort}/`).then(() => true, () => false)), lastPort);
 check("user stop: preview off and remembered", pm.previews.info(p.id).status === "off" && pm.previews.info(p.id).stoppedByUser === true, pm.previews.info(p.id));
 
-pm.previews.stopAll();
-await Workspace.closeAll();
-console.log(failed ? `\n${failed} check(s) failed` : "\nALL GOOD");
-process.exit(failed ? 1 : 0);
+await finish();

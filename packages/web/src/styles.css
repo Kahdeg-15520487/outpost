@@ -359,7 +359,7 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .mp-tags span { font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--paper-2); color: var(--muted); }
 .mp-dialog input[type="checkbox"] { accent-color: var(--signal); width: 15px; height: 15px; }
 
-/* Double-click-to-rename labels (gadget title, chat title, blueprint cards) */
+/* Double-click-to-rename labels (gadget title, chat title) */
 .renamable { cursor: text; border-radius: 4px; }
 .renamable:hover { box-shadow: 0 0 0 1px var(--line-2); background: rgba(255, 255, 255, .35); }
 .label-rename { font: inherit; color: inherit; letter-spacing: inherit; width: 100%; min-width: 120px; padding: 0 4px; margin: -1px -5px; border: 1px solid var(--signal); border-radius: 4px; background: var(--card); outline: none; box-shadow: 0 0 0 3px var(--signal-wash); }

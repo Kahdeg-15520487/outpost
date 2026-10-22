@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { api, type Blueprint, type Workspace } from "../api";
 import { chatHref, navigate } from "../store";
 import { socket } from "../socket";
-import { EditableLabel } from "./RowMenu";
 
 export function BlueprintsPage({ ws }: { ws: Workspace }) {
 	const [list, setList] = useState<Blueprint[]>([]);
@@ -52,9 +51,7 @@ function Grid({ list, busy, onUse, canUse, onDelete }: { list: Blueprint[]; busy
 			{list.map((b, i) => (
 				<div key={b.id} className="bp" style={{ animationDelay: `${i * 40}ms` }}>
 					<div className="i">{b.icon}</div>
-					<div className="n">
-						<EditableLabel value={b.name} maxLength={80} onSave={b.mine ? (name) => api.patch(`/api/blueprints/${b.id}`, { name }) : undefined} />
-					</div>
+					<div className="n">{b.name}</div>
 					<div className="d">{b.description}</div>
 					<div className="row" style={{ marginTop: 8 }}>
 						<span className="mono muted grow" style={{ fontSize: 11 }}>

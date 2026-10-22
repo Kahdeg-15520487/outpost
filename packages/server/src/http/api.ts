@@ -334,16 +334,6 @@ export function createApi(): Router {
 		const bp = await ws.publishBlueprint(gadget.id, { name: String(name || gadget.name), description: String(description ?? ""), visibility: visibility === "private" ? "private" : "public", authorId: user.id });
 		return { blueprint: { id: bp.id } };
 	});
-	r.patch("/api/blueprints/:id", async (req) => {
-		const user = req.need();
-		const bp = blueprints.get(req.params.id!);
-		if (!bp || bp.authorId !== user.id) throw new HttpError(403, "Only the author can rename a blueprint");
-		const { name, description } = await req.body();
-		if (name !== undefined && !String(name).trim()) throw new HttpError(400, "Name can't be empty");
-		blueprints.upsert({ ...bp, name: name !== undefined ? String(name).trim().slice(0, 80) : bp.name, description: description !== undefined ? String(description).slice(0, 500) : bp.description });
-		hub.publish("blueprints", { t: "blueprints.changed" });
-		return { ok: true };
-	});
 	r.delete("/api/blueprints/:id", (req) => {
 		const user = req.need();
 		const bp = blueprints.get(req.params.id!);

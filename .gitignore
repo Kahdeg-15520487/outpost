@@ -1,7 +1,40 @@
+# dependencies & build output
 node_modules/
 dist/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# runtime data: workspaces, uploads, system db (never commit)
 data/
 *.sqlite
 *.sqlite-*
-.env
+*.db
+
+# local config & secrets (pi-os.config.example.json is the template)
 pi-os.config.json
+pi-os.config.*.json
+!pi-os.config.example.json
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# logs & scratch
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.tmp.*
+_*.py
+*.png
+!packages/**/assets/**/*.png
+screenshots/
+
+# editors & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

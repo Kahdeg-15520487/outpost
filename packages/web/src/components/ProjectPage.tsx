@@ -1,10 +1,11 @@
 import "../project.css";
 import "../project-layout.css";
+import "../project-repo.css";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, type AgentRecord, type AgentSummary, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
+import { api, fileUrl, formatBytes, type AgentRecord, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
-import { AttachButton, AttachmentTray, FileChips, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
+import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
 
@@ -110,6 +111,14 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 					<a key={t.id} href={projectHref(ws.id, projectId, t.id === "overview" ? undefined : t.id)} className={current === t.id ? "on" : ""}>
 						{t.label}
 						{t.id === "overview" && openQuestions.length > 0 && <span className="vt-badge">{openQuestions.length}</span>}
+						{t.id === "requirements" && Object.keys(state.attachments ?? {}).length > 0 && (
+							<span className="vt-count" title="Attachments">
+								<svg viewBox="0 0 16 16" aria-hidden>
+									<path d="M10.5 4.5 5.4 9.6a1.4 1.4 0 0 0 2 2l5.3-5.3a2.8 2.8 0 0 0-4-4L3.3 7.7a4.2 4.2 0 0 0 6 6l4.2-4.2" />
+								</svg>
+								{Object.keys(state.attachments ?? {}).length}
+							</span>
+						)}
 						{t.id === "backlog" && live.backlog.approval.status === "pending" && <span className="vt-badge">!</span>}
 					</a>
 				))}
@@ -130,7 +139,16 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 			)}
 			<div className="viewer-body">
 				{current === "overview" && <Overview ws={ws} project={project} live={live} questions={openQuestions} canEdit={canEdit} onOpenAgent={setOpen} />}
-				{current === "requirements" && <DocTab ws={ws.id} projectId={projectId} path="docs/requirements.md" tick={live.repoTick} empty="The product owner hasn't published requirements yet." />}
+				{current === "requirements" && (
+					<DocTab
+						ws={ws.id}
+						projectId={projectId}
+						path="docs/requirements.md"
+						tick={live.repoTick}
+						empty="The product owner hasn't published requirements yet."
+						before={<AttachmentStrip wsId={ws.id} attachments={Object.values(state.attachments ?? {}).sort((a, b) => a.at - b.at)} />}
+					/>
+				)}
 				{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
 				{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 				{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
@@ -543,19 +561,12 @@ function ProjectModelMenu({ ws, project, agents, models, picker, onClose }: { ws
 function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: Workspace; project: ProjectMeta; live: ReturnType<typeof useProject>; questions: Question[]; canEdit: boolean; onOpenAgent: (k: string) => void }) {
 	const { state } = live;
 	const activity = [...state.activity].reverse();
-	const attachments = Object.values(state.attachments ?? {}).sort((a, b) => a.at - b.at);
 	return (
 		<div className="ov">
 			<blockquote className="ov-goal">
 				<div className="label">Goal</div>
 				{project.goal}
 			</blockquote>
-			{attachments.length > 0 && (
-				<div className="ov-attachments">
-					<div className="label">Attachments · outside the repo, read by the team</div>
-					<FileChips wsId={ws.id} files={attachments.map((a) => ({ id: a.fileId, name: a.name, kind: a.kind, mime: a.mime, size: a.size }))} />
-				</div>
-			)}
 			{questions.length > 0 && (
 				<div className="ov-questions">
 					{questions.map((q) => (
@@ -668,15 +679,40 @@ function useRepoFiles(ws: string, projectId: string, tick: number) {
 	return files;
 }
 
-function DocTab({ ws, projectId, path, tick, empty }: { ws: string; projectId: string; path: string; tick: number; empty: string }) {
+function DocTab({ ws, projectId, path, tick, empty, before }: { ws: string; projectId: string; path: string; tick: number; empty: string; before?: React.ReactNode }) {
 	const file = useRepoFile(ws, projectId, path, tick);
 	if (file === undefined) return <div className="muted pad">Loading…</div>;
-	if (file === null || !file.text) return <Placeholder icon="✎" title={path} text={empty} />;
+	if (file === null || !file.text)
+		return (
+			<>
+				{before && <div className="doc doc-before">{before}</div>}
+				<Placeholder icon="✎" title={path} text={empty} />
+			</>
+		);
 	return (
 		<article className="doc">
+			{before}
 			<div className="doc-path mono">{path} · on main</div>
 			<Markdown text={file.text} />
 		</article>
+	);
+}
+
+/** The user's attachments as one compact strip: what the requirements were written from. */
+function AttachmentStrip({ wsId, attachments }: { wsId: string; attachments: AttachmentRecord[] }) {
+	if (!attachments.length) return null;
+	return (
+		<div className="att-strip">
+			<span className="label">Attachments</span>
+			{attachments.map((a) => (
+				<a key={a.name} className="att-chip" href={fileUrl(wsId, a.fileId, /^image\/|^text\/|pdf$/.test(a.mime))} target="_blank" rel="noreferrer" title={`${a.original} · ${a.mime} · ${formatBytes(a.size)} · added by ${a.by}`}>
+					{/^image\/(png|jpeg|gif|webp)$/.test(a.mime) ? <img src={fileUrl(wsId, a.fileId, true)} alt="" /> : <span className="att-ext">{(/\.([a-z0-9]{1,5})$/i.exec(a.name)?.[1] ?? "file").toUpperCase()}</span>}
+					<span className="att-name">{a.name}</span>
+					<span className="att-size mono">{formatBytes(a.size)}</span>
+				</a>
+			))}
+			<span className="att-note muted">kept outside the repo · read by the team</span>
+		</div>
 	);
 }
 
@@ -736,6 +772,74 @@ function WireframesTab({ ws, projectId, tick }: { ws: string; projectId: string;
 	);
 }
 
+type TreeNode = { name: string; path: string; dir: boolean; children: TreeNode[] };
+
+function buildTree(files: string[]): TreeNode[] {
+	const root: TreeNode = { name: "", path: "", dir: true, children: [] };
+	for (const f of files) {
+		let node = root;
+		const parts = f.split("/");
+		parts.forEach((part, i) => {
+			const path = parts.slice(0, i + 1).join("/");
+			const dir = i < parts.length - 1;
+			let child = node.children.find((c) => c.name === part && c.dir === dir);
+			if (!child) node.children.push((child = { name: part, path, dir, children: [] }));
+			node = child;
+		});
+	}
+	const sort = (n: TreeNode) => {
+		n.children.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+		n.children.forEach(sort);
+	};
+	sort(root);
+	return root.children;
+}
+
+/** main's files as a collapsible tree; top-level folders start open. */
+function RepoTree({ files, selected, onSelect }: { files: string[]; selected?: string; onSelect: (path: string) => void }) {
+	const tree = useMemo(() => buildTree(files), [files]);
+	const [open, setOpen] = useState<Set<string>>(() => new Set(["app", "docs"]));
+	// Reveal the selected file's folders.
+	useEffect(() => {
+		if (!selected) return;
+		const parts = selected.split("/").slice(0, -1);
+		setOpen((s) => new Set([...s, ...parts.map((_, i) => parts.slice(0, i + 1).join("/"))]));
+	}, [selected]);
+	const toggle = (path: string) =>
+		setOpen((s) => {
+			const n = new Set(s);
+			if (!n.delete(path)) n.add(path);
+			return n;
+		});
+	const rows: React.ReactNode[] = [];
+	const walk = (nodes: TreeNode[], depth: number) => {
+		for (const n of nodes) {
+			const isOpen = open.has(n.path);
+			rows.push(
+				<button
+					key={`${n.dir ? "d" : "f"}:${n.path}`}
+					className={`rt-row ${n.dir ? "rt-dir" : "rt-file"} ${n.path === selected ? "on" : ""}`}
+					style={{ paddingLeft: 8 + depth * 14 }}
+					onClick={() => (n.dir ? toggle(n.path) : onSelect(n.path))}
+					title={n.path}
+					aria-expanded={n.dir ? isOpen : undefined}
+				>
+					<span className="rt-caret" aria-hidden>
+						{n.dir ? (isOpen ? "▾" : "▸") : ""}
+					</span>
+					<span className="rt-name">{n.dir ? `${n.name}/` : n.name}</span>
+					{n.dir && !isOpen && <span className="rt-count">{countFiles(n)}</span>}
+				</button>,
+			);
+			if (n.dir && isOpen) walk(n.children, depth + 1);
+		}
+	};
+	walk(tree, 0);
+	return <div className="rt">{rows.length ? rows : <div className="muted" style={{ padding: 8, fontSize: 13 }}>No files yet</div>}</div>;
+}
+
+const countFiles = (n: TreeNode): number => (n.dir ? n.children.reduce((a, c) => a + countFiles(c), 0) : 1);
+
 function RepoTab({ ws, projectId, tick }: { ws: string; projectId: string; tick: number }) {
 	const files = useRepoFiles(ws, projectId, tick);
 	const [sel, setSel] = useState<string>();
@@ -747,13 +851,15 @@ function RepoTab({ ws, projectId, tick }: { ws: string; projectId: string; tick:
 	return (
 		<div className="repo">
 			<div className="repo-files">
-				<div className="label">Files on main</div>
-				{(files ?? []).filter((f) => !f.endsWith(".gitkeep")).map((f) => (
-					<button key={f} className={f === sel ? "on" : ""} onClick={() => setSel(f)} title={f}>
-						<span className="muted">{f.includes("/") ? f.slice(0, f.lastIndexOf("/") + 1) : ""}</span>
-						{f.slice(f.lastIndexOf("/") + 1)}
-					</button>
-				))}
+				<div className="rt-head">
+					<span className="label">Files on main</span>
+					{sel && (
+						<button className="rt-history" onClick={() => setSel(undefined)}>
+							History
+						</button>
+					)}
+				</div>
+				<RepoTree files={(files ?? []).filter((f) => !f.endsWith(".gitkeep"))} selected={sel} onSelect={setSel} />
 			</div>
 			<div className="repo-view">
 				{sel ? (

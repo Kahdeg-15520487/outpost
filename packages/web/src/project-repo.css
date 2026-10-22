@@ -1,0 +1,19 @@
+/* ================================================================== repo tree + list rows */
+/* Rows in scrolling flex lists must not shrink (they were squashed and clipped). */
+.repo-files > *, .dr-list > *, .wf-list > * { flex-shrink: 0; }
+
+.repo { grid-template-columns: minmax(200px, 300px) minmax(0, 1fr); }
+.repo-files { padding: 10px 6px 16px; gap: 0; }
+.rt-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 8px; flex-shrink: 0; }
+.rt-head .label { padding: 0; }
+.rt-history { border: 0; background: none; font: 600 11.5px var(--sans); color: var(--signal-ink); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.rt-history:hover { background: var(--paper-2); }
+.rt { display: flex; flex-direction: column; }
+.rt-row { flex-shrink: 0; display: flex; align-items: center; gap: 4px; width: 100%; min-height: 26px; padding: 3px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; font: 12.5px/1.3 var(--mono); color: var(--text); cursor: pointer; }
+.rt-row:hover { background: var(--paper-2); }
+.rt-row.on { background: var(--text); color: var(--paper); }
+.rt-caret { width: 12px; flex: none; color: var(--muted); font-size: 11px; }
+.rt-dir .rt-name { font-weight: 600; }
+.rt-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-count { flex: none; font-size: 10.5px; color: var(--muted); }
+.rt-row.on .rt-caret { color: inherit; }

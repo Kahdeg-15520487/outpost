@@ -118,5 +118,6 @@ export type ProjectMeta = { id: string; name: string; goal: string; stage: Proje
 export type AgentRecord = { key: string; name: string; role: string; conversationId: string; brief: string; model?: ModelRef; createdAt: number; removed?: boolean };
 export type Question = { id: string; agent: string; text: string; at: number; answeredAt?: number };
 export type Activity = { at: number; agent?: string; kind: "team" | "message" | "publish" | "question" | "stage" | "user" | "error"; text: string };
-export type ProjectState = { agents: Record<string, AgentRecord>; order: string[]; questions: Record<string, Question>; activity: Activity[] };
+export type AttachmentRecord = { name: string; fileId: string; original: string; kind: string; mime: string; size: number; at: number; by: string };
+export type ProjectState = { agents: Record<string, AgentRecord>; order: string[]; questions: Record<string, Question>; activity: Activity[]; attachments?: Record<string, AttachmentRecord> };
 export type AgentSummary = { busy: boolean; status: "idle" | "thinking" | "writing" | "tool" | "error"; activity?: string; tail: string; tokens: number; cost: number; queued: number; error?: string; updatedAt: number };

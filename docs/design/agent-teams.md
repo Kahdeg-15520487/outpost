@@ -49,6 +49,31 @@ that shows the documents, the backlog, and the running app.
 ### Projects and repos
 - A project = goal + team + backlog + a git repo, always a new folder at `<dataDir>/projects/<id>/repo`
   (worktrees in `<dataDir>/projects/<id>/worktrees/`).
+
+#### Repository layout (decided)
+```
+<dataDir>/projects/<id>/
+├─ repo/                          git; `main` = what the viewer shows
+│  ├─ README.md                   what the product is + how to run it
+│  ├─ .pios/project.json          install / test / dev commands pi-os runs (inside app/)
+│  ├─ app/                        everything the application needs to build and run, nothing else
+│  └─ docs/
+│     ├─ requirements.md          Product Owner
+│     ├─ design.md                Architect
+│     ├─ backlog.md               written by pi-os from the live backlog (read-only snapshot)
+│     ├─ decisions/NNNN-<slug>.md decision records (context, options, decision, consequences)
+│     ├─ wireframes/<screen>.html self-contained HTML
+│     └─ prototypes/<name>/       throwaway proofs of concept; app/ never imports them
+├─ attachments/                   the user's uploads: outside git, read in place by agents, cited by name
+└─ worktrees/<agent>/             each agent's checkout, on branch agent/<key>
+```
+- `app/` holds the application and nothing else; nothing the application needs lives outside it. No other
+  top-level folders. The repo is scaffolded with this layout at kickoff; every agent's prompt carries it.
+- The backlog's source of truth is pi-os (structured, live, approvable); `docs/backlog.md` is regenerated from it.
+- Attachments stay out of git so the repo stays lean; the Overview tab lists them with download links. An asset
+  the app really needs is copied into `app/` deliberately, with a decision record.
+
+#### Agents and branches
 - Every agent works in **its own git worktree** on its own branch (`task/<taskId>`), so parallel workers never
   step on each other's files. The Reviewer reviews the diff, runs the tests from `.pios/project.json`, and merges
   into `main`; a merge conflict goes back to the worker to rebase.

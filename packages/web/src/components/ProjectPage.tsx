@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentRecord, type AgentSummary, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
-import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
+import { AttachButton, AttachmentTray, FileChips, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
 
 const STAGES: { id: ProjectStage; label: string }[] = [
@@ -45,11 +45,12 @@ const dropFiles = (att: Attachments) => ({
 
 const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
-type Tab = "overview" | "requirements" | "design" | "wireframes" | "backlog" | "app" | "repo";
+type Tab = "overview" | "requirements" | "design" | "decisions" | "wireframes" | "backlog" | "app" | "repo";
 const TABS: { id: Tab; label: string }[] = [
 	{ id: "overview", label: "Overview" },
 	{ id: "requirements", label: "Requirements" },
 	{ id: "design", label: "Design" },
+	{ id: "decisions", label: "Decisions" },
 	{ id: "wireframes", label: "Wireframes" },
 	{ id: "backlog", label: "Backlog" },
 	{ id: "app", label: "App" },
@@ -140,6 +141,7 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 						{current === "overview" && <Overview ws={ws} project={project} live={live} questions={openQuestions} canEdit={canEdit} onOpenAgent={setOpen} />}
 						{current === "requirements" && <DocTab ws={ws.id} projectId={projectId} path="docs/requirements.md" tick={live.repoTick} empty="The product owner hasn't published requirements yet." />}
 						{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
+						{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 						{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 						{current === "backlog" && <Placeholder icon="▤" title="Backlog" text="Features → PBIs → tasks appear here once the planner starts. You approve the backlog before building begins." />}
 						{current === "app" && <Placeholder icon="▶" title="Live app" text="The running product appears here once the architect defines how to run it (.pios/project.json). Live preview arrives in milestone 5." />}
@@ -310,12 +312,19 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: Workspace; project: ProjectMeta; live: ReturnType<typeof useProject>; questions: Question[]; canEdit: boolean; onOpenAgent: (k: string) => void }) {
 	const { state } = live;
 	const activity = [...state.activity].reverse();
+	const attachments = Object.values(state.attachments ?? {}).sort((a, b) => a.at - b.at);
 	return (
 		<div className="ov">
 			<blockquote className="ov-goal">
 				<div className="label">Goal</div>
 				{project.goal}
 			</blockquote>
+			{attachments.length > 0 && (
+				<div className="ov-attachments">
+					<div className="label">Attachments · outside the repo, read by the team</div>
+					<FileChips wsId={ws.id} files={attachments.map((a) => ({ id: a.fileId, name: a.name, kind: a.kind, mime: a.mime, size: a.size }))} />
+				</div>
+			)}
 			{questions.length > 0 && (
 				<div className="ov-questions">
 					{questions.map((q) => (
@@ -440,6 +449,39 @@ function DocTab({ ws, projectId, path, tick, empty }: { ws: string; projectId: s
 	);
 }
 
+function DecisionsTab({ ws, projectId, tick }: { ws: string; projectId: string; tick: number }) {
+	const files = useRepoFiles(ws, projectId, tick);
+	const records = useMemo(() => (files ?? []).filter((f) => /^docs\/decisions\/.+\.md$/i.test(f)).sort(), [files]);
+	const [sel, setSel] = useState<string>();
+	const path = sel && records.includes(sel) ? sel : records.at(-1);
+	const file = useRepoFile(ws, projectId, path, tick);
+	if (!files) return <div className="muted pad">Loading…</div>;
+	if (!records.length) return <Placeholder icon="⚖" title="Decision records" text="Every significant choice (stack, architecture, trade-offs) is recorded in docs/decisions/ and shows up here." />;
+	return (
+		<div className="dr">
+			<div className="dr-list">
+				{records.map((f) => {
+					const base = f.replace(/^docs\/decisions\//, "").replace(/\.md$/i, "");
+					const [, num, slug] = /^(\d+)-?(.*)$/.exec(base) ?? [, "", base];
+					return (
+						<button key={f} className={f === path ? "on" : ""} onClick={() => setSel(f)} title={f}>
+							<span className="mono">{num}</span> {(slug ?? base).replace(/-/g, " ")}
+						</button>
+					);
+				})}
+			</div>
+			{file?.text ? (
+				<article className="doc">
+					<div className="doc-path mono">{path} · on main</div>
+					<Markdown text={file.text} />
+				</article>
+			) : (
+				<div className="muted pad">Loading…</div>
+			)}
+		</div>
+	);
+}
+
 function WireframesTab({ ws, projectId, tick }: { ws: string; projectId: string; tick: number }) {
 	const files = useRepoFiles(ws, projectId, tick);
 	const frames = useMemo(() => (files ?? []).filter((f) => /^docs\/wireframes\/.+\.html?$/i.test(f)), [files]);
@@ -475,7 +517,7 @@ function RepoTab({ ws, projectId, tick }: { ws: string; projectId: string; tick:
 		<div className="repo">
 			<div className="repo-files">
 				<div className="label">Files on main</div>
-				{(files ?? []).map((f) => (
+				{(files ?? []).filter((f) => !f.endsWith(".gitkeep")).map((f) => (
 					<button key={f} className={f === sel ? "on" : ""} onClick={() => setSel(f)} title={f}>
 						<span className="muted">{f.includes("/") ? f.slice(0, f.lastIndexOf("/") + 1) : ""}</span>
 						{f.slice(f.lastIndexOf("/") + 1)}
@@ -573,7 +615,7 @@ export function NewProjectDialog({ ws, models, picker, defaultModel, onClose }: 
 			<AttachmentTray att={att} />
 			<div className="np-attach">
 				<AttachButton att={att} className="btn small" label="📎 Attach files" />
-				<span className="muted">Specs, mockups, screenshots, data — any format. They're committed to the repo under inputs/ for the whole team.</span>
+				<span className="muted">Specs, mockups, screenshots, data — any format. Kept with the project (outside the git repo) for the whole team to read.</span>
 			</div>
 			</div>
 			<div className="row" style={{ gap: 10, marginTop: 10 }}>

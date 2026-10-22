@@ -614,7 +614,7 @@ export function useAttachments(wsId: string) {
 	};
 }
 
-function FileChips({ wsId, files }: { wsId: string; files: { id: string; name: string; kind: string; mime: string; size: number }[] }) {
+export function FileChips({ wsId, files }: { wsId: string; files: { id: string; name: string; kind: string; mime: string; size: number }[] }) {
 	return (
 		<div className="attachments in-message">
 			{files.map((f) =>

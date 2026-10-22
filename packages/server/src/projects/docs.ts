@@ -36,6 +36,9 @@ export type AgentRecord = {
 	removed?: boolean;
 };
 
+/** A file the user handed the team, kept outside git in the project's attachments folder. */
+export type AttachmentRecord = { name: string; fileId: string; original: string; kind: string; mime: string; size: number; at: number; by: string };
+
 export type Question = { id: string; agent: string; text: string; at: number; answeredAt?: number };
 export type Activity = { at: number; agent?: string; kind: "team" | "message" | "publish" | "question" | "stage" | "user" | "error"; text: string };
 
@@ -46,6 +49,8 @@ export type ProjectState = {
 	questions: Record<string, Question>;
 	/** Newest last, bounded. */
 	activity: Activity[];
+	/** By stored file name. Absent in projects created before attachments moved out of git. */
+	attachments?: Record<string, AttachmentRecord>;
 };
 
 /** One document per project: its team, open questions for the user, and activity feed. */
@@ -54,7 +59,7 @@ export const ProjectDoc = defineDocFamily<ProjectState, null>({
 	version: 1,
 	scope: "session",
 	family: true,
-	initial: () => ({ agents: {}, order: [], questions: {}, activity: [] }),
+	initial: () => ({ agents: {}, order: [], questions: {}, activity: [], attachments: {} }),
 	checkpointWhen: (_v: unknown, _ops: unknown, info: { deltasSinceBase: number }) => info.deltasSinceBase >= 40,
 } as any);
 

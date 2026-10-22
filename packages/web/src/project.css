@@ -157,3 +157,14 @@
 .ad-tray { grid-column: 1 / -1; }
 .ad-tray .attachments { margin: 0; padding: 0; }
 .ad-actions { display: flex; gap: 4px; align-items: center; }
+
+/* attachments + decision records */
+.ov-attachments .attachments { margin: 8px 0 0; padding: 0; }
+.dr { display: grid; grid-template-columns: minmax(180px, 250px) minmax(0, 1fr); height: 100%; }
+.dr-list { border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.dr-list button { border: 0; background: transparent; text-align: left; font-size: 13px; padding: 6px 8px; border-radius: 6px; cursor: pointer; text-transform: capitalize; }
+.dr-list button .mono { color: var(--signal-ink); font-size: 11px; margin-right: 4px; }
+.dr-list button:hover { background: var(--paper-2); }
+.dr-list button.on { background: var(--text); color: var(--paper); }
+.dr-list button.on .mono { color: #ffb08f; }
+.dr .doc { overflow-y: auto; margin: 0; max-width: none; }

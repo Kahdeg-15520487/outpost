@@ -8,17 +8,17 @@ import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, type Activity, type AgentRecord, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
 import { ProjectRepo } from "./repo.ts";
+import { join } from "node:path";
 import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 
 type ModelRef = { provider: string; modelId: string };
-/** A user file handed to the team: where it is in the repo, plus what the transcript's file chips need. */
+/** A user file handed to the team: its absolute path in the attachments folder, plus what the transcript's file chips need. */
 export type Attached = { id: string; name: string; kind: string; mime: string; size: number; path: string };
 
-function describeFiles(files: Attached[], lead: boolean) {
+function describeFiles(files: Attached[]) {
 	if (!files.length) return "";
-	const where = lead ? "They are in your working directory (main)." : "Run `sync_main` to get them into your worktree.";
-	return `\n\n[Attached files, committed to main under inputs/. ${where} Use \`read\` for text and images; inspect other formats (PDF, Office, archives) with bash.]\n${files.map((f) => `- ${f.path} (${f.kind}, ${f.mime}, ${formatBytes(f.size)})`).join("\n")}`;
+	return `\n\n[Attachments from the user. They live outside the repo, in the project's attachments folder: read them in place with \`read\` (text, images) or bash (PDF, Office, archives). Don't copy them into the repo; cite them by file name in docs and decision records.]\n${files.map((f) => `- ${f.path} (${f.kind}, ${f.mime}, ${formatBytes(f.size)})`).join("\n")}`;
 }
 const STAGES: ProjectStage[] = ["kickoff", "discovery", "design", "planning", "build", "iterate", "done"];
 
@@ -136,7 +136,7 @@ export class ProjectManager {
 			name: "Lead",
 			brief: `Kick off the project. The user's goal:\n\n${goal}${files.length ? "\n\nThe user attached reference material: read it before deciding anything, and point teammates to the relevant files in their briefs." : ""}\n\nRoles you can add: ${roleCatalog()
 				.map((r) => `\`${r.id}\` (${r.title}: ${r.summary})`)
-				.join("; ")}, or any other role the goal needs.${describeFiles(files, true)}`,
+				.join("; ")}, or any other role the goal needs.${describeFiles(files)}`,
 			start: true,
 			files,
 		});
@@ -164,7 +164,7 @@ export class ProjectManager {
 					thinkingLevel: "medium",
 					extensions: [this.coding, this.extension],
 					...(o.role === "lead" ? {} : { tools: { remove: this.#leadOnly } }),
-					instructions: agentInstructions({ role: o.role, title, key, name, project: meta, brief: o.brief }),
+					instructions: agentInstructions({ role: o.role, title, key, name, project: meta, brief: o.brief, attachmentsDir: repo.attachmentsDir }),
 					cwd,
 				},
 				init: async (tx, convId) => {
@@ -193,7 +193,7 @@ export class ProjectManager {
 		const header = m.kind === "user" ? `[Message from the user, ${m.from}]` : m.kind === "brief" ? `[Brief from ${m.from}]` : `[Message from ${m.from} (${m.fromKey})]`;
 		const files = m.files ?? [];
 		// The kickoff brief built by create() already lists its files.
-		const fileNote = m.kind === "brief" ? "" : describeFiles(files, target.role === "lead");
+		const fileNote = m.kind === "brief" ? "" : describeFiles(files);
 		await c.submit(
 			{
 				type: "input",
@@ -209,7 +209,7 @@ export class ProjectManager {
 	/** The user writes to an agent from its tile; it also answers any question that agent asked. */
 	async userMessage(projectId: string, key: string, user: User, text: string, fileIds: string[] = []) {
 		const files = await this.attach(projectId, fileIds, user);
-		if (!text.trim()) text = files.length === 1 ? `(attached ${files[0]!.path})` : `(attached ${files.length} files)`;
+		if (!text.trim()) text = files.length === 1 ? `(attached ${files[0]!.name})` : `(attached ${files.length} files)`;
 		await this.deliver(projectId, key, { from: user.displayName, fromKey: `user:${user.id}`, text, kind: "user", files });
 		await this.ws.harness.commit(async (tx) => {
 			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
@@ -218,18 +218,20 @@ export class ProjectManager {
 		}, ctx);
 	}
 
-	/** Commit workspace uploads into the project repo's `inputs/` so the whole team can use them. */
+	/** Store workspace uploads in the project's attachments folder (outside git) for the whole team. */
 	async attach(projectId: string, fileIds: string[], user: User): Promise<Attached[]> {
 		if (!fileIds.length) return [];
-		const metas = [];
+		const metas: Awaited<ReturnType<typeof this.ws.files.get>>[] = [];
 		for (const id of fileIds.slice(0, 20)) metas.push(await this.ws.files.get(id));
-		const paths = await this.repo(projectId).addInputs(
-			metas.map((m) => ({ name: m.name, bytes: this.ws.files.all(m) })),
-			`Add ${metas.length === 1 ? metas[0]!.name : `${metas.length} files`} from ${user.displayName}`,
-		);
-		const files = metas.map((m, i) => ({ id: m.id, name: m.name, kind: m.kind, mime: m.mime, size: m.size, path: paths[i]! }));
-		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} added ${files.map((f) => f.path).join(", ")}` });
-		hub.publish(this.channel(projectId), { t: "project.repo", ws: this.ws.id, project: projectId, head: await this.repo(projectId).head().catch(() => undefined), files: paths });
+		const repo = this.repo(projectId);
+		const names = repo.addAttachments(metas.map((m) => ({ name: m.name, bytes: this.ws.files.all(m) })));
+		const files = metas.map((m, i) => ({ id: m.id, name: names[i]!, kind: m.kind, mime: m.mime, size: m.size, path: join(repo.attachmentsDir, names[i]!) }));
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			st.attachments ??= {};
+			for (const [i, f] of files.entries()) st.attachments[f.name] = { name: f.name, fileId: f.id, original: metas[i]!.name, kind: f.kind, mime: f.mime, size: f.size, at: Date.now(), by: user.displayName };
+			pushActivity(st, { at: Date.now(), kind: "user", text: `${user.displayName} attached ${files.map((f) => f.name).join(", ")}` });
+		}, ctx);
 		return files;
 	}
 

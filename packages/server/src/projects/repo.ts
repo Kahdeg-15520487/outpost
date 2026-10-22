@@ -4,8 +4,13 @@ import { join } from "node:path";
 import { config } from "../config.ts";
 
 /**
- * A project's code: one git repository, always a new folder under the data dir, with
- *   repo/                 the `main` checkout — the product as merged so far (the Lead works here)
+ * A project on disk (see docs/design/agent-teams.md, "Repository layout"):
+ *   repo/                 git; `main` = the product as merged so far (the Lead works here)
+ *     README.md             what the product is and how to run it
+ *     .pios/project.json    install/test/dev commands pi-os runs (inside app/)
+ *     app/                  everything the application needs to build and run, nothing else
+ *     docs/                 requirements, design, backlog snapshot, decisions, wireframes, prototypes
+ *   attachments/          the user's uploads; outside git, agents read them in place
  *   worktrees/<agent>/    one worktree per agent, on branch `agent/<agent>`
  * Agents never share a working tree, so parallel work can't trample files; their work reaches
  * `main` only through `publish()` (a merge). Reads for the UI come from `main`'s HEAD.
@@ -49,16 +54,32 @@ export class ProjectRepo {
 		return join(this.root, "worktrees", agentKey);
 	}
 
+	/** The user's uploads: outside git, read in place by agents, never committed. */
+	get attachmentsDir() {
+		return join(this.root, "attachments");
+	}
+
 	branch(agentKey: string) {
 		return `agent/${agentKey}`;
 	}
 
 	async init(goal: string, name: string) {
 		mkdirSync(this.main, { recursive: true });
+		mkdirSync(this.attachmentsDir, { recursive: true });
 		if (existsSync(join(this.main, ".git"))) return;
 		await git(this.main, ["init", "-q", "-b", "main"]);
-		writeFileSync(join(this.main, "README.md"), `# ${name}\n\n## Goal\n\n${goal.trim()}\n`);
-		writeFileSync(join(this.main, ".gitignore"), "node_modules/\ndist/\nbuild/\n.env\n.env.*\n*.log\n.DS_Store\n");
+		const files: Record<string, string> = {
+			"README.md": `# ${name}\n\n${goal.trim()}\n\n## Layout\n\n- \`app/\` — the application: everything it needs to build and run.\n- \`docs/\` — requirements, design, backlog, decision records (\`docs/decisions/\`), wireframes and throwaway prototypes.\n- \`.pios/project.json\` — how pi-os installs, tests and runs the app.\n`,
+			".gitignore": "node_modules/\ndist/\nbuild/\n.env\n.env.*\n*.log\n.DS_Store\n",
+			"app/.gitkeep": "",
+			"docs/decisions/.gitkeep": "",
+			"docs/wireframes/.gitkeep": "",
+			"docs/prototypes/.gitkeep": "",
+		};
+		for (const [path, content] of Object.entries(files)) {
+			mkdirSync(join(this.main, path, ".."), { recursive: true });
+			writeFileSync(join(this.main, path), content);
+		}
 		await git(this.main, ["add", "-A"]);
 		await git(this.main, ["commit", "-q", "-m", "Project created"]);
 	}
@@ -112,32 +133,25 @@ export class ProjectRepo {
 		}
 	}
 
-	// ---------------------------------------------------------------- reads of main (for the UI)
-
 	/**
-	 * Files the user handed the team (specs, mockups, data): written to `inputs/` on `main` and
-	 * committed, so every agent can read them with its normal tools. Never overwrites: a name
-	 * that is taken by different content gets a numbered suffix. Returns the repo paths.
+	 * Store the user's uploads in `attachments/` (outside git). Never overwrites: a name taken by
+	 * different content gets a numbered suffix. Returns the stored file names.
 	 */
-	addInputs(files: { name: string; bytes: Buffer }[], message: string): Promise<string[]> {
-		return withLock(this.projectId, async () => {
-			const dir = join(this.main, "inputs");
-			mkdirSync(dir, { recursive: true });
-			const paths: string[] = [];
-			for (const f of files) {
-				const safe = f.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").replace(/^\.+/, "_").slice(0, 120) || "file";
-				const dot = safe.lastIndexOf(".");
-				const [stem, ext] = dot > 0 ? [safe.slice(0, dot), safe.slice(dot)] : [safe, ""];
-				let name = safe;
-				for (let i = 2; existsSync(join(dir, name)) && !readFileSync(join(dir, name)).equals(f.bytes); i++) name = `${stem}-${i}${ext}`;
-				writeFileSync(join(dir, name), f.bytes);
-				paths.push(`inputs/${name}`);
-			}
-			await git(this.main, ["add", "--", ...paths]);
-			if ((await git(this.main, ["diff", "--cached", "--name-only"])).trim()) await git(this.main, ["commit", "-q", "-m", message]);
-			return paths;
+	addAttachments(files: { name: string; bytes: Buffer }[]): string[] {
+		const dir = this.attachmentsDir;
+		mkdirSync(dir, { recursive: true });
+		return files.map((f) => {
+			const safe = f.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").replace(/^\.+/, "_").slice(0, 120) || "file";
+			const dot = safe.lastIndexOf(".");
+			const [stem, ext] = dot > 0 ? [safe.slice(0, dot), safe.slice(dot)] : [safe, ""];
+			let name = safe;
+			for (let i = 2; existsSync(join(dir, name)) && !readFileSync(join(dir, name)).equals(f.bytes); i++) name = `${stem}-${i}${ext}`;
+			writeFileSync(join(dir, name), f.bytes);
+			return name;
 		});
 	}
+
+	// ---------------------------------------------------------------- reads of main (for the UI)
 
 	async files(): Promise<string[]> {
 		return (await git(this.main, ["ls-tree", "-r", "--name-only", "HEAD"])).split("\n").filter(Boolean);

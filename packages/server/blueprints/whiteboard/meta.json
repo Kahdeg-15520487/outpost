@@ -1,1 +1,33 @@
-{ "name": "Whiteboard", "icon": "🖍️", "description": "A collaborative drawing canvas with live cursors of everyone on the board." }
+{
+	"name": "Whiteboard",
+	"icon": "🖍️",
+	"description": "A collaborative drawing canvas with live cursors of everyone on the board.",
+	"headline": "What should we *sketch*?",
+	"intro": "The whiteboard is open on the right. The agent can draw strokes on it through its API, or add tools like shapes, colors and text.",
+	"suggestions": [
+		{
+			"k": "🗺️",
+			"t": "Sketch a diagram",
+			"d": "client → API → database",
+			"p": "Draw a simple architecture diagram on this board: a client, an API and a database, connected by arrows."
+		},
+		{
+			"k": "🎨",
+			"t": "Color palette",
+			"d": "and stroke widths",
+			"p": "Add a color palette and a stroke-width picker to this whiteboard."
+		},
+		{
+			"k": "🔷",
+			"t": "Shapes & text",
+			"d": "rectangles, arrows, labels",
+			"p": "Add rectangle, arrow and text tools to this whiteboard."
+		},
+		{
+			"k": "🖼️",
+			"t": "Export",
+			"d": "save the board as PNG",
+			"p": "Add a button that exports this board as a PNG download."
+		}
+	]
+}

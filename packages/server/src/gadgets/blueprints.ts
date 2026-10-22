@@ -22,6 +22,7 @@ export function installBuiltinBlueprints() {
 		const root = join(dir, name);
 		if (!statSync(root).isDirectory()) continue;
 		const meta = JSON.parse(readFileSync(join(root, "meta.json"), "utf8"));
-		blueprints.upsert({ id: `bp_${name}`, name: meta.name, description: meta.description, icon: meta.icon ?? "◆", authorId: null, visibility: "public", files: walk(root), createdAt: 0 });
+		const intro = { headline: meta.headline, intro: meta.intro, suggestions: meta.suggestions };
+		blueprints.upsert({ id: `bp_${name}`, name: meta.name, description: meta.description, icon: meta.icon ?? "◆", authorId: null, visibility: "public", files: walk(root), createdAt: 0, intro });
 	}
 }

@@ -1,1 +1,33 @@
-{ "name": "Notes", "icon": "📝", "description": "A shared notebook: pages with live co-editing and edit attribution." }
+{
+	"name": "Notes",
+	"icon": "📝",
+	"description": "A shared notebook: pages with live co-editing and edit attribution.",
+	"headline": "What should we *write down*?",
+	"intro": "Your notebook is open on the right. The agent can create pages, write and append to them, and co-edit alongside you.",
+	"suggestions": [
+		{
+			"k": "🗓️",
+			"t": "Meeting notes",
+			"d": "a reusable template",
+			"p": "Create a meeting-notes page in this notebook with sections for attendees, decisions and action items."
+		},
+		{
+			"k": "🧠",
+			"t": "Summarize",
+			"d": "all pages in one",
+			"p": "Read every page in this notebook and write a summary page that links the key ideas together."
+		},
+		{
+			"k": "📎",
+			"t": "From a file",
+			"d": "attach a document first",
+			"p": "Turn the attached document into well-structured pages in this notebook."
+		},
+		{
+			"k": "🔎",
+			"t": "Add search",
+			"d": "change the app itself",
+			"p": "Add full-text search across pages to this notebook app."
+		}
+	]
+}

@@ -1,1 +1,45 @@
-{ "name": "Slides", "icon": "🎞️", "description": "A slide deck with themes, editable inline, and a presenter mode everyone follows live. The agent drafts and edits the deck through its API." }
+{
+	"name": "Slides",
+	"icon": "🎞️",
+	"description": "A slide deck with themes, editable inline, and a presenter mode everyone follows live. The agent drafts and edits the deck through its API.",
+	"headline": "What's this deck *about*?",
+	"intro": "Your deck is open on the right. The agent edits it live through the deck's API — slides, layouts, themes, speaker notes — and can present it to everyone watching.",
+	"suggestions": [
+		{
+			"k": "✍️",
+			"t": "Draft the deck",
+			"d": "from a one-line brief",
+			"p": "Draft this deck for my Q3 planning meeting: goals, risks, timeline, asks. 6–8 slides."
+		},
+		{
+			"k": "🎨",
+			"t": "Restyle it",
+			"d": "pick a theme that fits",
+			"p": "Look at the deck, pick the theme that suits its content best, and tighten the layouts slide by slide."
+		},
+		{
+			"k": "🗒️",
+			"t": "Speaker notes",
+			"d": "for every slide",
+			"p": "Write concise speaker notes for every slide in this deck."
+		},
+		{
+			"k": "✂️",
+			"t": "Make it shorter",
+			"d": "keep the strongest points",
+			"p": "Cut this deck down to 5 slides at most, keeping only the strongest points."
+		},
+		{
+			"k": "📎",
+			"t": "From a document",
+			"d": "attach a file first",
+			"p": "Turn the attached document into slides in this deck."
+		},
+		{
+			"k": "🔍",
+			"t": "Review it",
+			"d": "look at it and critique",
+			"p": "Take a screenshot of this deck, critique it like a design reviewer, then fix the top three issues."
+		}
+	]
+}

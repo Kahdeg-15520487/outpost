@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type ModelInfo, type ModelRef, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Gadget, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
 
-const SUGGESTIONS = [
+const SUGGESTIONS: Suggestion[] = [
 	{ k: "🎞️", t: "Make slides", d: "for my Q3 planning meeting", p: "Make slides for my Q3 planning meeting: goals, risks, timeline, asks." },
 	{ k: "✅", t: "Shared task list", d: "for the team offsite", p: "Make a todo list for the team offsite and add the obvious tasks." },
 	{ k: "⭕", t: "Play a game", d: "tic tac toe against the agent", p: "Make a tic tac toe game. I'll be X and you be O — join the game." },
@@ -21,6 +21,8 @@ export function ChatView(props: {
 	defaultModel?: ModelRef;
 	grants: WorkspaceDocs["grants"];
 	openGadget?: string;
+	/** The gadget open beside the chat, when it's in this workspace's list. */
+	gadget?: Gadget;
 	onNewChat: () => void;
 }) {
 	const { ws, chatId } = props;
@@ -65,7 +67,7 @@ export function ChatView(props: {
 			navigate(chatHref(ws.id, id, props.openGadget));
 		}
 		stick.current = true;
-		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode, files });
+		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode, files, gadget: props.openGadget });
 		att.clear();
 	};
 
@@ -130,33 +132,77 @@ export function ChatView(props: {
 			>
 				<div className="transcript-inner">
 					{empty ? (
-						<div className="hero">
-							<h1>
-								What should we <em>make</em>?
-							</h1>
-							<p>
-								Ask for anything. The agent works in code, builds sandboxed apps (<b>gadgets</b>) you can share, and reaches company systems only through <b>Gatekeepers</b> you introduce — with
-								side effects queued for your approval.
-							</p>
-							{canEdit && (
-								<div className="suggestions">
-									{SUGGESTIONS.map((s) => (
-										<button key={s.t} className="suggestion" onClick={() => send(s.p)}>
-											<div className="k">{s.k}</div>
-											<div className="t">{s.t}</div>
-											<div className="d">{s.d}</div>
-										</button>
-									))}
-								</div>
-							)}
-						</div>
+						props.openGadget ? (
+							<GadgetHero gadget={props.gadget} canEdit={canEdit} onPick={(p) => send(p)} />
+						) : (
+							<div className="hero">
+								<h1>
+									What should we <em>make</em>?
+								</h1>
+								<p>
+									Ask for anything. The agent works in code, builds sandboxed apps (<b>gadgets</b>) you can share, and reaches company systems only through <b>Gatekeepers</b> you introduce — with
+									side effects queued for your approval.
+								</p>
+								{canEdit && <Suggestions list={SUGGESTIONS} onPick={(p) => send(p)} />}
+							</div>
+						)
 					) : (
 						<Transcript state={state} wsId={ws.id} chatId={chatId!} />
 					)}
 				</div>
 			</div>
-			{canEdit && <Composer chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
+			{canEdit && <Composer placeholder={props.openGadget && empty ? `Ask the agent about ${props.gadget?.name ?? "this gadget"}…` : undefined} chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
 			{resources && chatId && <ResourcesDialog ws={ws} holder={{ kind: "conversation", id: chatId }} grants={props.grants} onClose={() => setResources(false)} />}
+		</div>
+	);
+}
+
+function Suggestions({ list, onPick }: { list: Suggestion[]; onPick: (prompt: string) => void }) {
+	return (
+		<div className="suggestions">
+			{list.map((s, i) => (
+				<button key={s.t} className="suggestion" style={{ animationDelay: `${120 + i * 45}ms` }} onClick={() => onPick(s.p)} title={s.p}>
+					<div className="k">{s.k}</div>
+					<div className="t">{s.t}</div>
+					<div className="d">{s.d}</div>
+				</button>
+			))}
+		</div>
+	);
+}
+
+/** "*word*" in a blueprint headline is the accent word. */
+function Headline({ text }: { text: string }) {
+	return <>{text.split(/(\*[^*]+\*)/).map((part, i) => (part.startsWith("*") && part.endsWith("*") ? <em key={i}>{part.slice(1, -1)}</em> : part))}</>;
+}
+
+/** The empty state of a chat opened beside a gadget: about that gadget, not about pi-os in general. */
+function GadgetHero({ gadget, canEdit, onPick }: { gadget?: Gadget; canEdit: boolean; onPick: (prompt: string) => void }) {
+	const name = gadget?.name ?? "this gadget";
+	const bp = gadget?.blueprint;
+	const suggestions: Suggestion[] = bp?.suggestions?.length
+		? bp.suggestions
+		: [
+				{ k: "🔍", t: "Review it", d: "look at it and critique", p: `Take a screenshot of ${name}, critique it like a design reviewer, then fix the top three issues.` },
+				{ k: "🧭", t: "How does it work?", d: "files, API and data", p: `Explain how ${name} works: its files, its server API and the data it keeps.` },
+				{ k: "✨", t: "Add a feature", d: "tell the agent what", p: `I want to add a feature to ${name}. Ask me what it is, then build it.` },
+				{ k: "🎨", t: "Polish the look", d: "layout, type, spacing", p: `Restyle ${name}: cleaner layout, better typography, consistent spacing. Check it with a screenshot.` },
+			];
+	return (
+		<div className="hero gadget-hero">
+			<div className="gh-tag">
+				<span className="gh-icon">{gadget?.icon ?? "◆"}</span>
+				<span className="gh-name">{name}</span>
+				<span className="gh-src">{!bp ? "gadget" : bp.name === name ? "blueprint" : `from ${bp.name} blueprint`}</span>
+				<span className="gh-arrow" aria-hidden>
+					open on the right →
+				</span>
+			</div>
+			<h1>
+				<Headline text={bp?.headline ?? `What's next for *${name}*?`} />
+			</h1>
+			<p>{bp?.intro ?? (bp ? bp.description : `${name} is open on the right. The agent can use it through its server API, change its code, or look at it and fix what it sees.`)}</p>
+			{canEdit && <Suggestions list={suggestions} onPick={onPick} />}
 		</div>
 	);
 }
@@ -347,7 +393,7 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ chatId, state, models, model, onModel, onAbort, onSend, att }: { chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void>; att: Attachments }) {
+function Composer({ placeholder, chatId, state, models, model, onModel, onAbort, onSend, att }: { placeholder?: string; chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void>; att: Attachments }) {
 	const [text, setText] = useState("");
 	const picker = useRef<HTMLInputElement>(null);
 	const canSend = !!(text.trim() || att.items.some((a) => a.meta)) && !att.uploading;
@@ -419,7 +465,7 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend, att 
 					ref={ref}
 					rows={1}
 					value={text}
-					placeholder={state.busy ? "Steer the agent, or queue a follow-up…" : "Ask the agent to do something…"}
+					placeholder={state.busy ? "Steer the agent, or queue a follow-up…" : (placeholder ?? "Ask the agent to do something…")}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && !e.shiftKey) {

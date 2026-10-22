@@ -38,7 +38,12 @@ export type BlueprintRow = {
 	files: Record<string, string>;
 	createdAt: number;
 	builtin?: boolean;
+	/** How a fresh chat next to a gadget made from this blueprint greets the user. */
+	intro?: BlueprintIntro;
 };
+
+export type BlueprintSuggestion = { k: string; t: string; d: string; p: string };
+export type BlueprintIntro = { headline?: string; intro?: string; suggestions?: BlueprintSuggestion[] };
 
 const db = new DatabaseSync(config.systemDb);
 db.exec(`
@@ -52,6 +57,8 @@ CREATE TABLE IF NOT EXISTS gadget_shares (gadget_id TEXT NOT NULL, user_id TEXT 
 CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, gadget_id TEXT NOT NULL, role TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blueprints (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', author_id TEXT, visibility TEXT NOT NULL, files TEXT NOT NULL, created_at INTEGER NOT NULL);
 `);
+// Added after the first release; existing databases get the column on startup.
+if (!(db.prepare("PRAGMA table_info(blueprints)").all() as { name: string }[]).some((c) => c.name === "intro")) db.exec("ALTER TABLE blueprints ADD COLUMN intro TEXT NOT NULL DEFAULT '{}'");
 
 const secret = config.secret;
 
@@ -254,13 +261,14 @@ const toBlueprint = (row: any): BlueprintRow => ({
 	visibility: row.visibility,
 	files: JSON.parse(row.files),
 	createdAt: row.created_at,
+	intro: JSON.parse(row.intro || "{}"),
 });
 
 export const blueprints = {
 	upsert(bp: BlueprintRow) {
 		db.prepare(
-			"INSERT INTO blueprints VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET name=excluded.name, description=excluded.description, icon=excluded.icon, visibility=excluded.visibility, files=excluded.files",
-		).run(bp.id, bp.name, bp.description, bp.icon, bp.authorId, bp.visibility, JSON.stringify(bp.files), bp.createdAt);
+			"INSERT INTO blueprints (id, name, description, icon, author_id, visibility, files, created_at, intro) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET name=excluded.name, description=excluded.description, icon=excluded.icon, visibility=excluded.visibility, files=excluded.files, intro=excluded.intro",
+		).run(bp.id, bp.name, bp.description, bp.icon, bp.authorId, bp.visibility, JSON.stringify(bp.files), bp.createdAt, JSON.stringify(bp.intro ?? {}));
 	},
 	get(id: string): BlueprintRow | undefined {
 		const row = db.prepare("SELECT * FROM blueprints WHERE id = ?").get(id);

@@ -1,1 +1,33 @@
-{ "name": "Tic tac toe", "icon": "⭕", "description": "Two-player game. Play a friend, or ask the agent to take a seat and play against you." }
+{
+	"name": "Tic tac toe",
+	"icon": "⭕",
+	"description": "Two-player game. Play a friend, or ask the agent to take a seat and play against you.",
+	"headline": "Ready to *play*?",
+	"intro": "The board is open on the right. The agent can take a seat and play you, or change the rules of the game itself.",
+	"suggestions": [
+		{
+			"k": "🤖",
+			"t": "Play me",
+			"d": "you're O, I'm X",
+			"p": "Take a seat as O and play against me. I'm X and I'll go first."
+		},
+		{
+			"k": "🏆",
+			"t": "Keep score",
+			"d": "wins across rounds",
+			"p": "Add a scoreboard to this game that tracks wins and draws across rounds."
+		},
+		{
+			"k": "🔢",
+			"t": "Bigger board",
+			"d": "4×4, four in a row",
+			"p": "Change this game to a 4×4 board where you need four in a row to win."
+		},
+		{
+			"k": "✨",
+			"t": "Make it pop",
+			"d": "animations and sound",
+			"p": "Give this game some life: animate the marks, highlight the winning line, and add a little celebration."
+		}
+	]
+}

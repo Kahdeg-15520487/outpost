@@ -4,7 +4,10 @@ export type Workspace = { id: string; name: string; ownerId: string; role: Role;
 export type WorkspaceSettings = { companyContext?: string; defaultModel?: ModelRef; toolMode?: "hybrid" | "codemode" };
 export type ModelRef = { provider: string; modelId: string };
 export type ModelInfo = { provider: string; id: string; name: string; reasoning: boolean; contextWindow: number; vision: boolean };
-export type Gadget = { id: string; workspaceId: string; ownerId: string; name: string; icon: string; blueprintId: string | null; updatedAt: number; role: Role; workspaceName?: string; owner?: string };
+export type Gadget = { id: string; workspaceId: string; ownerId: string; name: string; icon: string; blueprintId: string | null; updatedAt: number; role: Role; workspaceName?: string; owner?: string; blueprint?: BlueprintIntro };
+export type Suggestion = { k: string; t: string; d: string; p: string };
+/** How a fresh chat beside a gadget greets the user; comes from the blueprint the gadget was made from. */
+export type BlueprintIntro = { name: string; description: string; headline?: string; intro?: string; suggestions?: Suggestion[] };
 export type Blueprint = { id: string; name: string; description: string; icon: string; authorId: string | null; author?: string; visibility: string; fileCount: number; mine: boolean };
 export type GatekeeperInfo = { id: string; title: string; icon: string; description: string; resourceHint: string; setup?: string; methods: { name: string; description: string; effect: "read" | "write" }[] };
 export type Holder = { kind: "conversation" | "gadget"; id: string };

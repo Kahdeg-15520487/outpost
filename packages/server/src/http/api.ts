@@ -24,7 +24,9 @@ async function member(req: Req, min: Role = "viewer") {
 
 function gadgetView(g: ReturnType<typeof gadgets.get> & {}, role: Role) {
 	const ws = workspaces.get(g.workspaceId);
-	return { ...g, role, workspaceName: ws?.name, owner: users.get(g.ownerId)?.displayName };
+	const bp = g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
+	const blueprint = bp && { name: bp.name, description: bp.description, ...bp.intro };
+	return { ...g, role, workspaceName: ws?.name, owner: users.get(g.ownerId)?.displayName, blueprint };
 }
 
 function signIn(req: Req, user: User) {
@@ -124,10 +126,10 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/chats/:chat/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { content, mode, files } = await req.body();
+		const { content, mode, files, gadget } = await req.body();
 		const fileIds = Array.isArray(files) ? files.map(String).slice(0, 20) : [];
 		if (!String(content ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
-		return { submission: await ws.send(req.params.chat!, user, String(content ?? ""), mode === "steer" ? "steer" : "followUp", fileIds) };
+		return { submission: await ws.send(req.params.chat!, user, String(content ?? ""), mode === "steer" ? "steer" : "followUp", fileIds, typeof gadget === "string" ? gadget : undefined) };
 	});
 	r.post("/api/w/:ws/chats/:chat/abort", async (req) => {
 		const { ws } = await member(req, "editor");

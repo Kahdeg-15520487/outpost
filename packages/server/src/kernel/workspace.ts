@@ -177,12 +177,15 @@ export class Workspace {
 		return c;
 	}
 
-	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = []) {
+	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = [], gadgetId?: string) {
 		const c = await this.conversation(chatId);
 		const attached: FileMeta[] = [];
 		for (const id of fileIds) attached.push(await this.files.get(id));
 		for (const f of attached) if (!f.chatId) await this.files.update(f.id, (m) => void (m.chatId = chatId));
 		if (!content.trim() && attached.length) content = attached.length === 1 ? `(attached ${attached[0]!.name})` : `(attached ${attached.length} files)`;
+		// The user typed this with a gadget open beside the chat: "this deck", "the board", "it" mean that gadget.
+		const open = gadgetId ? gadgets.get(gadgetId) : undefined;
+		const focus = open?.workspaceId === this.id ? `[pi-os: the user has gadget ${open.id} "${open.name}"${open.blueprintId ? ` (from blueprint ${open.blueprintId})` : ""} open next to this chat. Unless they say otherwise, "this", "it" and the like refer to that gadget — use the gadget tools on it, and read its API first.]\n\n` : "";
 		await this.harness.commit(async (tx) => {
 			const chats = await tx.doc(ChatsDoc);
 			const chat = chats.chats[chatId];
@@ -195,7 +198,7 @@ export class Workspace {
 		const submission = await c.submit(
 			{
 				type: "input",
-				content: attached.length ? [{ type: "text", text: content }, ...(await this.#attachmentParts(attached))] : content,
+				content: attached.length ? [{ type: "text", text: focus + content }, ...(await this.#attachmentParts(attached))] : focus + content,
 				whenBusy: mode === "steer" ? "steer" : "followUp",
 				entry: {
 					kind: "os.user",
@@ -355,7 +358,9 @@ export class Workspace {
 
 	async publishBlueprint(gadgetId: string, meta: { name: string; description: string; visibility: "public" | "private"; authorId: string }): Promise<BlueprintRow> {
 		const g = gadgets.get(gadgetId)!;
-		const bp: BlueprintRow = { id: newId("bp"), name: meta.name, description: meta.description, icon: g.icon, authorId: meta.authorId, visibility: meta.visibility, files: await this.gadgetFiles(gadgetId), createdAt: Date.now() };
+		// A gadget made from a blueprint keeps greeting people the same way once republished.
+		const intro = g.blueprintId ? blueprints.get(g.blueprintId)?.intro : undefined;
+		const bp: BlueprintRow = { id: newId("bp"), name: meta.name, description: meta.description, icon: g.icon, authorId: meta.authorId, visibility: meta.visibility, files: await this.gadgetFiles(gadgetId), createdAt: Date.now(), intro };
 		blueprints.upsert(bp);
 		hub.publish("blueprints", { t: "blueprints.changed" });
 		return bp;

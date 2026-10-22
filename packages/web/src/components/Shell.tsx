@@ -170,7 +170,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				</div>
 			</aside>
 
-			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} onNewChat={newChat} />}
+			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.gadget && (
 				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}

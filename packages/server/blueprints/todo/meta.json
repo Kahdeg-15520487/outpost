@@ -1,1 +1,39 @@
-{ "name": "Shared task list", "icon": "✅", "description": "A realtime multiplayer task list with assignees. A good starting point for trackers and checklists." }
+{
+	"name": "Shared task list",
+	"icon": "✅",
+	"description": "A realtime multiplayer task list with assignees. A good starting point for trackers and checklists.",
+	"headline": "What needs *doing*?",
+	"intro": "Your task list is open on the right. The agent can add, assign, reorder and check off tasks for you — everyone with access sees changes live.",
+	"suggestions": [
+		{
+			"k": "🧳",
+			"t": "Plan the offsite",
+			"d": "fill in the obvious tasks",
+			"p": "Fill this list with the tasks for planning a two-day team offsite."
+		},
+		{
+			"k": "📋",
+			"t": "Break down a goal",
+			"d": "into concrete steps",
+			"p": "Help me break a goal into concrete tasks for this list. Ask me what the goal is first."
+		},
+		{
+			"k": "🧹",
+			"t": "Tidy up",
+			"d": "dedupe, reword, reorder",
+			"p": "Tidy this list: merge duplicates, make each task an actionable verb phrase, and order by priority."
+		},
+		{
+			"k": "✅",
+			"t": "Clear done",
+			"d": "and summarize what shipped",
+			"p": "Summarize the completed tasks in one paragraph, then clear them from the list."
+		},
+		{
+			"k": "📅",
+			"t": "Add due dates",
+			"d": "change the app itself",
+			"p": "Add due dates to this task list app: a date picker per task, overdue tasks in red, sorted by date."
+		}
+	]
+}

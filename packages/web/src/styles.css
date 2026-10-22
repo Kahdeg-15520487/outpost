@@ -171,6 +171,19 @@ textarea.input { resize: vertical; }
 .hero h1 { font: 500 44px/1.05 var(--display); letter-spacing: -0.03em; margin: 0 0 10px; }
 .hero h1 em { color: var(--signal); }
 .hero p { color: var(--muted); font-size: 16px; max-width: 560px; }
+/* A chat opened beside a gadget greets you about that gadget. */
+.gadget-hero { margin-top: 5vh; }
+.gadget-hero h1 { font-size: 40px; }
+.gh-tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 13px; max-width: 100%; }
+.gh-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--paper-2); font-size: 15px; }
+.gh-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gh-src { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+.gh-src::before { content: "· "; }
+.gh-arrow { font: 11px var(--mono); color: var(--signal-ink); white-space: nowrap; margin-left: 4px; animation: nudge 1.6s ease-in-out 3; }
+@keyframes nudge { 50% { transform: translateX(4px); } }
+.gadget-hero .suggestion { animation: rise .35s ease-out both; }
+@media (max-width: 900px) { .gh-arrow { display: none; } }
+@media (prefers-reduced-motion: reduce) { .gh-arrow, .gadget-hero .suggestion { animation: none; } }
 
 /* ------------------------------------------------------------------ gadget window */
 .gwin { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line-2); background: var(--card); }

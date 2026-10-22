@@ -234,6 +234,58 @@ export function createApi(): Router {
 		return { ok: true };
 	});
 
+	// ------------------------------------------------------------ projects (agent teams)
+	r.get("/api/w/:ws/projects", async (req) => {
+		const { ws } = await member(req);
+		return { projects: await ws.projects.list() };
+	});
+	r.post("/api/w/:ws/projects", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { goal, name, model } = await req.body();
+		const chosen = model?.provider && model?.modelId ? { provider: String(model.provider), modelId: String(model.modelId) } : await defaultModel(ws.row.settings.defaultModel, users.prefs(user.id).modelPicker);
+		return { project: await ws.projects.create(user, { goal: String(goal ?? ""), name: name ? String(name).slice(0, 80) : undefined, model: chosen }) };
+	});
+	r.get("/api/w/:ws/projects/:p", async (req) => {
+		const { ws } = await member(req);
+		return await ws.projects.snapshot(req.params.p!);
+	});
+	r.delete("/api/w/:ws/projects/:p", async (req) => {
+		const { ws } = await member(req, "editor");
+		await ws.projects.archive(req.params.p!);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/stop", async (req) => {
+		const { ws } = await member(req, "editor");
+		await ws.projects.stopAll(req.params.p!);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/agents/:key/messages", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { text } = await req.body();
+		if (!String(text ?? "").trim()) throw new HttpError(400, "Empty message");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text));
+		return { ok: true };
+	});
+	r.get("/api/w/:ws/projects/:p/files", async (req) => {
+		const { ws } = await member(req);
+		await ws.projects.meta(req.params.p!);
+		const repo = ws.projects.repo(req.params.p!);
+		return { files: await repo.files(), head: await repo.head() };
+	});
+	r.get("/api/w/:ws/projects/:p/file", async (req) => {
+		const { ws } = await member(req);
+		await ws.projects.meta(req.params.p!);
+		const file = await ws.projects.repo(req.params.p!).read(String(req.query.get("path") ?? ""));
+		if (!file) throw new HttpError(404, "Not on main yet");
+		return file;
+	});
+	r.get("/api/w/:ws/projects/:p/log", async (req) => {
+		const { ws } = await member(req);
+		await ws.projects.meta(req.params.p!);
+		return { log: await ws.projects.repo(req.params.p!).log() };
+	});
+
 	// ------------------------------------------------------------ gadgets
 	r.get("/api/w/:ws/gadgets", async (req) => {
 		const { role } = await member(req);

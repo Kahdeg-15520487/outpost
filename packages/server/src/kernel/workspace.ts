@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
-import { createRegistry, Harness, watchEvents, type Conversation } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, watchEvents, type Conversation, type Extension } from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
@@ -30,6 +31,7 @@ import {
 	type Holder,
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
+import { ProjectManager } from "../projects/manager.ts";
 import { blueprints, gadgets, HttpError, newId, users, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
 
 const open = new Map<string, Promise<Workspace>>();
@@ -44,6 +46,8 @@ export class Workspace {
 	readonly hosts = new Map<string, GadgetHost>();
 	readonly channel: string;
 	readonly files: FileStore;
+	/** Agent teams (projects) in this workspace. */
+	projects!: ProjectManager;
 	private constructor(
 		readonly id: string,
 		readonly harness: Harness,
@@ -78,13 +82,18 @@ export class Workspace {
 		const registry = createRegistry();
 		const storage = await openNodeSqliteStorage(join(config.workspaceDir, `${id}.sqlite`));
 		let self: Workspace | undefined;
+		// Chats keep exactly the OS + code mode extensions; project agents select coding tools + project tools.
+		let chatExtensions: Extension[] | undefined;
 		const harness = await Harness.open(
 			storage,
 			{
 				models,
 				registry,
 				identity: { attribution: { name: "pi-os", url: "https://pi.dev" } },
+				// Project agents' file/bash tools run in their own worktree (their agent `cwd`).
+				env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? config.dataDir }),
 				settings: () => ({
+					extensions: chatExtensions,
 					toolExecution: "parallel",
 					stream: { timeoutMs: 180_000 },
 					retry: { maxRetries: 3 },
@@ -96,9 +105,16 @@ export class Workspace {
 			ctx,
 		);
 		const ws = (self = new Workspace(id, harness));
-		registry.install(createOsExtension(ws));
-		registry.install(createCodemodeExtension({ sandbox: codemodeSandbox, models: false }));
+		const osExtension = createOsExtension(ws);
+		const codemode = createCodemodeExtension({ sandbox: codemodeSandbox, models: false });
+		registry.install(osExtension);
+		registry.install(codemode);
+		chatExtensions = [osExtension, codemode];
+		ws.projects = new ProjectManager(ws);
+		registry.install(ws.projects.coding);
+		registry.install(ws.projects.extension);
 		await ws.#watchDocs();
+		await ws.projects.init();
 		harness.closed.then((end) => {
 			if (end.reason === "failed") {
 				console.error(`[ws ${id}] harness failed, will reopen on next use`, end.error);

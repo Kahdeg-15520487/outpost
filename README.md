@@ -93,6 +93,12 @@ Attach files to a message with 📎, drag-and-drop, or paste (Ctrl+V a screensho
 - **Tooling it builds itself:** when a format needs real parsing or an interactive view, the agent writes a gadget whose server parses the file and then uses the gadget's API as its tool. Gadget servers use `ctx.files.list/info/text/bytes/write`. Files are capabilities: a gadget reads only files shared with it (`file_share_with_gadget`, or the checkboxes in the Files preview) and files it wrote itself.
 - **Safe serving:** downloads are always sent with `sandbox` CSP and `nosniff`. Only images, plain text and PDF render inline; HTML and SVG are always downloaded.
 
+### Projects: agent teams
+
+**Projects → +** takes a high-level goal. A **Lead** agent forms a team for that goal (product owner, architect, developers, reviewer, … as needed). The team writes requirements, a design and code in a git repository at `<dataDir>/projects/<id>/repo`. Each agent works in its own git worktree and merges into `main` with `publish`. The project page shows a live tile per agent around an artifact viewer with tabs: Overview (goal, questions waiting for you, activity), Requirements, Design, Wireframes and Repo (files and history of `main`). Click a tile to read that agent's full transcript and message it. The Lead asks you to approve the requirements before work continues.
+
+Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Milestone 1 (team, tiles, transcripts, repo) is done. The backlog, the scheduler for parallel workers, and live app preview come next.
+
 ## How it maps onto pi-durable
 
 | Concept | pi-durable primitive |

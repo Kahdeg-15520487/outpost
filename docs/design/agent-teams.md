@@ -1,6 +1,6 @@
 # Agent teams: goal → plan → working product
 
-Status: **approved** — M1 in progress.
+Status: **approved** — M1 done (team, tiles, transcripts, repo + worktrees, requirements gate via the Lead's question); M2 next.
 
 ## What it is
 

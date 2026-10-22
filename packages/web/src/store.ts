@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
-import { api, type Gadget, type WorkspaceDocs } from "./api";
+import { api, type AgentSummary, type Gadget, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -10,6 +10,7 @@ export type Route =
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
 	| { page: "files"; ws: string }
+	| { page: "project"; ws: string; project: string; tab?: string }
 	| { page: "gadget"; gadget: string }
 	| { page: "link"; token: string };
 
@@ -21,6 +22,7 @@ function parse(): Route {
 		if (parts[2] === "blueprints") return { page: "blueprints", ws: parts[1] };
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
 		if (parts[2] === "files") return { page: "files", ws: parts[1] };
+		if (parts[2] === "p" && parts[3]) return { page: "project", ws: parts[1], project: parts[3], tab: q.get("tab") ?? undefined };
 		return { page: "chat", ws: parts[1], chat: parts[2] === "c" ? parts[3] : undefined, gadget: q.get("g") ?? undefined, focus: !!q.get("g") && q.get("focus") === "1" };
 	}
 	if (parts[0] === "g" && parts[1]) return { page: "gadget", gadget: parts[1] };
@@ -53,6 +55,8 @@ export function useWorkspace(ws: string | undefined) {
 	const [docs, setDocs] = useState<WorkspaceDocs>(emptyDocs);
 	const [gadgets, setGadgets] = useState<Gadget[]>([]);
 	const [gadgetsTick, setTick] = useState(0);
+	const [projects, setProjects] = useState<ProjectMeta[]>([]);
+	const [projectsTick, setProjectsTick] = useState(0);
 	useEffect(() => {
 		if (!ws) return;
 		setDocs(emptyDocs);
@@ -61,6 +65,7 @@ export function useWorkspace(ws: string | undefined) {
 			if (m.t === "ws.snapshot") setDocs({ chats: m.chats, grants: m.grants, approvals: m.approvals, audit: m.audit, mailbox: m.mailbox, files: m.files });
 			else if (m.t === "ws.doc") setDocs((d) => ({ ...d, [m.name]: m.value }));
 			else if (m.t === "ws.gadgets") setTick((t) => t + 1);
+			else if (m.t === "ws.projects") setProjectsTick((t) => t + 1);
 		});
 		const unsub = socket.subscribe(`ws:${ws}`, { kind: "ws", ws });
 		return () => {
@@ -76,7 +81,45 @@ export function useWorkspace(ws: string | undefined) {
 			live = false;
 		};
 	}, [ws, gadgetsTick]);
-	return { docs, gadgets };
+	useEffect(() => {
+		if (!ws) return;
+		let live = true;
+		api.get(`/api/w/${ws}/projects`).then((r) => live && setProjects(r.projects)).catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [ws, projectsTick]);
+	return { docs, gadgets, projects };
+}
+
+export const projectHref = (ws: string, project: string, tab?: string) => `#/w/${ws}/p/${project}${tab ? `?tab=${tab}` : ""}`;
+
+// ------------------------------------------------------------------ projects (agent teams)
+
+export type ProjectLive = { project?: ProjectMeta; state: ProjectState; summaries: Record<string, AgentSummary>; head: string; repoTick: number };
+const emptyProject: ProjectLive = { state: { agents: {}, order: [], questions: {}, activity: [] }, summaries: {}, head: "", repoTick: 0 };
+
+/** A project's team, agent summaries and repo head, live over the socket. */
+export function useProject(ws: string, project: string): ProjectLive {
+	const [live, setLive] = useState<ProjectLive>(emptyProject);
+	useEffect(() => {
+		setLive(emptyProject);
+		const off = socket.on((m) => {
+			if (m.ws !== ws) return;
+			if (m.t === "project.snapshot" && m.projectId === project) setLive((l) => ({ project: m.project, state: m.state, summaries: m.summaries, head: m.head, repoTick: l.repoTick + 1 }));
+			else if (m.project !== project) return;
+			else if (m.t === "project.state") setLive((l) => ({ ...l, state: m.state }));
+			else if (m.t === "project.agent") setLive((l) => ({ ...l, summaries: { ...l.summaries, [m.key]: m.summary } }));
+			else if (m.t === "project.repo") setLive((l) => ({ ...l, head: m.head ?? l.head, repoTick: l.repoTick + 1 }));
+			else if (m.t === "project.meta") api.get(`/api/w/${ws}/projects/${project}`).then((r) => setLive((l) => ({ ...l, project: r.project })));
+		});
+		const unsub = socket.subscribe(`project:${ws}:${project}`, { kind: "project", ws, project });
+		return () => {
+			off();
+			unsub();
+		};
+	}, [ws, project]);
+	return live;
 }
 
 // ------------------------------------------------------------------ chat (agent events)

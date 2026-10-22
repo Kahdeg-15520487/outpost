@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, navigate, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
+import { chatHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
 import { GadgetWindow } from "./GadgetWindow";
@@ -11,6 +11,7 @@ import { FilesPage } from "./Files";
 import { Avatar } from "./bits";
 import { InlineRename, RowMenu } from "./RowMenu";
 import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
+import { NewProjectDialog, ProjectPage } from "./ProjectPage";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	const route = useRoute();
@@ -21,6 +22,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [defaultModel, setDefaultModel] = useState<ModelRef>();
 	const [picker, setPicker] = useState<ModelPicker>({});
 	const [managingModels, setManagingModels] = useState(false);
+	const [newProject, setNewProject] = useState(false);
 	const [drawer, setDrawer] = useState(false);
 	/** Which sidebar row is being renamed ("c:<id>" / "g:<id>"), and which row's menu is open (keeps its button visible). */
 	const [renaming, setRenaming] = useState<string>();
@@ -56,7 +58,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		addEventListener("focus", loadModels);
 		return () => removeEventListener("focus", loadModels);
 	}, [wsId]);
-	const { docs, gadgets } = useWorkspace(ws?.id);
+	const { docs, gadgets, projects } = useWorkspace(ws?.id);
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
 	const pending = Object.values(docs.approvals.actions).filter((a) => a.status === "pending").length + Object.values(docs.grants.requests).filter((r) => r.status === "pending").length;
 
@@ -143,6 +145,29 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								</a>
 							</>
 						)}
+					</div>
+					<div className="side-section">
+						<div className="label">
+							<span>Projects</span>
+							{canEdit && ws && (
+								<button className="side-add" onClick={() => setNewProject(true)} title="New project: a team of agents builds it">
+									+
+								</button>
+							)}
+						</div>
+						{projects.length === 0 && canEdit && (
+							<a className="side-item" href="#" style={{ color: "#6c6655" }} onClick={(e) => (e.preventDefault(), setNewProject(true))}>
+								Give a team of agents a goal
+							</a>
+						)}
+						{ws &&
+							projects.map((p) => (
+								<a key={p.id} className={`side-item ${route.page === "project" && route.project === p.id ? "on" : ""}`} href={projectHref(ws.id, p.id)} title={p.goal}>
+									<span className="ico">◈</span>
+									<span className="t">{p.name}</span>
+									<span className="ago">{p.stage}</span>
+								</a>
+							))}
 					</div>
 					<div className="side-section">
 						<div className="label">
@@ -261,6 +286,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
+			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
 			{route.page === "gadget" && (
@@ -270,6 +296,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 			)}
 			{(route.page === "home" || route.page === "link") && <div className="main" />}
 
+			{newProject && ws && <NewProjectDialog ws={ws} models={models} picker={picker} defaultModel={defaultModel} onClose={() => setNewProject(false)} />}
 			{managingModels && (
 				<ModelPickerDialog
 					models={models}

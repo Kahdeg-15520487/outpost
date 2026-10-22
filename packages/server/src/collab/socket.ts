@@ -11,6 +11,7 @@ import { parseCookies } from "../http/util.ts";
  *   { t: "sub", kind: "ws", ws }                 workspace docs + gadget list changes
  *   { t: "sub", kind: "chat", ws, chat }         agent events (snapshot, then batches)
  *   { t: "sub", kind: "gadget", gadgetId }       gadget broadcasts, reloads, logs, presence
+ *   { t: "sub", kind: "project", ws, project }   project team, agent summaries, repo changes
  *   { t: "call", id, gadgetId, method, args }    gadget RPC as the signed-in user
  */
 export function attachSockets(server: import("node:http").Server) {
@@ -68,6 +69,14 @@ function connection(socket: WebSocket, user: User, _req: IncomingMessage) {
 				const key = `${m.ws}:${m.chat}`;
 				await streams.get(key)?.stop();
 				streams.delete(key);
+			} else if (m.t === "sub" && m.kind === "project") {
+				if (!workspaces.role(m.ws, user.id)) throw new Error("not a member");
+				const ws = await Workspace.get(m.ws);
+				await ws.projects.watch(m.project);
+				hub.join(ws.projects.channel(m.project), client);
+				client.send({ t: "project.snapshot", ws: m.ws, projectId: m.project, ...(await ws.projects.snapshot(m.project)) });
+			} else if (m.t === "unsub" && m.kind === "project") {
+				hub.leave(`project:${m.ws}:${m.project}`, client);
 			} else if (m.t === "sub" && m.kind === "gadget") {
 				const { gadget, role } = await Workspace.gadgetFor(m.gadgetId, user);
 				const channel = `gadget:${gadget.id}`;

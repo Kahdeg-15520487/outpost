@@ -234,7 +234,7 @@ function textOf(content: any): string {
 	return (content ?? []).map((c: any) => (c.type === "text" ? c.text : c.type === "image" ? "[image]" : "")).join("");
 }
 
-function Transcript({ state, wsId, chatId }: { state: ChatState; wsId: string; chatId: string }) {
+export function Transcript({ state, wsId, chatId }: { state: ChatState; wsId: string; chatId: string }) {
 	const results = useMemo(() => {
 		const map = new Map<string, any>();
 		for (const e of state.entries) if (e.kind === "pi.tool-result") for (const m of e.model ?? []) map.set(m.toolCallId, m);

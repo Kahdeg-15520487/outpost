@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentRecord, type AgentSummary, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
-import { Transcript } from "./Chat";
+import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
 
 const STAGES: { id: ProjectStage; label: string }[] = [
@@ -33,6 +33,16 @@ const initials = (name: string) =>
 		.join("")
 		.slice(0, 2)
 		.toUpperCase();
+/** Drag files onto a form to attach them. */
+const dropFiles = (att: Attachments) => ({
+	onDragOver: (e: React.DragEvent) => e.dataTransfer.types.includes("Files") && e.preventDefault(),
+	onDrop: (e: React.DragEvent) => {
+		if (!e.dataTransfer.files.length) return;
+		e.preventDefault();
+		att.add([...e.dataTransfer.files]);
+	},
+});
+
 const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
 type Tab = "overview" | "requirements" | "design" | "wireframes" | "backlog" | "app" | "repo";
@@ -189,6 +199,7 @@ function AgentTile({ agent, summary, asking, index, onOpen }: { agent: AgentReco
 
 function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClose }: { ws: Workspace; projectId: string; agent: AgentRecord; summary?: AgentSummary; questions: Question[]; canEdit: boolean; onClose: () => void }) {
 	const chat = useChat(ws.id, agent.conversationId);
+	const att = useAttachments(ws.id);
 	const [text, setText] = useState("");
 	const [err, setErr] = useState("");
 	const scroller = useRef<HTMLDivElement>(null);
@@ -204,11 +215,12 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 	}, []);
 	const send = async () => {
 		const t = text.trim();
-		if (!t) return;
+		if ((!t && !att.ids().length) || att.uploading) return;
 		setErr("");
 		try {
-			await api.post(`/api/w/${ws.id}/projects/${projectId}/agents/${agent.key}/messages`, { text: t });
+			await api.post(`/api/w/${ws.id}/projects/${projectId}/agents/${agent.key}/messages`, { text: t, files: att.ids() });
 			setText("");
+			att.clear();
 		} catch (e: any) {
 			setErr(e.message);
 		}
@@ -256,12 +268,17 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 				{canEdit && (
 					<form
 						className="ad-compose"
+						{...dropFiles(att)}
 						onSubmit={(e) => {
 							e.preventDefault();
 							send();
 						}}
 					>
+						<div className="ad-tray">
+							<AttachmentTray att={att} />
+						</div>
 						<textarea
+							onPaste={(e) => pasteInto(e, att)}
 							rows={2}
 							value={text}
 							placeholder={questions.length ? "Answer…" : summary?.busy ? `Steer ${agent.name}…` : `Message ${agent.name}…`}
@@ -274,9 +291,12 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 							}}
 							autoFocus
 						/>
-						<button className="btn primary small" disabled={!text.trim()}>
-							Send
-						</button>
+						<div className="ad-actions">
+							<AttachButton att={att} />
+							<button className="btn primary small" disabled={(!text.trim() && !att.ids().length) || att.uploading}>
+								Send
+							</button>
+						</div>
 						{err && <div className="err">{err}</div>}
 					</form>
 				)}
@@ -325,15 +345,22 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 function QuestionCard({ ws, projectId, q, agent, canEdit, onOpen }: { ws: Workspace; projectId: string; q: Question; agent?: AgentRecord; canEdit: boolean; onOpen: () => void }) {
 	const [answer, setAnswer] = useState("");
 	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const att = useAttachments(ws.id);
 	const send = async (text: string) => {
 		setBusy(true);
+		setErr("");
 		try {
-			await api.post(`/api/w/${ws.id}/projects/${projectId}/agents/${q.agent}/messages`, { text });
+			await api.post(`/api/w/${ws.id}/projects/${projectId}/agents/${q.agent}/messages`, { text, files: att.ids() });
 			setAnswer("");
+			att.clear();
+		} catch (e: any) {
+			setErr(e.message);
 		} finally {
 			setBusy(false);
 		}
 	};
+	const hasFiles = att.ids().length > 0;
 	return (
 		<div className="q-card" style={{ ["--role" as any]: agent ? roleColor(agent) : "var(--signal)" }}>
 			<div className="q-who">
@@ -348,18 +375,22 @@ function QuestionCard({ ws, projectId, q, agent, canEdit, onOpen }: { ws: Worksp
 			{canEdit && (
 				<form
 					className="q-answer"
+					{...dropFiles(att)}
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (answer.trim()) send(answer.trim());
+						if (answer.trim() || hasFiles) send(answer.trim());
 					}}
 				>
-					<textarea rows={2} className="input" placeholder="Your answer…" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+					<textarea rows={2} className="input" placeholder="Your answer… (paste or drop files to attach)" value={answer} onChange={(e) => setAnswer(e.target.value)} onPaste={(e) => pasteInto(e, att)} />
+					<AttachmentTray att={att} />
 					<div className="row">
-						<button type="button" className="btn small" disabled={busy} onClick={() => send("Approved. Go ahead.")}>
+						<button type="button" className="btn small" disabled={busy || att.uploading} onClick={() => send(answer.trim() ? `Approved. ${answer.trim()}` : "Approved. Go ahead.")} title={answer.trim() ? "Approve, with your note and any attached files" : "Approve"}>
 							Approve
 						</button>
+						<AttachButton att={att} label="📎 Attach" />
 						<span className="grow" />
-						<button className="btn primary small" disabled={busy || !answer.trim()}>
+						{err && <span className="err">{err}</span>}
+						<button className="btn primary small" disabled={busy || att.uploading || (!answer.trim() && !hasFiles)}>
 							Send answer
 						</button>
 					</div>
@@ -499,9 +530,12 @@ function Placeholder({ icon, title, text }: { icon: string; title: string; text:
 // ------------------------------------------------------------------ new project
 
 export function NewProjectDialog({ ws, models, picker, defaultModel, onClose }: { ws: Workspace; models: ModelInfo[]; picker: ModelPicker; defaultModel?: ModelRef; onClose: () => void }) {
-	const shown = models.filter((m) => pickerShows(picker, m) && m.provider !== "pi-os-demo");
+	// Real models only; the offline demo model just in case nothing else is configured.
+	const real = models.filter((m) => pickerShows(picker, m) && m.provider !== "pi-os-demo");
+	const shown = real.length ? real : models.filter((m) => m.provider === "pi-os-demo");
 	const initial = defaultModel && shown.some((m) => m.provider === defaultModel.provider && m.id === defaultModel.modelId) ? `${defaultModel.provider}/${defaultModel.modelId}` : shown[0] ? `${shown[0].provider}/${shown[0].id}` : "";
 	const [goal, setGoal] = useState("");
+	const att = useAttachments(ws.id);
 	const [name, setName] = useState("");
 	const [model, setModel] = useState(initial);
 	const [busy, setBusy] = useState(false);
@@ -511,7 +545,7 @@ export function NewProjectDialog({ ws, models, picker, defaultModel, onClose }: 
 		setErr("");
 		try {
 			const [provider, ...rest] = model.split("/");
-			const r = await api.post(`/api/w/${ws.id}/projects`, { goal, name: name || undefined, model: model ? { provider, modelId: rest.join("/") } : undefined });
+			const r = await api.post(`/api/w/${ws.id}/projects`, { goal, name: name || undefined, model: model ? { provider, modelId: rest.join("/") } : undefined, files: att.ids() });
 			onClose();
 			navigate(projectHref(ws.id, r.project.id));
 		} catch (e: any) {
@@ -526,14 +560,22 @@ export function NewProjectDialog({ ws, models, picker, defaultModel, onClose }: 
 				Describe what you want built. A lead agent forms a team; you approve the requirements and the backlog, then the team builds it in a new git repo while you watch.
 			</p>
 			<label className="label">Goal</label>
+			<div {...dropFiles(att)}>
 			<textarea
 				className="input"
 				rows={5}
 				autoFocus
 				value={goal}
 				onChange={(e) => setGoal(e.target.value)}
+				onPaste={(e) => pasteInto(e, att)}
 				placeholder={"e.g. A web app for booking our 6 meeting rooms: see free slots for today and the week, book with one click, cancel your own bookings. Sign-in with a simple name is fine."}
 			/>
+			<AttachmentTray att={att} />
+			<div className="np-attach">
+				<AttachButton att={att} className="btn small" label="📎 Attach files" />
+				<span className="muted">Specs, mockups, screenshots, data — any format. They're committed to the repo under inputs/ for the whole team.</span>
+			</div>
+			</div>
 			<div className="row" style={{ gap: 10, marginTop: 10 }}>
 				<div className="grow">
 					<label className="label">Name (optional)</label>
@@ -550,13 +592,14 @@ export function NewProjectDialog({ ws, models, picker, defaultModel, onClose }: 
 					</select>
 				</div>
 			</div>
+			{!real.length && <div className="np-warn">No model provider is configured, so the team can only use the offline demo model, which can't do real work. Add a key under Settings → Model providers.</div>}
 			<div className="np-warn">Agents run shell commands on this machine, inside the project's folder in the pi-os data directory.</div>
 			{err && <div className="err">{err}</div>}
 			<div className="row" style={{ justifyContent: "flex-end", marginTop: 14 }}>
 				<button className="btn ghost" onClick={onClose}>
 					Cancel
 				</button>
-				<button className="btn primary" disabled={busy || goal.trim().length < 8 || !model} onClick={create}>
+				<button className="btn primary" disabled={busy || att.uploading || goal.trim().length < 8 || !model} onClick={create}>
 					{busy ? "Starting…" : "Start project"}
 				</button>
 			</div>

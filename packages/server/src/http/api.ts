@@ -241,9 +241,9 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/projects", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { goal, name, model } = await req.body();
+		const { goal, name, model, files } = await req.body();
 		const chosen = model?.provider && model?.modelId ? { provider: String(model.provider), modelId: String(model.modelId) } : await defaultModel(ws.row.settings.defaultModel, users.prefs(user.id).modelPicker);
-		return { project: await ws.projects.create(user, { goal: String(goal ?? ""), name: name ? String(name).slice(0, 80) : undefined, model: chosen }) };
+		return { project: await ws.projects.create(user, { goal: String(goal ?? ""), name: name ? String(name).slice(0, 80) : undefined, model: chosen, files: Array.isArray(files) ? files.map(String) : [] }) };
 	});
 	r.get("/api/w/:ws/projects/:p", async (req) => {
 		const { ws } = await member(req);
@@ -261,10 +261,11 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/projects/:p/agents/:key/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { text } = await req.body();
-		if (!String(text ?? "").trim()) throw new HttpError(400, "Empty message");
+		const { text, files } = await req.body();
+		const fileIds = Array.isArray(files) ? files.map(String) : [];
+		if (!String(text ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
 		await ws.projects.meta(req.params.p!);
-		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text));
+		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text ?? ""), fileIds);
 		return { ok: true };
 	});
 	r.get("/api/w/:ws/projects/:p/files", async (req) => {

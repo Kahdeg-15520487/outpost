@@ -447,32 +447,9 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 				{error && <span className="err">{error}</span>}
 			</div>
 			<div className="composer">
-				{att.items.length > 0 && (
-					<div className="attachments">
-						{att.items.map((a) => (
-							<div key={a.key} className={`attachment ${a.error ? "bad" : ""}`} title={a.error ?? a.name}>
-								{a.preview ? <img src={a.preview} /> : <span className="ext">{extOf(a.name)}</span>}
-								<div className="meta">
-									<div className="n">{a.name}</div>
-									<div className="s">{a.error ? a.error : a.meta ? `${a.meta.kind} · ${formatBytes(a.size)}` : `uploading ${Math.round(a.progress * 100)}%`}</div>
-								</div>
-								{!a.meta && !a.error && <div className="bar-progress" style={{ width: `${a.progress * 100}%` }} />}
-								<button className="x" onClick={() => att.remove(a.key)} title="Remove">
-									✕
-								</button>
-							</div>
-						))}
-					</div>
-				)}
+				<AttachmentTray att={att} />
 				<textarea
-					onPaste={(e) => {
-						const files = [...e.clipboardData.files];
-						if (files.length) {
-							e.preventDefault();
-							const stamp = new Date().toISOString().slice(11, 19).replaceAll(":", "");
-							att.add(files.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `pasted-${stamp}${i ? `-${i}` : ""}.${(f.type.split("/")[1] ?? "bin").replace("jpeg", "jpg")}`, { type: f.type }))));
-						}
-					}}
+					onPaste={(e) => pasteInto(e, att)}
 					ref={ref}
 					rows={1}
 					value={text}
@@ -551,12 +528,65 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 
 // ------------------------------------------------------------------ attachments
 
+/** Files pasted into a text box become attachments (screenshots get a readable name). */
+export function pasteInto(e: React.ClipboardEvent, att: Attachments) {
+	const files = [...e.clipboardData.files];
+	if (!files.length) return;
+	e.preventDefault();
+	const stamp = new Date().toISOString().slice(11, 19).replaceAll(":", "");
+	att.add(files.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `pasted-${stamp}${i ? `-${i}` : ""}.${(f.type.split("/")[1] ?? "bin").replace("jpeg", "jpg")}`, { type: f.type }))));
+}
+
+/** The files waiting to be sent, with upload progress and a remove button. */
+export function AttachmentTray({ att }: { att: Attachments }) {
+	if (!att.items.length) return null;
+	return (
+		<div className="attachments">
+			{att.items.map((a) => (
+				<div key={a.key} className={`attachment ${a.error ? "bad" : ""}`} title={a.error ?? a.name}>
+					{a.preview ? <img src={a.preview} /> : <span className="ext">{extOf(a.name)}</span>}
+					<div className="meta">
+						<div className="n">{a.name}</div>
+						<div className="s">{a.error ? a.error : a.meta ? `${a.meta.kind} · ${formatBytes(a.size)}` : `uploading ${Math.round(a.progress * 100)}%`}</div>
+					</div>
+					{!a.meta && !a.error && <div className="bar-progress" style={{ width: `${a.progress * 100}%` }} />}
+					<button type="button" className="x" onClick={() => att.remove(a.key)} title="Remove">
+						✕
+					</button>
+				</div>
+			))}
+		</div>
+	);
+}
+
+/** A 📎 button with its hidden file input. */
+export function AttachButton({ att, className = "btn ghost small", label = "📎" }: { att: Attachments; className?: string; label?: string }) {
+	const input = useRef<HTMLInputElement>(null);
+	return (
+		<>
+			<input
+				ref={input}
+				type="file"
+				multiple
+				hidden
+				onChange={(e) => {
+					att.add([...(e.target.files ?? [])]);
+					e.target.value = "";
+				}}
+			/>
+			<button type="button" className={className} onClick={() => input.current?.click()} title="Attach files (or drop / paste them) — any format">
+				{label}
+			</button>
+		</>
+	);
+}
+
 type Attachment = { key: string; name: string; size: number; progress: number; meta?: FileMeta; error?: string; preview?: string };
-type Attachments = ReturnType<typeof useAttachments>;
+export type Attachments = ReturnType<typeof useAttachments>;
 const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
 
 /** Files attached to the next message: uploaded as soon as they're added, sent by id. */
-function useAttachments(wsId: string) {
+export function useAttachments(wsId: string) {
 	const [items, setItems] = useState<Attachment[]>([]);
 	const patch = (key: string, p: Partial<Attachment>) => setItems((list) => list.map((a) => (a.key === key ? { ...a, ...p } : a)));
 	return {

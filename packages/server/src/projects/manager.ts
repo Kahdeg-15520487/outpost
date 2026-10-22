@@ -4,6 +4,7 @@ import { defineExtension, defineTool, type Extension, type ToolExecutionApi } fr
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import { hub } from "../collab/hub.ts";
 import { HttpError, newId, type User } from "../kernel/system-db.ts";
+import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, type Activity, type AgentRecord, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
 import { ProjectRepo } from "./repo.ts";
@@ -11,6 +12,14 @@ import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 
 type ModelRef = { provider: string; modelId: string };
+/** A user file handed to the team: where it is in the repo, plus what the transcript's file chips need. */
+export type Attached = { id: string; name: string; kind: string; mime: string; size: number; path: string };
+
+function describeFiles(files: Attached[], lead: boolean) {
+	if (!files.length) return "";
+	const where = lead ? "They are in your working directory (main)." : "Run `sync_main` to get them into your worktree.";
+	return `\n\n[Attached files, committed to main under inputs/. ${where} Use \`read\` for text and images; inspect other formats (PDF, Office, archives) with bash.]\n${files.map((f) => `- ${f.path} (${f.kind}, ${f.mime}, ${formatBytes(f.size)})`).join("\n")}`;
+}
 const STAGES: ProjectStage[] = ["kickoff", "discovery", "design", "planning", "build", "iterate", "done"];
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -107,7 +116,7 @@ export class ProjectManager {
 
 	// ------------------------------------------------------------------ lifecycle
 
-	async create(user: User, opts: { goal: string; name?: string; model: ModelRef }): Promise<ProjectMeta> {
+	async create(user: User, opts: { goal: string; name?: string; model: ModelRef; files?: string[] }): Promise<ProjectMeta> {
 		const goal = opts.goal.trim();
 		if (goal.length < 8) throw new HttpError(400, "Describe the goal in a sentence or two");
 		const id = newId("p");
@@ -121,19 +130,20 @@ export class ProjectManager {
 			st.activity.push({ at: Date.now(), kind: "user", text: `${user.displayName} started the project` });
 		}, ctx);
 		this.#publishList();
-		const lead = await this.addAgent(id, {
+		const files = await this.attach(id, opts.files ?? [], user);
+		await this.addAgent(id, {
 			role: "lead",
 			name: "Lead",
-			brief: `Kick off the project. The user's goal:\n\n${goal}\n\nRoles you can add: ${roleCatalog()
+			brief: `Kick off the project. The user's goal:\n\n${goal}${files.length ? "\n\nThe user attached reference material: read it before deciding anything, and point teammates to the relevant files in their briefs." : ""}\n\nRoles you can add: ${roleCatalog()
 				.map((r) => `\`${r.id}\` (${r.title}: ${r.summary})`)
-				.join("; ")}, or any other role the goal needs.`,
+				.join("; ")}, or any other role the goal needs.${describeFiles(files, true)}`,
 			start: true,
+			files,
 		});
-		void lead;
 		return meta;
 	}
 
-	async addAgent(projectId: string, o: { role: string; name?: string; brief: string; start?: boolean; model?: ModelRef; title?: string }): Promise<AgentRecord> {
+	async addAgent(projectId: string, o: { role: string; name?: string; brief: string; start?: boolean; model?: ModelRef; title?: string; files?: Attached[] }): Promise<AgentRecord> {
 		const meta = await this.meta(projectId);
 		const repo = this.repo(projectId);
 		const def = roleDef(o.role);
@@ -169,38 +179,58 @@ export class ProjectManager {
 		);
 		record.conversationId = String(conversation.id);
 		this.#follow(projectId, record);
-		if (o.start !== false) await this.deliver(projectId, key, o.role === "lead" ? { from: "pi-os", fromKey: "pi-os", text: o.brief, kind: "brief" } : { from: "Lead", fromKey: "lead", text: o.brief, kind: "brief" });
+		if (o.start !== false) await this.deliver(projectId, key, o.role === "lead" ? { from: "pi-os", fromKey: "pi-os", text: o.brief, kind: "brief", files: o.files } : { from: "Lead", fromKey: "lead", text: o.brief, kind: "brief" });
 		return record;
 	}
 
 	/** Put a message in an agent's inbox; it runs now if idle, after its current step otherwise. */
-	async deliver(projectId: string, to: string, m: { from: string; fromKey: string; text: string; kind: "brief" | "message" | "user" }, requestId?: string) {
+	async deliver(projectId: string, to: string, m: { from: string; fromKey: string; text: string; kind: "brief" | "message" | "user"; files?: Attached[] }, requestId?: string) {
 		const state = await this.state(projectId);
 		const target = state.agents[to];
 		if (!target || target.removed) throw new Error(`No agent "${to}" on this team. Use team_list.`);
 		const c = await this.ws.harness.conversation(Number(target.conversationId) as any, ctx);
 		if (!c) throw new Error(`Agent ${to} has no conversation`);
 		const header = m.kind === "user" ? `[Message from the user, ${m.from}]` : m.kind === "brief" ? `[Brief from ${m.from}]` : `[Message from ${m.from} (${m.fromKey})]`;
+		const files = m.files ?? [];
+		// The kickoff brief built by create() already lists its files.
+		const fileNote = m.kind === "brief" ? "" : describeFiles(files, target.role === "lead");
 		await c.submit(
 			{
 				type: "input",
-				content: `${header}\n\n${m.text}`,
+				content: `${header}\n\n${m.text}${fileNote}`,
 				whenBusy: m.kind === "user" ? "steer" : "followUp",
 				...(requestId ? { requestId } : {}),
-				entry: { kind: "os.user", data: { author: m.kind === "user" ? m.from : `${m.from}${m.kind === "brief" ? " · brief" : ""}`, authorId: m.kind === "user" ? `user:${m.from}` : `agent:${m.fromKey}`, text: m.text, agent: m.kind !== "user" } },
+				entry: { kind: "os.user", data: { author: m.kind === "user" ? m.from : `${m.from}${m.kind === "brief" ? " · brief" : ""}`, authorId: m.kind === "user" ? `user:${m.from}` : `agent:${m.fromKey}`, text: m.text, agent: m.kind !== "user", files: files.map(({ id, name, kind, mime, size }) => ({ id, name, kind, mime, size })) } },
 			},
 			ctx,
 		);
 	}
 
 	/** The user writes to an agent from its tile; it also answers any question that agent asked. */
-	async userMessage(projectId: string, key: string, user: User, text: string) {
-		await this.deliver(projectId, key, { from: user.displayName, fromKey: `user:${user.id}`, text, kind: "user" });
+	async userMessage(projectId: string, key: string, user: User, text: string, fileIds: string[] = []) {
+		const files = await this.attach(projectId, fileIds, user);
+		if (!text.trim()) text = files.length === 1 ? `(attached ${files[0]!.path})` : `(attached ${files.length} files)`;
+		await this.deliver(projectId, key, { from: user.displayName, fromKey: `user:${user.id}`, text, kind: "user", files });
 		await this.ws.harness.commit(async (tx) => {
 			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
 			for (const q of Object.values(st.questions)) if (q.agent === key && !q.answeredAt) q.answeredAt = Date.now();
 			pushActivity(st, { at: Date.now(), agent: key, kind: "user", text: `${user.displayName} → ${st.agents[key]?.name ?? key}: ${clip(text, 140)}` });
 		}, ctx);
+	}
+
+	/** Commit workspace uploads into the project repo's `inputs/` so the whole team can use them. */
+	async attach(projectId: string, fileIds: string[], user: User): Promise<Attached[]> {
+		if (!fileIds.length) return [];
+		const metas = [];
+		for (const id of fileIds.slice(0, 20)) metas.push(await this.ws.files.get(id));
+		const paths = await this.repo(projectId).addInputs(
+			metas.map((m) => ({ name: m.name, bytes: this.ws.files.all(m) })),
+			`Add ${metas.length === 1 ? metas[0]!.name : `${metas.length} files`} from ${user.displayName}`,
+		);
+		const files = metas.map((m, i) => ({ id: m.id, name: m.name, kind: m.kind, mime: m.mime, size: m.size, path: paths[i]! }));
+		await this.#log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} added ${files.map((f) => f.path).join(", ")}` });
+		hub.publish(this.channel(projectId), { t: "project.repo", ws: this.ws.id, project: projectId, head: await this.repo(projectId).head().catch(() => undefined), files: paths });
+		return files;
 	}
 
 	/** Stop every agent's current work (queued messages are withdrawn). */

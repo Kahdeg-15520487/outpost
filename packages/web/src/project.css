@@ -149,3 +149,11 @@
 @media (prefers-reduced-motion: reduce) {
 	.agent-tile, .agent-tile.busy::after, .at-state.busy i, .agent-drawer, .va-dot { animation: none; }
 }
+
+/* attachments in project forms */
+.np-attach { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12.5px; }
+.q-answer .attachments, .np-dialog .attachments { margin: 0; padding: 0; }
+.np-dialog .attachments { margin-top: 8px; }
+.ad-tray { grid-column: 1 / -1; }
+.ad-tray .attachments { margin: 0; padding: 0; }
+.ad-actions { display: flex; gap: 4px; align-items: center; }

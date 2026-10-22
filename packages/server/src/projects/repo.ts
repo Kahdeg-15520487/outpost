@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../config.ts";
 
@@ -113,6 +113,31 @@ export class ProjectRepo {
 	}
 
 	// ---------------------------------------------------------------- reads of main (for the UI)
+
+	/**
+	 * Files the user handed the team (specs, mockups, data): written to `inputs/` on `main` and
+	 * committed, so every agent can read them with its normal tools. Never overwrites: a name
+	 * that is taken by different content gets a numbered suffix. Returns the repo paths.
+	 */
+	addInputs(files: { name: string; bytes: Buffer }[], message: string): Promise<string[]> {
+		return withLock(this.projectId, async () => {
+			const dir = join(this.main, "inputs");
+			mkdirSync(dir, { recursive: true });
+			const paths: string[] = [];
+			for (const f of files) {
+				const safe = f.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").replace(/^\.+/, "_").slice(0, 120) || "file";
+				const dot = safe.lastIndexOf(".");
+				const [stem, ext] = dot > 0 ? [safe.slice(0, dot), safe.slice(dot)] : [safe, ""];
+				let name = safe;
+				for (let i = 2; existsSync(join(dir, name)) && !readFileSync(join(dir, name)).equals(f.bytes); i++) name = `${stem}-${i}${ext}`;
+				writeFileSync(join(dir, name), f.bytes);
+				paths.push(`inputs/${name}`);
+			}
+			await git(this.main, ["add", "--", ...paths]);
+			if ((await git(this.main, ["diff", "--cached", "--name-only"])).trim()) await git(this.main, ["commit", "-q", "-m", message]);
+			return paths;
+		});
+	}
 
 	async files(): Promise<string[]> {
 		return (await git(this.main, ["ls-tree", "-r", "--name-only", "HEAD"])).split("\n").filter(Boolean);

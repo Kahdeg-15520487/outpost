@@ -1,6 +1,6 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { hub } from "../collab/hub.ts";
@@ -34,6 +34,73 @@ class Preview {
 	install?: ChildProcess;
 	/** Incremented on every start/stop; stale async steps check it and give up. */
 	generation = 0;
+	/** The dev server's whole process tree once it's up (Windows): killed one by one on stop. */
+	tracked: Tracked[] = [];
+}
+
+/** A process we started, identified by pid + creation time so a reused pid is never killed. */
+type Tracked = { pid: number; created: string };
+
+/** Every process: pid → parent and creation time (Windows only; elsewhere process groups do the job). */
+function processTable(): Promise<Map<number, { ppid: number; created: string }>> {
+	return new Promise((resolve) => {
+		if (process.platform !== "win32") return resolve(new Map());
+		execFile(
+			"powershell",
+			["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{n='C';e={$_.CreationDate.ToFileTimeUtc()}} | ConvertTo-Json -Compress"],
+			{ windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 20000 },
+			(err, out) => {
+				const table = new Map<number, { ppid: number; created: string }>();
+				if (!err) {
+					try {
+						for (const r of [JSON.parse(out)].flat()) table.set(Number(r.ProcessId), { ppid: Number(r.ParentProcessId), created: String(r.C) });
+					} catch {}
+				}
+				resolve(table);
+			},
+		);
+	});
+}
+
+function descendants(table: Map<number, { ppid: number; created: string }>, root: number): Tracked[] {
+	const out: Tracked[] = [];
+	const queue = [root];
+	while (queue.length) {
+		const pid = queue.shift()!;
+		const me = table.get(pid);
+		if (me) out.push({ pid, created: me.created });
+		for (const [child, info] of table) if (info.ppid === pid && !out.some((t) => t.pid === child) && !queue.includes(child)) queue.push(child);
+	}
+	return out;
+}
+
+/** A process and its living ancestors (stops before pi-os itself). Git Bash breaks parent chains, so the
+ * dev server is found from the port it listens on, and walked up from there. */
+function ancestors(table: Map<number, { ppid: number; created: string }>, pid: number): Tracked[] {
+	const out: Tracked[] = [];
+	for (let cur: number | undefined = pid; cur && cur !== process.pid && table.has(cur) && !out.some((t) => t.pid === cur); cur = table.get(cur)!.ppid) out.push({ pid: cur, created: table.get(cur)!.created });
+	return out;
+}
+
+/** The pid listening on a local TCP port (Windows netstat). */
+function listenerPid(port: number): Promise<number | undefined> {
+	return new Promise((resolve) => {
+		execFile("netstat", ["-ano", "-p", "TCP"], { windowsHide: true, timeout: 10000 }, (err, out) => {
+			if (err) return resolve(undefined);
+			const line = out.split(/\r?\n/).find((l) => /LISTENING/.test(l) && new RegExp(`:${port}\\s`).test(l.trim().split(/\s+/)[1] + " "));
+			resolve(line ? Number(line.trim().split(/\s+/).at(-1)) : undefined);
+		});
+	});
+}
+
+function killTracked(list: Tracked[], table?: Map<number, { ppid: number; created: string }>) {
+	for (const t of list) {
+		if (table && table.get(t.pid)?.created !== t.created) continue;
+		try {
+			if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(t.pid), "/F"], { stdio: "ignore", windowsHide: true });
+			else process.kill(t.pid, "SIGKILL");
+		} catch {}
+	}
 }
 
 let shellPath: string | null | undefined;
@@ -177,24 +244,50 @@ export class PreviewManager {
 		p.generation += 1;
 		killTree(p.install);
 		killTree(p.proc);
+		killTracked(p.tracked);
+		p.tracked = [];
+		rmSync(this.#pidFile(projectId), { force: true });
 		p.install = p.proc = undefined;
 		if (byUser) this.#log(projectId, "Stopped");
 		this.#set(projectId, { status: "off", port: undefined, host: undefined, error: undefined, readyAt: undefined, stoppedByUser: byUser || undefined });
 	}
 
 	stopAll() {
+		for (const t of this.#restartTimers.values()) clearTimeout(t);
+		this.#restartTimers.clear();
 		for (const [id, p] of this.#previews) {
 			p.generation += 1;
 			killTree(p.install);
 			killTree(p.proc);
+			killTracked(p.tracked);
+			rmSync(this.#pidFile(id), { force: true });
 			this.#previews.delete(id);
 		}
+	}
+
+	#pidFile(projectId: string) {
+		return join(this.m.repo(projectId).root, "preview.pids.json");
+	}
+
+	/**
+	 * Kill what a previous pi-os process left running (it was killed before it could stop its dev
+	 * server). Only processes whose pid and creation time both match the record are touched.
+	 */
+	async reap(projectId: string) {
+		const file = this.#pidFile(projectId);
+		if (!existsSync(file)) return;
+		try {
+			const list = JSON.parse(readFileSync(file, "utf8")) as Tracked[];
+			if (list.length) killTracked(list, await processTable());
+		} catch {}
+		rmSync(file, { force: true });
 	}
 
 	/** (Re)start the preview from main's HEAD. Resolves once it's running or has failed. */
 	start(projectId: string, reason = "start"): Promise<PreviewInfo> {
 		return this.#serial(projectId, async () => {
 			this.#stop(projectId, false);
+			await this.reap(projectId);
 			const p = this.#get(projectId);
 			const gen = p.generation;
 			const stale = () => gen !== p.generation;
@@ -286,6 +379,16 @@ export class PreviewManager {
 						if (candidate !== port) this.#log(projectId, `The app ignored $PORT and listens on ${candidate}; using that.`);
 						this.#set(projectId, { status: "running", port: candidate, host, readyAt: Date.now() });
 						this.#log(projectId, `ready on http://${host}:${candidate}${readyPath}`);
+						// Remember the whole tree (Windows can't always kill it through npm/bash wrappers).
+						if (process.platform === "win32" && proc.pid) {
+							const [table, listener] = await Promise.all([processTable(), listenerPid(candidate)]);
+							const tree = descendants(table, proc.pid);
+							for (const t of listener ? ancestors(table, listener) : []) if (!tree.some((x) => x.pid === t.pid)) tree.push(t);
+							if (!stale() && p.proc === proc) {
+								p.tracked = tree;
+								writeFileSync(this.#pidFile(projectId), JSON.stringify(tree));
+							}
+						}
 						return p.info;
 					}
 				}

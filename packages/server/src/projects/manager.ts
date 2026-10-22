@@ -95,6 +95,8 @@ export class ProjectManager {
 			}
 			// Resume the build: re-send briefs that never went out, assign what's ready.
 			this.build.kick(p.id, 3000);
+			// A dev server a killed pi-os left behind.
+			void this.previews.reap(p.id);
 		}
 	}
 

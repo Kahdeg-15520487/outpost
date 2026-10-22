@@ -141,12 +141,16 @@ const body2 = await until("preview restarted with v2", async () => {
 	return t === "hello v2\n" ? t : undefined;
 }, 30000);
 check("preview restarts after the next merge", body2 === "hello v2\n", pm.previews.info(p.id));
+const oldPortAlive = running && pm.previews.info(p.id).port !== running.port ? await fetch(`http://127.0.0.1:${running.port}/`).then(() => true, () => false) : false;
+check("the old dev server is gone after the restart", !oldPortAlive, running?.port);
 check("preview logs captured", /ready on http/.test(pm.previews.tail(p.id)), pm.previews.tail(p.id));
 
 // ------------------------------------------------------------------ pause, user stop
 await pm.build.setPaused(p.id, true, "builder");
 check("pause stored", (await pm.backlog(p.id)).build?.paused === true);
+const lastPort = pm.previews.info(p.id).port;
 await pm.previews.stop(p.id, true);
+check("stop kills the dev server", !(await fetch(`http://127.0.0.1:${lastPort}/`).then(() => true, () => false)), lastPort);
 check("user stop: preview off and remembered", pm.previews.info(p.id).status === "off" && pm.previews.info(p.id).stoppedByUser === true, pm.previews.info(p.id));
 
 pm.previews.stopAll();

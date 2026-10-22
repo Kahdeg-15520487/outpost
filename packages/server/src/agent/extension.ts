@@ -37,7 +37,7 @@ Server API (global/constructor \`ctx\`):
 - \`await ctx.gatekeepers["<grant id or label>"].<method>(args)\` — only for Gatekeepers introduced to *this gadget* (separately from you). To get one, call \`request_access\` with \`forGadget\`; when a gadget holds a single grant of a gatekeeper you can address it by gatekeeper id, e.g. \`await ctx.gatekeepers.github.list_issues({ state: "open" })\`. Gadget writes are queued for approval just like yours.
 - No timers, no fetch, no Node APIs. Calls are serialized; keep them fast.
 
-Workflow: write \`server.js\` first, then \`index.html\`; check \`gadget_write\`'s reported server status and \`gadget_logs\`; exercise the API with \`gadget_call\`. You can also **use** a gadget on the user's behalf through \`gadget_call\` (e.g. edit the slides, make a move in a game) — that is how you collaborate inside apps.`;
+Workflow: write \`server.js\` first, then \`index.html\`; check \`gadget_write\`'s reported server status and \`gadget_logs\`; exercise the API with \`gadget_call\`. **Then look at it**: \`gadget_screenshot\` renders the client headlessly and returns an image plus console errors and failed RPC calls. Check layout, spacing, overflow, empty and loading states, and fix what looks wrong; re-screenshot after visual changes. Use its \`actions\` (click / type / press / scroll / hover / wait, CSS selectors inside the gadget) to verify interactions, and \`width\` to check narrow layouts. Renders run against a scratch copy of the gadget's storage, so test interactions freely; real data is untouched. You can also **use** a gadget on the user's behalf through \`gadget_call\` (e.g. edit the slides, make a move in a game) — that is how you collaborate inside apps.`;
 
 /** Conversations created for subagents report to the chat that owns them; grants follow the chat. */
 async function chatOf(ws: Workspace, conversationId: number, context: Context): Promise<string> {
@@ -167,6 +167,50 @@ export function createOsExtension(ws: Workspace): Extension {
 			},
 		}),
 		defineTool({
+			name: "gadget_screenshot",
+			description:
+				"Render a gadget's client headlessly (as the agent; its RPC calls hit the real server) and return a screenshot, with console output, uncaught errors and failed RPC calls. Optional actions run in order before the capture.",
+			parameters: Type.Object({
+				gadget: Type.String(),
+				width: Type.Optional(Type.Number({ description: "viewport width, default 900 (the shell panel is ~500-900px)" })),
+				height: Type.Optional(Type.Number({ description: "viewport height, default 700" })),
+				full_page: Type.Optional(Type.Boolean({ description: "capture the whole scroll height (max 4000px)" })),
+				wait_ms: Type.Optional(Type.Number({ description: "extra wait before capture, default 300" })),
+				actions: Type.Optional(
+					Type.Array(Type.Any(), {
+						description: 'e.g. [{"click":"#add"}, {"type":{"selector":"input","text":"Milk"}}, {"press":"Enter"}, {"scroll":{"y":600}}, {"hover":".row"}, {"wait":500}]',
+					}),
+				),
+				save_as: Type.Optional(Type.String({ description: "also save the PNG to Files under this name" })),
+				persist: Type.Optional(Type.Boolean({ description: "keep state changes made by the render (default false: it runs against a scratch copy of the gadget's storage)" })),
+			}),
+			execute: async (args, api, context) => {
+				const g = requireGadget(ws, args.gadget);
+				const r = await ws.renderGadget(g.id, await agentCaller(api, context), {
+					width: clamp(args.width ?? 900, 320, 1600),
+					height: clamp(args.height ?? 700, 240, 2000),
+					fullPage: !!args.full_page,
+					waitMs: args.wait_ms ?? 300,
+					actions: Array.isArray(args.actions) ? args.actions : [],
+					persist: !!args.persist,
+				});
+				const lines = [`${g.name} rendered at ${r.width}x${r.height}${r.note ? ` (${r.note})` : ""}${args.persist ? "" : "; ran against a scratch copy, so actions did not change real data"}.`];
+				const problems = r.console.filter((c) => c.level === "error" || c.level === "warn");
+				lines.push(problems.length ? `Console problems:\n${problems.map((c) => `  [${c.level}] ${c.text}`).join("\n")}` : "No console errors.");
+				const failed = r.calls.filter((c) => !c.ok);
+				lines.push(`RPC: ${r.calls.length} call(s)${r.calls.length ? ` (${[...new Set(r.calls.map((c) => c.method))].join(", ")})` : ""}${failed.length ? `; FAILED: ${failed.map((c) => `${c.method}: ${c.error}`).join("; ")}` : ""}.`);
+				if (r.actionErrors.length) lines.push(`Action errors:\n  ${r.actionErrors.join("\n  ")}`);
+				if (r.timedOut) lines.push("Note: some RPC calls were still pending at capture time.");
+				const logs = r.console.filter((c) => c.level !== "error" && c.level !== "warn").slice(-10);
+				if (logs.length) lines.push(`Console (last ${logs.length}):\n${logs.map((c) => `  ${c.text}`).join("\n")}`);
+				if (args.save_as) {
+					const meta = await ws.files.put(r.png, { name: args.save_as.endsWith(".png") ? args.save_as : `${args.save_as}.png`, mime: "image/png", createdBy: "Agent", source: "agent" });
+					lines.push(`Saved to Files as ${meta.id}.`);
+				}
+				return { output: [{ type: "text" as const, text: lines.join("\n") }, { type: "image" as const, data: r.image.data, mimeType: r.image.mimeType }] };
+			},
+		}),
+		defineTool({
 			name: "gadget_logs",
 			description: "Recent gadget server logs: console output, calls, and errors.",
 			parameters: Type.Object({ gadget: Type.String(), limit: Type.Optional(Type.Number()) }),
@@ -271,3 +315,5 @@ export function createOsExtension(ws: Workspace): Extension {
 		],
 	});
 }
+
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(n)));

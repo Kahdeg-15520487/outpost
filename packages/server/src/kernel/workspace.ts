@@ -9,7 +9,10 @@ import { hub } from "../collab/hub.ts";
 import { createOsExtension } from "../agent/extension.ts";
 import { GadgetHost, type Caller } from "../gadgets/host.ts";
 import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
-import { FileStore, formatBytes, looksLikeText } from "../files/store.ts";
+import { FileStore, formatBytes, imageProcessor, looksLikeText } from "../files/store.ts";
+import { buildFrame } from "../gadgets/frame.ts";
+import { renderGadget, type RenderAction } from "../gadgets/render.ts";
+import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
 import {
 	ApprovalsDoc,
 	AuditDoc,
@@ -255,6 +258,32 @@ export class Workspace {
 			this.hosts.set(gadgetId, host);
 		}
 		return host;
+	}
+
+	/** Render a gadget's client headlessly as `caller` (whose RPC calls run against the real server). */
+	async renderGadget(gadgetId: string, caller: Caller, opts: { width: number; height: number; fullPage: boolean; waitMs: number; actions: RenderAction[]; persist?: boolean }) {
+		if (!config.render.enabled) throw new Error("Rendering is disabled (render.enabled = false in pi-os.config.json)");
+		const html = buildFrame(await this.gadgetFiles(gadgetId), { gadgetId, user: { id: caller.id, name: caller.name, role: caller.role } });
+		// By default the render talks to a scratch copy of the server, so clicking through the UI to
+		// check it never changes the user's data. persist: true uses the live instance.
+		const host = opts.persist ? this.host(gadgetId) : this.#scratchHost(gadgetId);
+		let result;
+		try {
+			result = await renderGadget({ ...opts, html, call: (method, args) => host.call(method, args, caller) });
+		} finally {
+			if (!opts.persist) await host.dispose();
+		}
+		// Fit the model's image limits (tall full-page captures get scaled down).
+		const processor = await imageProcessor();
+		const prepared = processor ? await processor.prepare(new Uint8Array(result.png), "image/png", DEFAULT_IMAGE_LIMITS).catch(() => undefined) : undefined;
+		const image = prepared ? { data: prepared.data, mimeType: prepared.mimeType } : { data: result.png.toString("base64"), mimeType: "image/png" };
+		const note = prepared?.resized ? `scaled to ${prepared.resized.to.width}x${prepared.resized.to.height} for viewing` : undefined;
+		return { ...result, image, note };
+	}
+
+	#scratchHost(gadgetId: string) {
+		const live = this.host(gadgetId);
+		return new GadgetHost(gadgetId, live.env, true);
 	}
 
 	async createGadget(opts: { name: string; icon?: string; blueprintId?: string; ownerId: string; files?: Record<string, string> }): Promise<GadgetRow> {

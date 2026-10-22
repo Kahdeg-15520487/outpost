@@ -7,6 +7,7 @@ import { sendJson } from "./http/util.ts";
 import { attachSockets } from "./collab/socket.ts";
 import { installBuiltinBlueprints } from "./gadgets/blueprints.ts";
 import { Workspace } from "./kernel/workspace.ts";
+import { closeRenderer } from "./gadgets/render.ts";
 import { workspaces } from "./kernel/system-db.ts";
 
 process.removeAllListeners("warning");
@@ -67,6 +68,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 		console.log("shutting down…");
 		server.close();
 		await Workspace.closeAll();
+		await closeRenderer();
 		process.exit(0);
 	});
 }

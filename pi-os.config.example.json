@@ -36,5 +36,8 @@
   },
   "files": {
     "maxUploadMB": 100
+  },
+  "render": {
+    "enabled": true
   }
 }

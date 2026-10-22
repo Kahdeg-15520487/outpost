@@ -39,12 +39,19 @@ export type PiOsConfigFile = {
 		/** Largest single upload, in MB. Default 100. */
 		maxUploadMB?: number;
 	};
+	/** Headless rendering of gadgets (agent visual feedback via gadget_screenshot). */
+	render?: {
+		/** false disables gadget_screenshot. Default true. */
+		enabled?: boolean;
+		/** Chrome / Chromium / Edge executable. Default: auto-detect (also PI_OS_CHROME). */
+		chromePath?: string;
+	};
 };
 
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 // pnpm runs package scripts inside the package; INIT_CWD is where you actually ran the command.
 const startDir = process.env.INIT_CWD ?? process.cwd();
-const configPath = resolve(startDir, process.env.PI_OS_CONFIG ?? "pi-os.config.json");
+const configPath = resolve(startDir, process.env.PI_OS_CONFIG || "pi-os.config.json");
 
 class ConfigError extends Error {}
 
@@ -125,6 +132,7 @@ export const config = {
 	ambientEnv: file.models?.ambientEnv ?? true,
 	demoModel: file.models?.demo ?? true,
 	githubToken: () => resolveSecret(file.gatekeepers?.github?.token).value,
+	render: { enabled: file.render?.enabled ?? true, chromePath: process.env.PI_OS_CHROME ?? file.render?.chromePath },
 	maxUploadBytes: Math.round((file.files?.maxUploadMB ?? 100) * (1 << 20)),
 	secret,
 };

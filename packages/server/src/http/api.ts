@@ -359,7 +359,7 @@ export function createApi(): Router {
 		const html = buildFrame(await ws.gadgetFiles(g.id), { gadgetId: g.id, user: { id: claims.u, name: claims.n, role: claims.r } });
 		req.res.writeHead(200, {
 			"content-type": "text/html; charset=utf-8",
-			"content-security-policy": `${FRAME_CSP}; sandbox allow-scripts allow-modals allow-downloads allow-popups`,
+			"content-security-policy": `${FRAME_CSP}; sandbox allow-scripts allow-forms allow-modals allow-downloads allow-popups`,
 			"cache-control": "no-store",
 			"x-content-type-options": "nosniff",
 			"referrer-policy": "no-referrer",

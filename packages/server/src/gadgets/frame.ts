@@ -50,6 +50,15 @@ const BOOTSTRAP = (boot: object) => `<script>(() => {
   };
   addEventListener("error", (e) => post({ t: "error", message: String(e.message || e.error) }));
   addEventListener("unhandledrejection", (e) => post({ t: "error", message: String(e.reason && e.reason.message || e.reason) }));
+  // Mirror console output to the host (the headless renderer reports it back to the agent).
+  let forwarded = 0;
+  for (const level of ["log", "info", "warn", "error"]) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      original(...args);
+      if (forwarded++ < 200) post({ t: "console", level, text: args.map((a) => { try { return typeof a === "string" ? a : a instanceof Error ? a.stack || a.message : JSON.stringify(a); } catch { return String(a); } }).join(" ").slice(0, 2000) });
+    };
+  }
   try { Object.defineProperty(window, "localStorage", { get() { throw new Error("localStorage is unavailable in gadgets; persist through the server (ctx.storage)."); } }); } catch {}
   post({ t: "ready" });
 })();</script>`;

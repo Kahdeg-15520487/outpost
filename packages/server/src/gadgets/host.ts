@@ -105,6 +105,11 @@ export class GadgetHost {
 	constructor(
 		readonly gadgetId: string,
 		readonly env: GadgetEnv,
+		/**
+		 * A scratch instance (preview renders): starts from the committed state, but its writes, logs,
+		 * broadcasts and file outputs stay in memory and vanish with it.
+		 */
+		readonly ephemeral = false,
 	) {}
 
 	get channel() {
@@ -281,6 +286,12 @@ export class GadgetHost {
 		fn("fileWrite", (name, data, mime) => {
 			const deferred = vm.newPromise();
 			const bytes = data!.typeof === "string" ? Buffer.from(data!.toString(), "utf8") : Buffer.from(data!.toUint8Array());
+			if (this.ephemeral) {
+				const fake = { id: `f_preview_${crypto.randomUUID().slice(0, 8)}`, name: name!.toString(), mime: mime!.toString() || "application/octet-stream", kind: "preview", size: bytes.length, createdAt: Date.now() };
+				deferred.resolve(vm.newString(JSON.stringify(fake)));
+				queueMicrotask(() => this.#vm === vm && this.#slice(() => vm.executePendingJobs()));
+				return deferred.handle;
+			}
 			const caller = this.#caller;
 			this.env.files
 				.put(bytes, { name: name!.toString(), mime: mime!.toString() || undefined, createdBy: `${this.env.name()} (${caller?.name ?? "gadget"})`, source: "gadget", gadgets: [this.gadgetId] })
@@ -358,6 +369,7 @@ export class GadgetHost {
 
 	#log(level: LogLine["level"], text: string) {
 		const line = { at: Date.now(), level, text: text.slice(0, 4000) };
+		if (this.ephemeral) return;
 		this.#logs.push(line);
 		hub.publish(this.channel, { t: "gadget.log", gadgetId: this.gadgetId, line });
 	}
@@ -367,6 +379,7 @@ export class GadgetHost {
 		const dirty = [...this.#dirty];
 		const broadcasts = this.#broadcasts.splice(0);
 		this.#dirty.clear();
+		if (this.ephemeral) return; // kv keeps the call's writes in memory; nothing is committed or published
 		if (dirty.length) await this.#commit(dirty);
 		else if (this.#logs.length && !this.#logTimer) this.#logTimer = setTimeout(() => void this.#commit([]).catch(() => {}), 1500);
 		for (const b of broadcasts) hub.publish(this.channel, { t: "gadget.event", gadgetId: this.gadgetId, event: b.event, data: JSON.parse(b.data) });

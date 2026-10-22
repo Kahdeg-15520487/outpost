@@ -132,7 +132,7 @@ export function GadgetWindow({ gadgetId, user, grants, onClose, standalone }: { 
 					ref={frame}
 					title={g?.name ?? "gadget"}
 					src={frameUrl}
-					sandbox="allow-scripts allow-modals allow-downloads allow-popups"
+					sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups"
 					style={{ display: tab === "app" ? "block" : "none" }}
 				/>
 				{tab === "app" && flash > 0 && <div key={flash} className="gwin-flash" />}

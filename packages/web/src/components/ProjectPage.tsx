@@ -1,5 +1,6 @@
 import "../project.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import "../project-layout.css";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentRecord, type AgentSummary, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
@@ -63,6 +64,14 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 	const { project, state, summaries } = live;
 	const [open, setOpen] = useState<string>();
 	const [modelMenu, setModelMenu] = useState(false);
+	// Layout: "side" = tiles around the viewer; "team" = all tiles on top, viewer below (resizable split).
+	const [layout, setLayout] = useState<"side" | "team">(() => (localStorage.getItem("pios.project.layout") === "team" ? "team" : "side"));
+	const [split, setSplit] = useState(() => Math.min(0.8, Math.max(0.2, Number(localStorage.getItem("pios.project.split")) || 0.5)));
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const chooseLayout = (l: "side" | "team") => {
+		setLayout(l);
+		localStorage.setItem("pios.project.layout", l);
+	};
 	// Wide viewer: agent tiles shrink to avatars. Default on for the board and the app; remembered per tab kind.
 	const [widePref, setWidePref] = useState<Record<string, boolean>>(() => {
 		try {
@@ -83,7 +92,7 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 	if (!project) return <div className="main project-loading">Loading project…</div>;
 	const stageIdx = STAGES.findIndex((s) => s.id === project.stage);
 
-	const wide = widePref[current] ?? (current === "backlog" || current === "app");
+	const wide = layout === "side" && (widePref[current] ?? (current === "backlog" || current === "app"));
 	const toggleWide = () => {
 		const next = { ...widePref, [current]: !wide };
 		setWidePref(next);
@@ -93,6 +102,44 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 		list.map((a, i) =>
 			wide ? <AgentMini key={a.key} agent={a} summary={summaries[a.key]} asking={asking.has(a.key)} onOpen={() => setOpen(a.key)} /> : <AgentTile key={a.key} agent={a} summary={summaries[a.key]} asking={asking.has(a.key)} index={i} onOpen={() => setOpen(a.key)} />,
 		);
+
+	const viewer = (
+		<section className="viewer" aria-label="Artifacts">
+			<nav className="viewer-tabs">
+				{TABS.map((t) => (
+					<a key={t.id} href={projectHref(ws.id, projectId, t.id === "overview" ? undefined : t.id)} className={current === t.id ? "on" : ""}>
+						{t.label}
+						{t.id === "overview" && openQuestions.length > 0 && <span className="vt-badge">{openQuestions.length}</span>}
+						{t.id === "backlog" && live.backlog.approval.status === "pending" && <span className="vt-badge">!</span>}
+					</a>
+				))}
+				<span className="grow" />
+				{layout === "side" && <button className="vt-wide" onClick={toggleWide} title={wide ? "Show the agent tiles" : "Expand: shrink the agent tiles to avatars"} aria-pressed={wide}>
+					{wide ? "⤡" : "⤢"}
+				</button>}
+			</nav>
+			{live.backlog.approval.status === "pending" && current !== "backlog" && (
+				<a className="viewer-ask" href={projectHref(ws.id, projectId, "backlog")}>
+					<span className="va-dot" /> The backlog is waiting for your approval — open Backlog
+				</a>
+			)}
+			{openQuestions.length > 0 && current !== "overview" && (
+				<a className="viewer-ask" href={projectHref(ws.id, projectId)}>
+					<span className="va-dot" /> {state.agents[openQuestions[0]!.agent]?.name ?? "An agent"} is waiting for your answer — open Overview
+				</a>
+			)}
+			<div className="viewer-body">
+				{current === "overview" && <Overview ws={ws} project={project} live={live} questions={openQuestions} canEdit={canEdit} onOpenAgent={setOpen} />}
+				{current === "requirements" && <DocTab ws={ws.id} projectId={projectId} path="docs/requirements.md" tick={live.repoTick} empty="The product owner hasn't published requirements yet." />}
+				{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
+				{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
+				{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
+				{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} />}
+				{current === "app" && <Placeholder icon="▶" title="Live app" text="The running product appears here once the architect defines how to run it (.pios/project.json). Live preview arrives in milestone 5." />}
+				{current === "repo" && <RepoTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
+			</div>
+		</section>
+	);
 
 	return (
 		<div className="main project">
@@ -123,6 +170,25 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 					<span>{fmtTokens(totals.tokens)} tok</span>
 					{totals.cost > 0 && <span>${totals.cost.toFixed(totals.cost < 1 ? 3 : 2)}</span>}
 				</div>
+				<div className="ph-layout" role="group" aria-label="Layout">
+					<button className={layout === "side" ? "on" : ""} onClick={() => chooseLayout("side")} title="Agents beside the artifact viewer" aria-pressed={layout === "side"}>
+						<svg viewBox="0 0 20 14" aria-hidden>
+							<rect x="0.5" y="0.5" width="4" height="13" rx="1" />
+							<rect x="6" y="0.5" width="8" height="13" rx="1" className="fill" />
+							<rect x="15.5" y="0.5" width="4" height="13" rx="1" />
+						</svg>
+						Side
+					</button>
+					<button className={layout === "team" ? "on" : ""} onClick={() => chooseLayout("team")} title="All agents on top, activity and artifacts below" aria-pressed={layout === "team"}>
+						<svg viewBox="0 0 20 14" aria-hidden>
+							<rect x="0.5" y="0.5" width="5.5" height="3.5" rx="1" />
+							<rect x="7.25" y="0.5" width="5.5" height="3.5" rx="1" />
+							<rect x="14" y="0.5" width="5.5" height="3.5" rx="1" />
+							<rect x="0.5" y="5.5" width="19" height="8" rx="1" className="fill" />
+						</svg>
+						Team
+					</button>
+				</div>
 				{canEdit && (
 					<div className="ph-actions">
 						<button className="btn small ph-btn" disabled={!working} onClick={() => confirm("Stop every agent's current work?") && api.post(`/api/w/${ws.id}/projects/${projectId}/stop`, {})}>
@@ -142,51 +208,60 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 				)}
 			</header>
 
-			<div className={`project-body ${wide ? "wide" : ""}`}>
-				<section className="tiles" aria-label="Agents">
-					{tiles(agents.slice(0, half))}
-					{agents.length === 0 && <div className="tile-empty">The lead is getting ready…</div>}
-				</section>
-
-				<section className="viewer" aria-label="Artifacts">
-					<nav className="viewer-tabs">
-						{TABS.map((t) => (
-							<a key={t.id} href={projectHref(ws.id, projectId, t.id === "overview" ? undefined : t.id)} className={current === t.id ? "on" : ""}>
-								{t.label}
-								{t.id === "overview" && openQuestions.length > 0 && <span className="vt-badge">{openQuestions.length}</span>}
-								{t.id === "backlog" && live.backlog.approval.status === "pending" && <span className="vt-badge">!</span>}
-							</a>
-						))}
-						<span className="grow" />
-						<button className="vt-wide" onClick={toggleWide} title={wide ? "Show the agent tiles" : "Expand: shrink the agent tiles to avatars"} aria-pressed={wide}>
-							{wide ? "⤡" : "⤢"}
-						</button>
-					</nav>
-					{live.backlog.approval.status === "pending" && current !== "backlog" && (
-						<a className="viewer-ask" href={projectHref(ws.id, projectId, "backlog")}>
-							<span className="va-dot" /> The backlog is waiting for your approval — open Backlog
-						</a>
-					)}
-					{openQuestions.length > 0 && current !== "overview" && (
-						<a className="viewer-ask" href={projectHref(ws.id, projectId)}>
-							<span className="va-dot" /> {state.agents[openQuestions[0]!.agent]?.name ?? "An agent"} is waiting for your answer — open Overview
-						</a>
-					)}
-					<div className="viewer-body">
-						{current === "overview" && <Overview ws={ws} project={project} live={live} questions={openQuestions} canEdit={canEdit} onOpenAgent={setOpen} />}
-						{current === "requirements" && <DocTab ws={ws.id} projectId={projectId} path="docs/requirements.md" tick={live.repoTick} empty="The product owner hasn't published requirements yet." />}
-						{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
-						{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-						{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-						{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} />}
-						{current === "app" && <Placeholder icon="▶" title="Live app" text="The running product appears here once the architect defines how to run it (.pios/project.json). Live preview arrives in milestone 5." />}
-						{current === "repo" && <RepoTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-					</div>
-				</section>
-
-				<section className="tiles" aria-label="More agents">
-					{tiles(agents.slice(half))}
-				</section>
+			<div
+				ref={bodyRef}
+				className={`project-body ${layout} ${wide ? "wide" : ""}`}
+				style={layout === "team" ? { gridTemplateRows: `minmax(0, ${split}fr) 12px minmax(0, ${1 - split}fr)` } : undefined}
+			>
+				{layout === "side" ? (
+					<>
+						<TileGrid label="Agents" count={Math.max(1, half)} mini={wide}>
+							{tiles(agents.slice(0, half))}
+							{agents.length === 0 && <div className="tile-empty">The lead is getting ready…</div>}
+						</TileGrid>
+						{viewer}
+						<TileGrid label="More agents" count={agents.length - half} mini={wide}>
+							{tiles(agents.slice(half))}
+						</TileGrid>
+					</>
+				) : (
+					<>
+						<TileGrid label="Agents" count={Math.max(1, agents.length)}>
+							{tiles(agents)}
+							{agents.length === 0 && <div className="tile-empty">The lead is getting ready…</div>}
+						</TileGrid>
+						<div
+							className="splitter"
+							role="separator"
+							aria-orientation="horizontal"
+							title="Drag to resize · double-click to reset"
+							onPointerDown={(e) => {
+								const body = bodyRef.current;
+								if (!body) return;
+								e.preventDefault();
+								const rect = body.getBoundingClientRect();
+								let last = split;
+								const move = (ev: PointerEvent) => {
+									last = Math.min(0.8, Math.max(0.2, (ev.clientY - rect.top) / rect.height));
+									setSplit(last);
+								};
+								const up = () => {
+									removeEventListener("pointermove", move);
+									removeEventListener("pointerup", up);
+									document.body.classList.remove("resizing-rows");
+									localStorage.setItem("pios.project.split", String(last));
+								};
+								document.body.classList.add("resizing-rows");
+								addEventListener("pointermove", move);
+								addEventListener("pointerup", up);
+							}}
+							onDoubleClick={() => (setSplit(0.5), localStorage.setItem("pios.project.split", "0.5"))}
+						>
+							<span />
+						</div>
+						{viewer}
+					</>
+				)}
 			</div>
 
 			{open && state.agents[open] && <AgentDrawer ws={ws} projectId={projectId} agent={state.agents[open]!} summary={summaries[open]} questions={openQuestions.filter((q) => q.agent === open)} canEdit={canEdit} models={models} picker={picker} onClose={() => setOpen(undefined)} />}
@@ -195,6 +270,61 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 }
 
 // ------------------------------------------------------------------ tiles
+
+// ------------------------------------------------------------------ tile grid
+
+const TILE_MIN_W = 180;
+const TILE_MIN_H = 150;
+const TILE_GAP = 10;
+/** Preferred tile shape (width / height); text reads best in slightly wide tiles. */
+const TILE_ASPECT = 1.2;
+
+/**
+ * The grid of `n` tiles that fills a W×H area best: every column count is tried (tiles at least
+ * TILE_MIN_W wide, TILE_MIN_H tall); the one whose tiles are largest at roughly TILE_ASPECT wins.
+ * When nothing fits the height, rows get TILE_MIN_H and the area scrolls, with as few rows as fit.
+ */
+export function bestGrid(n: number, W: number, H: number): { cols: number; rows: number; fill: boolean } {
+	if (n <= 0 || W <= 0 || H <= 0) return { cols: 1, rows: 1, fill: true };
+	const maxCols = Math.max(1, Math.min(n, Math.floor((W + TILE_GAP) / (TILE_MIN_W + TILE_GAP))));
+	let best: { cols: number; rows: number; fill: boolean; score: number } | undefined;
+	for (let cols = 1; cols <= maxCols; cols++) {
+		const rows = Math.ceil(n / cols);
+		const w = (W - (cols - 1) * TILE_GAP) / cols;
+		const h = (H - (rows - 1) * TILE_GAP) / rows;
+		if (h < TILE_MIN_H) continue;
+		// Usable area of a tile at the preferred shape, minus a little per empty cell.
+		const score = Math.min(w, h * TILE_ASPECT) * Math.min(h, w / TILE_ASPECT) * (1 - (rows * cols - n) * 0.04);
+		if (!best || score > best.score) best = { cols, rows, fill: true, score };
+	}
+	return best ?? { cols: maxCols, rows: Math.ceil(n / maxCols), fill: false };
+}
+
+/** A section of agent tiles that sizes its grid to fill the space it's given. */
+function TileGrid({ label, count, mini, children }: { label: string; count: number; mini?: boolean; children: React.ReactNode }) {
+	const ref = useRef<HTMLElement>(null);
+	const [grid, setGrid] = useState<React.CSSProperties>();
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el || mini) return setGrid(undefined);
+		const fit = () => {
+			// Only fill when the area has a fixed height; stacked narrow layouts just flow.
+			if (getComputedStyle(el).overflowY === "visible") return setGrid(undefined);
+			const pad = 4;
+			const g = bestGrid(count, el.clientWidth - pad, el.clientHeight - pad);
+			setGrid({ gridTemplateColumns: `repeat(${g.cols}, minmax(0, 1fr))`, gridTemplateRows: g.fill ? `repeat(${g.rows}, minmax(0, 1fr))` : `repeat(${g.rows}, ${TILE_MIN_H}px)` });
+		};
+		fit();
+		const ro = new ResizeObserver(fit);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [count, mini]);
+	return (
+		<section ref={ref} className={`tiles ${mini ? "mini" : ""}`} aria-label={label} style={grid}>
+			{children}
+		</section>
+	);
+}
 
 /** An agent as an avatar with a live status dot (wide viewer). */
 function AgentMini({ agent, summary, asking, onOpen }: { agent: AgentRecord; summary?: AgentSummary; asking: boolean; onOpen: () => void }) {

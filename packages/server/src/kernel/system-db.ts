@@ -1,6 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { config } from "../config.ts";
 
 /**
@@ -54,12 +53,7 @@ CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, gadget_id TEXT N
 CREATE TABLE IF NOT EXISTS blueprints (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', author_id TEXT, visibility TEXT NOT NULL, files TEXT NOT NULL, created_at INTEGER NOT NULL);
 `);
 
-const secret: Buffer = (() => {
-	if (existsSync(config.secretFile)) return readFileSync(config.secretFile);
-	const value = randomBytes(32);
-	writeFileSync(config.secretFile, value);
-	return value;
-})();
+const secret = config.secret;
 
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 

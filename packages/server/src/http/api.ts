@@ -61,13 +61,14 @@ export function createApi(): Router {
 	});
 	r.get("/api/providers", async (req) => {
 		req.need();
-		return { providers: await listProviders(), authFile: config.authFile };
+		return { providers: await listProviders(), configPath: config.configPath, configFound: config.configFound, ambientEnv: config.ambientEnv };
 	});
 	r.post("/api/providers/:id/key", async (req) => {
 		req.need();
 		const { key } = await req.body();
 		if (!models.getProvider(req.params.id!)) throw new HttpError(404, "Unknown provider");
-		if (key) await credentials.modify(req.params.id!, async () => ({ type: "api_key", key: String(key) }));
+		if (credentials.managedByConfig(req.params.id!)) throw new HttpError(409, `The ${req.params.id} key is set in pi-os.config.json; change it there.`);
+		if (key) await credentials.modify(req.params.id!, async (current) => ({ ...(current?.type === "api_key" ? current : {}), type: "api_key", key: String(key) }));
 		else await credentials.delete(req.params.id!);
 		return { ok: true };
 	});
@@ -263,7 +264,7 @@ export function createApi(): Router {
 	// ------------------------------------------------------------ gatekeepers
 	r.get("/api/gatekeepers", (req) => {
 		req.need();
-		return { gatekeepers: Object.values(GATEKEEPERS).map(describeGatekeeper), githubToken: !!config.githubToken };
+		return { gatekeepers: Object.values(GATEKEEPERS).map(describeGatekeeper), githubToken: !!config.githubToken() };
 	});
 	r.post("/api/w/:ws/grants", async (req) => {
 		const { user, ws } = await member(req, "editor");

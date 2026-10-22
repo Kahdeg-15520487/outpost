@@ -35,24 +35,52 @@ pnpm dev              # server on :8787 (tsx watch), web on http://localhost:517
 
 Sign up. The first account gets a personal workspace. Invite others by username in **Settings → Members**, or share single gadgets.
 
-### Models
+### Configuration
 
-pi-os uses every provider pi supports: Anthropic, OpenAI, Google, Azure, Bedrock, GitHub Copilot, OpenRouter, Groq, Mistral, DeepSeek, and more. Credentials resolve the way pi resolves them:
+pi-os reads one file: **`pi-os.config.json`** in the directory you start it from, or the path in `PI_OS_CONFIG`. It doesn't read any other tool's config. Without the file, defaults apply. Start from the example:
 
-1. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
-2. `~/.pi/agent/auth.json`, shared with the pi CLI. Anything you `pi /login` into works here, including OAuth subscriptions.
-3. **Settings → Model providers → Add key**, which writes to that same file.
+```bash
+cp pi-os.config.example.json pi-os.config.json
+```
 
-The default model for new chats is your pi default (`~/.pi/agent/settings.json`), otherwise the first available model. You can override it per workspace or per chat. With no credentials at all, there's an offline **Demo** model that follows a few scripts ("make a todo list", "make slides", …).
+```jsonc
+{
+  "server": { "host": "127.0.0.1", "port": 8787 },
+  "dataDir": "./data",                       // relative to the config file
+  "models": {
+    "default": "anthropic/claude-sonnet-4-5",  // for new chats; workspaces can override
+    "providers": {                             // keyed by pi provider id
+      "anthropic": { "apiKey": "$ANTHROPIC_API_KEY" },        // "$VAR" reads the env; literals work too
+      "azure": { "apiKey": "$AZURE_OPENAI_API_KEY", "env": { "AZURE_OPENAI_BASE_URL": "https://…" } },
+      "groq": { "enabled": false }                          // hide a provider
+    },
+    "ambientEnv": true,                        // also accept providers' standard env vars
+    "demo": true                               // offer the offline demo model
+  },
+  "gatekeepers": { "github": { "token": "$GITHUB_TOKEN" } }
+}
+```
 
-### Environment
+### Models and keys
 
-| Variable | Default | |
-|---|---|---|
-| `PORT`, `HOST` | `8787`, `127.0.0.1` | |
-| `PI_OS_DATA` | `./data` | system DB, one `workspaces/<id>.sqlite` per workspace, signing key |
-| `PI_OS_AUTH_FILE` | `~/.pi/agent/auth.json` if present, else `data/auth.json` | model credentials |
-| `GITHUB_TOKEN` | – | used by the GitHub Gatekeeper (private repos, writes, rate limits) |
+pi-os can use every provider pi-ai supports: Anthropic, OpenAI, Google, Azure, Bedrock, OpenRouter, Groq, Mistral, DeepSeek, xAI, and more. Each provider's key comes from the first of these that is set:
+
+1. **`models.providers.<id>.apiKey`** in the config file. Keys set here are read-only in the UI.
+2. **Settings → Model providers → Add key.** These are stored in `<dataDir>/credentials.enc.json`, encrypted with AES-256-GCM using the instance secret (`<dataDir>/secret.key`, or `PI_OS_SECRET`).
+3. The provider's **standard env var** (`ANTHROPIC_API_KEY`, …). Set `models.ambientEnv: false` to turn this off.
+
+Subscription (OAuth) logins aren't supported yet; only API keys work. Unknown provider IDs and `$VAR`s that aren't set produce warnings at startup.
+
+New chats use `models.default`, unless the workspace sets its own, falling back to the first available model. You can change the model per chat. With no keys at all, an offline **Demo** model follows a few scripts ("make a todo list", "make slides", …).
+
+### Environment overrides
+
+| Variable | Overrides |
+|---|---|
+| `PI_OS_CONFIG` | config file path |
+| `PORT`, `HOST` | `server.port`, `server.host` |
+| `PI_OS_DATA` | `dataDir`, which holds the system DB, one `workspaces/<id>.sqlite` per workspace, the secret, and stored credentials |
+| `PI_OS_SECRET` | the generated `secret.key` (32 bytes, as hex or base64) |
 
 ## How it maps onto pi-durable
 
@@ -104,6 +132,6 @@ pnpm smoke            # auth, chat→gadget via the demo model, RPC, rollback, C
 ## Not (yet) like Cloudflare OS
 
 - Gadget servers are QuickJS VMs in the main process, not Dynamic Worker facets. They have no outbound network and no timers or alarms.
-- Gatekeepers run in-process and use a static token (`GITHUB_TOKEN`) instead of per-user OAuth.
+- Gatekeepers run in-process and use a static token (`gatekeepers.github.token`) instead of per-user OAuth.
 - Realtime collaboration is method calls plus broadcasts, not CRDT/OT text editing.
 - Single process: storage has one owner, so there's no horizontal scaling.

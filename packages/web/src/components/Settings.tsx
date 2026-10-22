@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, type ModelInfo, type Workspace } from "../api";
 
-type Provider = { id: string; name: string; configured: boolean; models: number };
+type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number };
 
 export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () => void }) {
 	const [providers, setProviders] = useState<Provider[]>([]);
-	const [authFile, setAuthFile] = useState("");
+	const [cfg, setCfg] = useState<{ configPath: string; configFound: boolean; ambientEnv: boolean }>();
+	const [keyErr, setKeyErr] = useState("");
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [members, setMembers] = useState<{ id: string; username: string; displayName: string; role: string }[]>([]);
 	const [name, setName] = useState(ws.name);
@@ -22,7 +23,7 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 	const loadProviders = () =>
 		api.get("/api/providers").then((r) => {
 			setProviders(r.providers);
-			setAuthFile(r.authFile);
+			setCfg({ configPath: r.configPath, configFound: r.configFound, ambientEnv: r.ambientEnv });
 		});
 	const loadModels = () => api.get("/api/models").then((r) => setModels(r.models));
 	const loadMembers = () => api.get(`/api/w/${ws.id}`).then((r) => setMembers(r.members));
@@ -63,7 +64,7 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 								/>
 								<label className="label">Default model for new chats</label>
 								<select className="input" value={defaultModel} disabled={!isOwner} onChange={(e) => setDefaultModel(e.target.value)}>
-									<option value="">Automatic (pi default, else first available)</option>
+									<option value="">Automatic (models.default in config, else first available)</option>
 									{models.map((m) => (
 										<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
 											{m.provider} · {m.name}
@@ -126,8 +127,10 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 						</div>
 						<div className="card">
 							<h3 style={{ margin: "0 0 4px", font: "600 17px var(--display)" }}>Model providers</h3>
-							<div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-								Everything pi supports. Keys resolve from environment variables or <code className="mono">{authFile}</code> (shared with the pi CLI — <code className="mono">pi /login</code> works too).
+							<div className="muted" style={{ fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+								Every provider pi-ai supports. A key is taken from, in order: <b>{cfg?.configFound ? "" : "(missing) "}</b>
+								<code className="mono">{cfg?.configPath}</code> → keys saved here (encrypted in the data dir)
+								{cfg?.ambientEnv ? <> → the provider's standard env var</> : <> (ambient env vars disabled)</>}.
 							</div>
 							<input className="input" placeholder="Filter providers…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ marginBottom: 8 }} />
 							<div style={{ maxHeight: 520, overflowY: "auto" }}>
@@ -137,26 +140,53 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 									.map((p) => (
 										<div key={p.id} className="list-row" style={{ flexWrap: "wrap" }}>
 											<span className="grow">
-												{p.name} <span className="mono muted" style={{ fontSize: 11 }}>{p.models} models</span>
+												{p.name} <span className="mono muted" style={{ fontSize: 11 }}>{p.id} · {p.models} models</span>
+												{p.source && (
+													<div className="mono muted" style={{ fontSize: 11 }}>
+														key from {p.source}
+													</div>
+												)}
 											</span>
 											{p.configured ? <span className="pill ok">ready</span> : <span className="pill">not set</span>}
-											<button className="btn ghost small" onClick={() => (setKeyFor(keyFor === p.id ? undefined : p.id), setKey(""))}>
-												{p.configured ? "Change key" : "Add key"}
-											</button>
+											{p.oauthOnly ? (
+												<span className="mono muted" style={{ fontSize: 11 }}>
+													subscription login not supported
+												</span>
+											) : p.editable ? (
+												<>
+													{p.stored && (
+														<button className="btn ghost small" onClick={() => api.post(`/api/providers/${p.id}/key`, { key: "" }).then(() => (loadProviders(), loadModels()))}>
+															Remove
+														</button>
+													)}
+													<button className="btn ghost small" onClick={() => (setKeyFor(keyFor === p.id ? undefined : p.id), setKey(""), setKeyErr(""))}>
+														{p.stored ? "Change key" : "Add key"}
+													</button>
+												</>
+											) : (
+												<span className="pill" title="Set in the config file">
+													config
+												</span>
+											)}
 											{keyFor === p.id && (
 												<form
 													className="row"
 													style={{ width: "100%", marginTop: 6 }}
 													onSubmit={async (e) => {
 														e.preventDefault();
-														await api.post(`/api/providers/${p.id}/key`, { key });
-														setKeyFor(undefined);
-														loadProviders();
-														loadModels();
+														try {
+															await api.post(`/api/providers/${p.id}/key`, { key });
+															setKeyFor(undefined);
+															loadProviders();
+															loadModels();
+														} catch (err: any) {
+															setKeyErr(err.message);
+														}
 													}}
 												>
 													<input className="input grow mono" type="password" placeholder="API key" value={key} onChange={(e) => setKey(e.target.value)} autoFocus />
 													<button className="btn primary small">Save</button>
+													{keyErr && <div className="err" style={{ width: "100%" }}>{keyErr}</div>}
 												</form>
 											)}
 										</div>

@@ -1,9 +1,9 @@
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Message, type MutableModels } from "@earendil-works/pi-ai";
+import { createModels, defaultProviderAuthContext, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Message, type MutableModels } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { config } from "../config.ts";
-import { FileCredentialStore } from "./credentials.ts";
+import { OsCredentialStore } from "./credentials.ts";
 
-export const credentials = new FileCredentialStore(config.authFile);
+export const credentials = new OsCredentialStore();
 
 export const DEMO_MODEL = { provider: "pi-os-demo", modelId: "demo" } as const;
 
@@ -60,10 +60,8 @@ function demoProvider() {
 				"I'm the **offline demo model** — I can only follow a few scripts:\n\n" +
 					"- *make a todo list* / *make slides* / *make a whiteboard* / *make a tic tac toe game* / *make notes*\n" +
 					"- *list my gadgets*\n\n" +
-					"Pick a real model in the model menu (any provider pi supports: Anthropic, OpenAI, Google, Copilot, OpenRouter, Groq, …). " +
-					"Keys come from your environment or from `" +
-					config.authFile.replaceAll("\\", "/") +
-					"`, and you can add one under **Settings → Providers**.",
+					"Pick a real model in the model menu (any provider pi supports: Anthropic, OpenAI, Google, OpenRouter, Groq, …). " +
+					"Configure keys in `pi-os.config.json` (`models.providers`), under **Settings → Model providers**, or with the provider's standard env var.",
 			),
 		]);
 	};
@@ -76,10 +74,24 @@ function demoProvider() {
 	return faux.provider;
 }
 
+/** With `models.ambientEnv: false`, providers see no env vars or ambient files (AWS profiles, gcloud ADC): only pi-os credentials. */
+const isolatedAuthContext = { env: async () => undefined, fileExists: async () => false };
+
 export function createOsModels(): MutableModels {
-	const models = createModels({ credentials, identity: { attribution: { name: "pi-os", url: "https://github.com/earendil-works/pi" } } });
-	for (const provider of builtinProviders()) models.setProvider(provider);
-	models.setProvider(demoProvider());
+	const models = createModels({
+		credentials,
+		authContext: config.ambientEnv ? defaultProviderAuthContext() : isolatedAuthContext,
+		identity: { attribution: { name: "pi-os", url: "https://github.com/earendil-works/pi" } },
+	});
+	const builtins = builtinProviders();
+	for (const provider of builtins) if (config.providers[provider.id]?.enabled !== false) models.setProvider(provider);
+	if (config.demoModel) models.setProvider(demoProvider());
+	const unknown = Object.keys(config.providers).filter((id) => !builtins.some((p) => p.id === id));
+	if (unknown.length) console.warn(`pi-os: unknown provider id(s) in config: ${unknown.join(", ")}. Known: ${builtins.map((p) => p.id).join(", ")}`);
+	for (const [id, entry] of Object.entries(config.providers)) {
+		const ref = /^\$\{?(\w+)\}?$/.exec(entry.apiKey ?? "")?.[1];
+		if (ref && !process.env[ref]) console.warn(`pi-os: models.providers.${id}.apiKey references $${ref}, which is not set`);
+	}
 	return models;
 }
 
@@ -98,12 +110,23 @@ export async function listModels() {
 }
 
 export async function listProviders() {
-	const providers = models.getProviders();
 	const result = [];
-	for (const p of providers) {
+	for (const p of models.getProviders()) {
 		if (p.id === DEMO_MODEL.provider) continue;
+		const managed = credentials.managedByConfig(p.id);
 		const check = await models.checkAuth(p.id).catch(() => undefined);
-		result.push({ id: p.id, name: (p as any).name ?? p.id, configured: !!check && (check as any).ok !== false, models: models.getModels(p.id).length });
+		const source = managed ?? (credentials.stored(p.id) ? "Settings (encrypted store)" : check?.source ? `environment (${check.source})` : check ? "environment" : undefined);
+		result.push({
+			id: p.id,
+			name: p.name ?? p.id,
+			configured: !!check,
+			source,
+			/** Keys set in the config file can't be changed or removed from the UI. */
+			editable: !managed,
+			stored: credentials.stored(p.id),
+			oauthOnly: !p.auth.apiKey,
+			models: models.getModels(p.id).length,
+		});
 	}
 	return result;
 }
@@ -112,7 +135,7 @@ export async function defaultModel(preferred?: { provider: string; modelId: stri
 	const available = await models.getAvailable().catch(() => []);
 	const has = (r?: { provider: string; modelId: string }) => r && available.some((m) => m.provider === r.provider && m.id === r.modelId);
 	if (has(preferred)) return preferred!;
-	if (has(config.piDefaultModel)) return config.piDefaultModel!;
+	if (has(config.defaultModel)) return config.defaultModel!;
 	const real = available.find((m) => m.provider !== DEMO_MODEL.provider);
 	return real ? { provider: real.provider, modelId: real.id } : { ...DEMO_MODEL };
 }

@@ -53,8 +53,8 @@ attachSockets(server);
 
 server.listen(config.port, config.host, () => {
 	console.log(`pi-os listening on http://${config.host}:${config.port}`);
-	console.log(`  data:  ${config.dataDir}`);
-	console.log(`  auth:  ${config.authFile}`);
+	console.log(`  config: ${config.configFound ? config.configPath : `(none — defaults; create ${config.configPath}, see pi-os.config.example.json)`}`);
+	console.log(`  data:   ${config.dataDir}`);
 });
 
 // Reopen every workspace so runs interrupted by the last shutdown continue without waiting for a visitor.

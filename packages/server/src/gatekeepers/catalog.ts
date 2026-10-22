@@ -88,7 +88,7 @@ const gh = (path: string, init: RequestInit = {}) =>
 		headers: {
 			accept: "application/vnd.github+json",
 			"user-agent": "pi-os",
-			...(config.githubToken ? { authorization: `Bearer ${config.githubToken}` } : {}),
+			...(config.githubToken() ? { authorization: `Bearer ${config.githubToken()}` } : {}),
 			...(init.body ? { "content-type": "application/json" } : {}),
 		},
 	}).then((r) => {
@@ -104,7 +104,7 @@ const github: Gatekeeper = {
 	icon: "🐙",
 	description: "Read a repository's metadata, issues and files; create issues and comments with approval.",
 	resourceHint: "owner/repo or https://github.com/owner/repo",
-	setup: "Set GITHUB_TOKEN for private repositories, writes, and higher rate limits.",
+	setup: "Set gatekeepers.github.token in pi-os.config.json (e.g. \"$GITHUB_TOKEN\") for private repositories, writes, and higher rate limits.",
 	normalizeResource(input) {
 		const m = /(?:github\.com[/:])?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(input.trim());
 		if (!m) throw new Error("Expected owner/repo");

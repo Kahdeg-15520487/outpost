@@ -1,56 +1,112 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { config, resolveSecret, type ProviderConfig } from "../config.ts";
 
 /**
- * A CredentialStore over a pi-style `auth.json` (`{ [providerId]: Credential }`).
- * Writes are serialized per provider in-process and written atomically. Re-reads the file on
- * every read so a `pi /login` done in another terminal shows up without a restart.
+ * Where a provider's key comes from, highest priority first:
+ *   1. pi-os.config.json  models.providers.<id>.apiKey  (literal or $ENV_VAR) — read-only from the UI
+ *   2. keys entered in Settings, stored in data/credentials.enc.json (AES-256-GCM)
+ *   3. the provider's standard env vars (ANTHROPIC_API_KEY, …), resolved by pi-ai — unless models.ambientEnv is false
+ * `env` settings (base URLs, account ids) from the config are merged over stored ones.
  */
-export class FileCredentialStore implements CredentialStore {
-	#chains = new Map<string, Promise<unknown>>();
-	constructor(readonly path: string) {}
 
-	#load(): Record<string, Credential> {
+type Sealed = { v: 1; iv: string; tag: string; data: string };
+
+/** One JSON object of credentials, encrypted as a whole with the instance secret. */
+class EncryptedFileStore {
+	constructor(
+		readonly path: string,
+		readonly key: Buffer,
+	) {}
+	load(): Record<string, Credential> {
 		if (!existsSync(this.path)) return {};
+		const sealed: Sealed = JSON.parse(readFileSync(this.path, "utf8"));
+		const decipher = createDecipheriv("aes-256-gcm", this.key, Buffer.from(sealed.iv, "base64"));
+		decipher.setAuthTag(Buffer.from(sealed.tag, "base64"));
 		try {
-			return JSON.parse(readFileSync(this.path, "utf8"));
+			return JSON.parse(Buffer.concat([decipher.update(Buffer.from(sealed.data, "base64")), decipher.final()]).toString("utf8"));
 		} catch {
-			return {};
+			throw new Error(`Cannot decrypt ${this.path}: the instance secret (data/secret.key or PI_OS_SECRET) changed`);
 		}
 	}
-	#save(all: Record<string, Credential>) {
+	save(all: Record<string, Credential>) {
+		const iv = randomBytes(12);
+		const cipher = createCipheriv("aes-256-gcm", this.key, iv);
+		const data = Buffer.concat([cipher.update(JSON.stringify(all), "utf8"), cipher.final()]);
+		const sealed: Sealed = { v: 1, iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") };
 		const tmp = `${this.path}.tmp-${process.pid}`;
-		writeFileSync(tmp, JSON.stringify(all, null, 2), { mode: 0o600 });
+		writeFileSync(tmp, JSON.stringify(sealed), { mode: 0o600 });
 		renameSync(tmp, this.path);
 	}
-	#enqueue<T>(id: string, work: () => Promise<T>): Promise<T> {
-		const previous = this.#chains.get(id) ?? Promise.resolve();
-		const next = previous.then(work, work);
-		this.#chains.set(id, next.catch(() => {}));
-		return next;
+}
+
+export class ConfigManagedError extends Error {}
+
+function fromConfig(entry: ProviderConfig | undefined) {
+	if (!entry) return undefined;
+	const key = resolveSecret(entry.apiKey);
+	const env: Record<string, string> = {};
+	for (const [name, raw] of Object.entries(entry.env ?? {})) {
+		const v = resolveSecret(raw).value;
+		if (v !== undefined) env[name] = v;
+	}
+	return { key: key.value, keyFrom: key.from, env };
+}
+
+export class OsCredentialStore implements CredentialStore {
+	readonly #file = new EncryptedFileStore(config.credentialsFile, config.secret);
+	#chain: Promise<unknown> = Promise.resolve();
+
+	/** The config file sets this provider's key (so the UI must not change it). */
+	managedByConfig(providerId: string): string | undefined {
+		const c = fromConfig(config.providers[providerId]);
+		return c?.key !== undefined ? `pi-os.config.json (${c.keyFrom === "literal" ? "literal key" : c.keyFrom})` : undefined;
 	}
 
-	async read(providerId: string) {
-		return this.#load()[providerId];
+	stored(providerId: string): boolean {
+		return this.#file.load()[providerId] !== undefined;
 	}
+
+	async read(providerId: string): Promise<Credential | undefined> {
+		const c = fromConfig(config.providers[providerId]);
+		const stored = this.#file.load()[providerId];
+		const storedApi = stored?.type === "api_key" ? stored : undefined;
+		const key = c?.key ?? storedApi?.key;
+		const env = { ...storedApi?.env, ...c?.env };
+		if (key === undefined && Object.keys(env).length === 0) return stored;
+		return { type: "api_key", ...(key !== undefined ? { key } : {}), ...(Object.keys(env).length ? { env } : {}) };
+	}
+
 	async list(): Promise<readonly CredentialInfo[]> {
-		return Object.entries(this.#load()).map(([providerId, c]) => ({ providerId, type: c.type }));
+		const ids = new Set([...Object.keys(this.#file.load()), ...Object.keys(config.providers).filter((id) => fromConfig(config.providers[id])?.key)]);
+		return [...ids].map((providerId) => ({ providerId, type: "api_key" as const }));
 	}
+
 	modify(providerId: string, fn: (current: Credential | undefined) => Promise<Credential | undefined>) {
-		return this.#enqueue(providerId, async () => {
-			const next = await fn(this.#load()[providerId]);
-			if (next === undefined) return this.#load()[providerId];
-			const all = this.#load();
+		return this.#serialize(async () => {
+			const managed = this.managedByConfig(providerId);
+			if (managed) throw new ConfigManagedError(`The ${providerId} key is set in ${managed}; change it there.`);
+			const all = this.#file.load();
+			const next = await fn(all[providerId]);
+			if (next === undefined) return all[providerId];
 			all[providerId] = next;
-			this.#save(all);
+			this.#file.save(all);
 			return next;
 		});
 	}
+
 	delete(providerId: string) {
-		return this.#enqueue(providerId, async () => {
-			const all = this.#load();
+		return this.#serialize(async () => {
+			const all = this.#file.load();
 			delete all[providerId];
-			this.#save(all);
+			this.#file.save(all);
 		});
+	}
+
+	#serialize<T>(work: () => Promise<T>): Promise<T> {
+		const run = this.#chain.then(work, work);
+		this.#chain = run.catch(() => {});
+		return run;
 	}
 }

@@ -136,3 +136,32 @@ export function ModelPickerDialog({ models, picker, onSave, onClose }: { models:
 		</Dialog>
 	);
 }
+
+/** A model dropdown limited to the user's picker (plus the current value), grouped by provider. */
+export function ModelSelect({ models, picker, value, onChange, className = "input", disabled }: { models: ModelInfo[]; picker: ModelPicker; value?: { provider: string; modelId: string }; onChange: (m: { provider: string; modelId: string }) => void; className?: string; disabled?: boolean }) {
+	const current = value ? `${value.provider}/${value.modelId}` : "";
+	const groups = new Map<string, ModelInfo[]>();
+	for (const m of models) if (pickerShows(picker, m) || keyOf(m) === current) groups.set(m.provider, [...(groups.get(m.provider) ?? []), m]);
+	return (
+		<select
+			className={className}
+			value={current}
+			disabled={disabled}
+			onChange={(e) => {
+				const [provider, ...rest] = e.target.value.split("/");
+				if (provider && rest.length) onChange({ provider, modelId: rest.join("/") });
+			}}
+		>
+			{current && !models.some((m) => keyOf(m) === current) && <option value={current}>{current} (unavailable)</option>}
+			{[...groups].map(([provider, list]) => (
+				<optgroup key={provider} label={provider}>
+					{list.map((m) => (
+						<option key={m.id} value={keyOf(m)}>
+							{m.name}
+						</option>
+					))}
+				</optgroup>
+			))}
+		</select>
+	);
+}

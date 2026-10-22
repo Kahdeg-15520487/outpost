@@ -249,6 +249,20 @@ export function createApi(): Router {
 		const { ws } = await member(req);
 		return await ws.projects.snapshot(req.params.p!);
 	});
+	r.patch("/api/w/:ws/projects/:p", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { model, applyToAgents } = await req.body();
+		if (model) await ws.projects.setProjectModel(req.params.p!, { provider: String(model.provider), modelId: String(model.modelId) }, user, !!applyToAgents);
+		return { ok: true };
+	});
+	r.patch("/api/w/:ws/projects/:p/agents/:key", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { model } = await req.body();
+		if (!model) throw new HttpError(400, "Nothing to change");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.setAgentModel(req.params.p!, req.params.key!, { provider: String(model.provider), modelId: String(model.modelId) }, user);
+		return { ok: true };
+	});
 	r.delete("/api/w/:ws/projects/:p", async (req) => {
 		const { ws } = await member(req, "editor");
 		await ws.projects.archive(req.params.p!);

@@ -69,6 +69,30 @@ await ws.projects.approveBacklog(p.id, u);
 b = await ws.projects.backlog(p.id);
 check("status update + approval stored", b.items.T1?.status === "done" && b.approval.status === "approved", b.approval);
 
+// ---------------------------------------------------------------- models
+const { models: registry } = await import("../src/kernel/models.ts");
+const other = registry.getModels("openai")[0]!;
+const otherRef = { provider: other.provider, modelId: other.id };
+await ws.projects.addAgent(p.id, { role: "worker", brief: "x", start: false });
+await ws.projects.setAgentModel(p.id, "dev-1", otherRef, u);
+let st = await ws.projects.state(p.id);
+const devAgent = await (await ws.conversation(st.agents["dev-1"]!.conversationId)).agent(ctx);
+check("agent model switched (record + conversation)", st.agents["dev-1"]!.model?.modelId === other.id && devAgent.model?.modelId === other.id, { record: st.agents["dev-1"]!.model, conv: devAgent.model?.modelId });
+let bad = false;
+try {
+	await ws.projects.setAgentModel(p.id, "dev-1", { provider: "nope", modelId: "x" }, u);
+} catch {
+	bad = true;
+}
+check("unknown model rejected", bad);
+await ws.projects.setProjectModel(p.id, otherRef, u, false);
+st = await ws.projects.state(p.id);
+check("project default changed, lead untouched without applyToAgents", (await ws.projects.meta(p.id)).model.modelId === other.id && st.agents.lead!.model?.modelId === "demo", st.agents.lead!.model);
+await ws.projects.setProjectModel(p.id, { provider: "pi-os-demo", modelId: "demo" }, u, true);
+st = await ws.projects.state(p.id);
+const leadAgent = await (await ws.conversation(st.agents.lead!.conversationId)).agent(ctx);
+check("applyToAgents switches everyone", Object.values(st.agents).every((a) => a.model?.modelId === "demo") && leadAgent.model?.modelId === "demo", Object.values(st.agents).map((a) => a.model));
+
 // ---------------------------------------------------------------- agent environment
 if (process.platform === "win32") {
 	const wt = join(process.env.PI_OS_DATA!, "wt");

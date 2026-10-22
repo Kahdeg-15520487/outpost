@@ -286,7 +286,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
-			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} />}
+			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} models={models} picker={picker} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
 			{route.page === "gadget" && (

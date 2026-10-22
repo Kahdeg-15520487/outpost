@@ -4,6 +4,7 @@ import { defineExtension, defineTool, type Extension, type ToolExecutionApi } fr
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import { hub } from "../collab/hub.ts";
 import { HttpError, newId, type User } from "../kernel/system-db.ts";
+import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, type Activity, type AgentRecord, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
@@ -342,6 +343,44 @@ export class ProjectManager {
 		await this.#log(projectId, { at: Date.now(), kind: "user", text: "All agents stopped" });
 	}
 
+	/**
+	 * The user changes the project's default model (for agents added from now on), and optionally
+	 * switches every current agent to it too.
+	 */
+	async setProjectModel(projectId: string, model: ModelRef, user: User, applyToAgents: boolean) {
+		assertModel(model);
+		await this.meta(projectId);
+		await this.ws.harness.commit(async (tx) => {
+			const all = await tx.doc(ProjectsDoc);
+			all.projects[projectId]!.model = model;
+			pushActivity((await tx.doc(ProjectDoc, projectId, null)) as ProjectState, { at: Date.now(), kind: "user", text: `${user.displayName} set the project model to ${model.provider}/${model.modelId}${applyToAgents ? " for every agent" : " for new agents"}` });
+		}, ctx);
+		if (applyToAgents) {
+			const state = await this.state(projectId);
+			for (const a of Object.values(state.agents)) if (!a.removed) await this.#setAgentModel(projectId, a, model);
+		}
+		this.#publishList();
+		hub.publish(this.channel(projectId), { t: "project.meta", ws: this.ws.id, project: projectId });
+	}
+
+	/** The user switches one agent's model; it applies from the agent's next model request. */
+	async setAgentModel(projectId: string, key: string, model: ModelRef, user: User) {
+		assertModel(model);
+		const a = (await this.state(projectId)).agents[key];
+		if (!a || a.removed) throw new HttpError(404, `No agent ${key}`);
+		await this.#setAgentModel(projectId, a, model);
+		await this.#log(projectId, { at: Date.now(), agent: key, kind: "user", text: `${user.displayName} switched ${a.name} to ${model.provider}/${model.modelId}` });
+	}
+
+	async #setAgentModel(projectId: string, a: AgentRecord, model: ModelRef) {
+		const c = await this.ws.harness.conversation(Number(a.conversationId) as any, ctx);
+		await c?.configure({ model }, ctx);
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			if (st.agents[a.key]) st.agents[a.key]!.model = model;
+		}, ctx);
+	}
+
 	async archive(projectId: string) {
 		await this.stopAll(projectId);
 		await this.ws.harness.commit(async (tx) => {
@@ -621,6 +660,11 @@ function removeWithChildren(b: Backlog, id: string): string[] {
 	for (const g of gone) delete b.items[g];
 	for (const i of Object.values(b.items)) i.deps = i.deps.filter((d) => !gone.has(d));
 	return [...gone];
+}
+
+/** Reject models pi-os doesn't know (typos, a provider that was removed). */
+function assertModel(m: ModelRef) {
+	if (!m?.provider || !m?.modelId || !modelRegistry.getModel(m.provider, m.modelId)) throw new HttpError(400, `Unknown model ${m?.provider}/${m?.modelId}`);
 }
 
 const titleFor = (role: string) => roleDef(role)?.title ?? role.replace(/(^|-)(\w)/g, (_m, s, c) => `${s ? " " : ""}${c.toUpperCase()}`);

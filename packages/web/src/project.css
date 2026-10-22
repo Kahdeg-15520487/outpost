@@ -182,3 +182,17 @@
 .agent-mini.asking i { background: #fbbf24; }
 .agent-mini.error i { background: #ff8a6b; }
 .agent-mini:hover { border-color: #4a4434; }
+
+/* model controls */
+.ph-title { position: relative; }
+.ph-model { border: 0; background: none; padding: 0 2px; font: inherit; color: inherit; border-radius: 4px; cursor: pointer; }
+.ph-model:hover:not(:disabled) { color: white; background: var(--ink-3); }
+.ph-model:disabled { cursor: default; }
+.pm-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: 380px; display: grid; gap: 10px; padding: 14px; border-radius: 12px; background: var(--paper) var(--grain); color: var(--text); border: 1px solid var(--line-2); box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .6); animation: rise .15s ease-out; }
+.pm-all { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.4; cursor: pointer; }
+.pm-all input { margin-top: 2px; accent-color: var(--signal); }
+.pm-hint { font-size: 12px; line-height: 1.4; }
+.ad-sub { font-size: 11px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ad-model { font: 11px var(--mono); color: var(--text); border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 1px 4px; max-width: 280px; }
+.ad-model:disabled { opacity: .7; }
+

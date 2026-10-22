@@ -4,7 +4,7 @@ import { api, type AgentRecord, type AgentSummary, type ModelInfo, type ModelRef
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, FileChips, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
-import { pickerShows, type ModelPicker } from "./ModelPicker";
+import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
 
 const STAGES: { id: ProjectStage; label: string }[] = [
@@ -58,10 +58,11 @@ const TABS: { id: Tab; label: string }[] = [
 	{ id: "repo", label: "Repo" },
 ];
 
-export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: string; tab?: string }) {
+export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Workspace; projectId: string; tab?: string; models: ModelInfo[]; picker: ModelPicker }) {
 	const live = useProject(ws.id, projectId);
 	const { project, state, summaries } = live;
 	const [open, setOpen] = useState<string>();
+	const [modelMenu, setModelMenu] = useState(false);
 	// Wide viewer: agent tiles shrink to avatars. Default on for the board and the app; remembered per tab kind.
 	const [widePref, setWidePref] = useState<Record<string, boolean>>(() => {
 		try {
@@ -97,7 +98,14 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 		<div className="main project">
 			<header className="project-head">
 				<div className="ph-title">
-					<div className="ph-kicker mono">project · {timeAgo(project.createdAt)} · {project.model.provider}/{project.model.modelId}</div>
+					<div className="ph-kicker mono">
+						project · {timeAgo(project.createdAt)} ·{" "}
+						<button className="ph-model" onClick={() => canEdit && setModelMenu(!modelMenu)} disabled={!canEdit} title={canEdit ? "Change the project's default model" : "The project's default model"}>
+							{project.model.provider}/{project.model.modelId}
+							{canEdit && " ▾"}
+						</button>
+					</div>
+					{modelMenu && <ProjectModelMenu ws={ws} project={project} agents={agents} models={models} picker={picker} onClose={() => setModelMenu(false)} />}
 					<h1 title={project.goal}>{project.name}</h1>
 				</div>
 				<ol className="ph-stages" aria-label="Stage">
@@ -181,7 +189,7 @@ export function ProjectPage({ ws, projectId, tab }: { ws: Workspace; projectId: 
 				</section>
 			</div>
 
-			{open && state.agents[open] && <AgentDrawer ws={ws} projectId={projectId} agent={state.agents[open]!} summary={summaries[open]} questions={openQuestions.filter((q) => q.agent === open)} canEdit={canEdit} onClose={() => setOpen(undefined)} />}
+			{open && state.agents[open] && <AgentDrawer ws={ws} projectId={projectId} agent={state.agents[open]!} summary={summaries[open]} questions={openQuestions.filter((q) => q.agent === open)} canEdit={canEdit} models={models} picker={picker} onClose={() => setOpen(undefined)} />}
 		</div>
 	);
 }
@@ -238,7 +246,7 @@ function AgentTile({ agent, summary, asking, index, onOpen }: { agent: AgentReco
 
 // ------------------------------------------------------------------ agent drawer
 
-function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClose }: { ws: Workspace; projectId: string; agent: AgentRecord; summary?: AgentSummary; questions: Question[]; canEdit: boolean; onClose: () => void }) {
+function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, models, picker, onClose }: { ws: Workspace; projectId: string; agent: AgentRecord; summary?: AgentSummary; questions: Question[]; canEdit: boolean; models: ModelInfo[]; picker: ModelPicker; onClose: () => void }) {
 	const chat = useChat(ws.id, agent.conversationId);
 	const att = useAttachments(ws.id);
 	const [text, setText] = useState("");
@@ -274,8 +282,16 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 					<span className="at-glyph">{initials(agent.name)}</span>
 					<div className="grow">
 						<div className="ad-name">{agent.name}</div>
-						<div className="mono muted" style={{ fontSize: 11 }}>
-							{roleTitle(agent.role)} · @{agent.key} · {agent.model ? `${agent.model.provider}/${agent.model.modelId}` : ""} · {fmtTokens(summary?.tokens ?? 0)} tok
+						<div className="mono muted ad-sub">
+							{roleTitle(agent.role)} · @{agent.key} · {fmtTokens(summary?.tokens ?? 0)} tok ·
+							<ModelSelect
+								className="ad-model"
+								models={models}
+								picker={picker}
+								value={agent.model}
+								disabled={!canEdit}
+								onChange={(model) => api.patch(`/api/w/${ws.id}/projects/${projectId}/agents/${agent.key}`, { model }).catch((e) => alert(e.message))}
+							/>
 						</div>
 					</div>
 					{summary?.busy && canEdit && (
@@ -343,6 +359,52 @@ function AgentDrawer({ ws, projectId, agent, summary, questions, canEdit, onClos
 				)}
 			</aside>
 		</>
+	);
+}
+
+// ------------------------------------------------------------------ project model
+
+function ProjectModelMenu({ ws, project, agents, models, picker, onClose }: { ws: Workspace; project: ProjectMeta; agents: AgentRecord[]; models: ModelInfo[]; picker: ModelPicker; onClose: () => void }) {
+	const [model, setModel] = useState<ModelRef>(project.model);
+	const [all, setAll] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const mixed = agents.filter((a) => a.model && (a.model.provider !== project.model.provider || a.model.modelId !== project.model.modelId));
+	useEffect(() => {
+		const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+		addEventListener("keydown", key);
+		return () => removeEventListener("keydown", key);
+	}, []);
+	const save = async () => {
+		setBusy(true);
+		try {
+			await api.patch(`/api/w/${ws.id}/projects/${project.id}`, { model, applyToAgents: all });
+			onClose();
+		} catch (e: any) {
+			alert(e.message);
+			setBusy(false);
+		}
+	};
+	return (
+		<div className="pm-menu" role="dialog" aria-label="Project model">
+			<div className="label">Default model for this project</div>
+			<ModelSelect models={models} picker={picker} value={model} onChange={setModel} />
+			<label className="pm-all">
+				<input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
+				<span>
+					Also switch all {agents.length} current agent{agents.length === 1 ? "" : "s"}
+					<span className="muted"> — otherwise only agents added from now on{mixed.length ? `; ${mixed.length} already use${mixed.length === 1 ? "s" : ""} a different model` : ""}</span>
+				</span>
+			</label>
+			<div className="row" style={{ justifyContent: "flex-end" }}>
+				<button className="btn ghost small" onClick={onClose}>
+					Cancel
+				</button>
+				<button className="btn primary small" disabled={busy || (!all && model.provider === project.model.provider && model.modelId === project.model.modelId)} onClick={save}>
+					Save
+				</button>
+			</div>
+			<div className="pm-hint muted">Set one agent's model in its drawer (click its tile). The lead can also pick a model per agent when it adds one.</div>
+		</div>
 	);
 }
 

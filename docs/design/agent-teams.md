@@ -1,6 +1,6 @@
 # Agent teams: goal → plan → working product
 
-Status: **approved** — M1 done (team, tiles, transcripts, repo + worktrees, requirements gate via the Lead's question); M2 next.
+Status: **approved** — M1 done; M3 (backlog board + approval gate) done; per-project and per-agent model controls done. M2 gates for requirements/design still go through the Lead's question; M4 (scheduler) next.
 
 ## What it is
 

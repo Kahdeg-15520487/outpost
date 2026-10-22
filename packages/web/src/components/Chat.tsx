@@ -67,7 +67,7 @@ export function ChatView(props: {
 		const files = att.ids();
 		let id = chatId;
 		if (!id) {
-			id = (await api.post(`/api/w/${ws.id}/chats`, { model: pendingModel })).id as string;
+			id = (await api.post(`/api/w/${ws.id}/chats`, { model: pendingModel ?? newChatModel })).id as string;
 			navigate(chatHref(ws.id, id, props.openGadget));
 		}
 		stick.current = true;
@@ -77,7 +77,15 @@ export function ChatView(props: {
 
 	const chatGrants = Object.values(props.grants.grants).filter((g) => g.holder.kind === "conversation" && g.holder.id === chatId);
 	const empty = !chatId || (state.ready && state.entries.filter((e) => e.kind === "os.user" || e.kind === "pi.user").length === 0);
-	const model: ModelRef | undefined = chatId ? state.agent?.model : (pendingModel ?? props.defaultModel);
+	// A new chat never starts on a model the user hid: fall back to the first one they kept.
+	const newChatModel = useMemo(() => {
+		const d = props.defaultModel;
+		const shown = (r: ModelRef) => pickerShows(props.picker, { provider: r.provider, id: r.modelId });
+		if (!d || shown(d)) return d;
+		const first = props.models.find((m) => pickerShows(props.picker, m) && m.provider !== "pi-os-demo") ?? props.models.find((m) => pickerShows(props.picker, m));
+		return first ? { provider: first.provider, modelId: first.id } : d;
+	}, [props.defaultModel, props.models, props.picker]);
+	const model: ModelRef | undefined = chatId ? state.agent?.model : (pendingModel ?? newChatModel);
 	const chooseModel = (m: ModelRef) => (chatId ? api.patch(`/api/w/${ws.id}/chats/${chatId}`, { model: m }) : setPendingModel(m));
 
 	return (
@@ -507,7 +515,7 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 						{!value && <option value="">{models.length ? "choose a model" : "loading models…"}</option>}
 						{value && !models.some((m) => `${m.provider}/${m.id}` === value) && <option value={value}>{value}</option>}
 						{currentHidden && (
-							<optgroup label="In use · hidden in your picker">
+							<optgroup label="This chat's model (hidden in your picker)">
 								<option value={value}>
 									{currentHidden.provider} · {currentHidden.name}
 								</option>

@@ -8,7 +8,7 @@ export type ModelPicker = Record<string, string[]>;
 const keyOf = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
 
 /** Whether the chat model dropdown shows this model for this user. */
-export const pickerShows = (picker: ModelPicker, m: ModelInfo) => !picker[m.provider] || picker[m.provider]!.includes(m.id);
+export const pickerShows = (picker: ModelPicker, m: { provider: string; id: string }) => !picker[m.provider] || picker[m.provider]!.includes(m.id);
 
 const ctx = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 

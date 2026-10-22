@@ -47,7 +47,7 @@ function client() {
 			);
 			ws.on("error", reject);
 		});
-	return { call, socket };
+	return { call, socket, cookie: () => cookie };
 }
 
 const suffix = Date.now().toString(36);
@@ -140,6 +140,50 @@ const wsSock = await ana.socket();
 wsSock.send({ t: "sub", kind: "ws", ws });
 const snap = await wsSock.next((m) => m.t === "ws.snapshot");
 assert(snap.approvals.actions[sent.value.queuedForApproval].status === "approved", "workspace snapshot carries approvals");
+
+console.log("files: upload, attachments, gadget ctx.files capability, safe download");
+const upload = async (c: ReturnType<typeof client>, name: string, body: Uint8Array | string, type: string) => {
+	const res = await fetch(`${base}/api/w/${ws}/files`, { method: "POST", headers: { "content-type": type, "x-file-name": encodeURIComponent(name), cookie: (c as any).cookie() }, body });
+	if (!res.ok) throw new Error(`upload ${res.status} ${await res.text()}`);
+	return (await res.json()).file;
+};
+const csv = await upload(ana, "sales q3.csv", "region,amount\nnorth,10\nsouth,32\n", "text/csv");
+assert(csv.kind === "csv" && csv.size === 32, `uploaded csv sniffed as ${csv.kind}`);
+// 1x1 transparent PNG
+const png = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64"));
+const img = await upload(ana, "dot.png", png, "image/png");
+assert(img.kind === "png", "uploaded png sniffed");
+const html = await upload(ana, "evil.html", "<script>alert(1)</script>", "text/html");
+const dl = await fetch(`${base}/api/w/${ws}/files/${html.id}?inline`, { headers: { cookie: (ana as any).cookie() } });
+assert(dl.headers.get("content-type") === "application/octet-stream" && /attachment/.test(dl.headers.get("content-disposition") ?? "") && /sandbox/.test(dl.headers.get("content-security-policy") ?? ""), "untrusted html is never served inline");
+await ana.call("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "what's in these?", files: [csv.id, img.id] });
+const userEntry = await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.entry?.kind === "os.user" && e.entry.data?.files?.length === 2), 20000);
+const entry = userEntry.events.find((e: any) => e.entry?.kind === "os.user" && e.entry.data?.files?.length === 2).entry;
+const parts = entry.model[0].content;
+assert(parts.some((p: any) => p.type === "image") && parts.some((p: any) => p.type === "text" && p.text.includes("north,10")), "model sees the image inline and the csv text");
+await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.type === "run_end"), 30000);
+
+const { gadget: fg } = await ana.call("POST", `/api/w/${ws}/gadgets`, { name: "CSV reader" });
+await ana.call("PUT", `/api/gadgets/${fg.id}/files`, {
+	path: "server.js",
+	content: `export default class { rows(id) { return ctx.files.text(id).trim().split("\\n").map((l) => l.split(",")); } size(id) { return ctx.files.bytes(id).length; } async total(id) { const rows = this.rows(id).slice(1); const sum = rows.reduce((a, r) => a + Number(r[1]), 0); const f = await ctx.files.write("total.txt", "total=" + sum); return { sum, file: f.id }; } }`,
+});
+sock.send({ t: "call", id: 30, gadgetId: fg.id, method: "rows", args: [csv.id] });
+const denied2 = await sock.next((m) => m.t === "call.result" && m.id === 30);
+assert(!denied2.ok && /No access to file/.test(denied2.error), "gadget cannot read an unshared file");
+await ana.call("PATCH", `/api/w/${ws}/files/${csv.id}`, { gadgets: [fg.id] });
+sock.send({ t: "call", id: 31, gadgetId: fg.id, method: "size", args: [csv.id] });
+assert((await sock.next((m) => m.t === "call.result" && m.id === 31)).value === 32, "ctx.files.bytes returns a Uint8Array of the file");
+sock.send({ t: "call", id: 32, gadgetId: fg.id, method: "total", args: [csv.id] });
+const tot = await sock.next((m) => m.t === "call.result" && m.id === 32);
+assert(tot.ok && tot.value.sum === 42, "gadget parsed the shared csv");
+const listed = (await ana.call("GET", `/api/w/${ws}/files`)).files;
+const out = listed.find((f: any) => f.id === tot.value.file);
+assert(out?.source === "gadget" && out.gadgets.includes(fg.id), "gadget output appears in workspace files");
+const outBody = await (await fetch(`${base}/api/w/${ws}/files/${out.id}`, { headers: { cookie: (ana as any).cookie() } })).text();
+assert(outBody === "total=42", "downloaded gadget output");
+await ana.call("DELETE", `/api/w/${ws}/files/${html.id}`);
+assert(!(await ana.call("GET", `/api/w/${ws}/files`)).files.some((f: any) => f.id === html.id), "file deleted");
 
 console.log("blueprints");
 await ana.call("POST", "/api/blueprints", { gadgetId, name: `Mail list ${suffix}`, description: "test", visibility: "public" });

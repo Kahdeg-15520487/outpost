@@ -35,6 +35,10 @@ export type PiOsConfigFile = {
 	gatekeepers?: {
 		github?: { token?: string };
 	};
+	files?: {
+		/** Largest single upload, in MB. Default 100. */
+		maxUploadMB?: number;
+	};
 };
 
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -121,5 +125,6 @@ export const config = {
 	ambientEnv: file.models?.ambientEnv ?? true,
 	demoModel: file.models?.demo ?? true,
 	githubToken: () => resolveSecret(file.gatekeepers?.github?.token).value,
+	maxUploadBytes: Math.round((file.files?.maxUploadMB ?? 100) * (1 << 20)),
 	secret,
 };

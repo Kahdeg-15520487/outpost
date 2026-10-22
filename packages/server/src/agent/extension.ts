@@ -5,6 +5,7 @@ import { blueprints as blueprintDb, gadgets as gadgetDb } from "../kernel/system
 import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
 import { GrantsDoc } from "../kernel/docs.ts";
 import type { Workspace } from "../kernel/workspace.ts";
+import { createFileTools, FILES_GUIDE } from "../files/tools.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 
@@ -247,9 +248,10 @@ export function createOsExtension(ws: Workspace): Extension {
 
 	return defineExtension({
 		name: "os",
-		tools: [...tools, subagent],
+		tools: [...tools, ...createFileTools(ws), subagent],
 		sections: [
 			section("os", () => OS_GUIDE, { tag: false }),
+			section("files", () => FILES_GUIDE, { tag: false }),
 			section("company_context", () => ws.row.settings.companyContext?.trim() || undefined),
 			section("resources", async (input, context) => {
 				const chat = await chatOf(ws, input.conversationId, context);

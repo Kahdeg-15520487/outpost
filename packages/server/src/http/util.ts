@@ -93,6 +93,20 @@ async function readJson(req: IncomingMessage): Promise<any> {
 	}
 }
 
+/** Read a raw request body, failing with 413 past `limit` bytes. */
+export async function readRaw(req: Req, limit: number): Promise<Buffer> {
+	const declared = Number(req.raw.headers["content-length"] ?? 0);
+	if (declared > limit) throw new HttpError(413, `File too large (max ${Math.round(limit / (1 << 20))} MB)`);
+	const chunks: Buffer[] = [];
+	let size = 0;
+	for await (const chunk of req.raw) {
+		size += chunk.length;
+		if (size > limit) throw new HttpError(413, `File too large (max ${Math.round(limit / (1 << 20))} MB)`);
+		chunks.push(chunk);
+	}
+	return Buffer.concat(chunks);
+}
+
 export function sendJson(res: ServerResponse, status: number, value: unknown) {
 	const body = JSON.stringify(value);
 	res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });

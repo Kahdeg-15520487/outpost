@@ -3,7 +3,8 @@ import { posix } from "node:path";
 import { EvalFlags, QuickJS, type JSValueHandle } from "quickjs-wasi";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import type { Harness } from "@earendil-works/pi-durable";
-import { GadgetLogsDoc, GadgetSourceDoc, GadgetStateDoc, type LogLine } from "../kernel/docs.ts";
+import { FilesDoc, GadgetLogsDoc, GadgetSourceDoc, GadgetStateDoc, type FileMeta, type LogLine } from "../kernel/docs.ts";
+import type { FileStore } from "../files/store.ts";
 import { hub } from "../collab/hub.ts";
 
 /**
@@ -18,6 +19,8 @@ import { hub } from "../collab/hub.ts";
 export type Caller = { kind: "user" | "agent"; id: string; name: string; role: "owner" | "editor" | "viewer" };
 export type GadgetEnv = {
 	harness: Harness;
+	files: FileStore;
+	name(): string;
 	gatekeeper(gadgetId: string, grant: string, method: string, args: unknown, caller: Caller): Promise<unknown>;
 };
 
@@ -27,6 +30,7 @@ const MEMORY_LIMIT = 64 << 20;
 const CPU_SLICE_MS = 2_000;
 const CALL_TIMEOUT_MS = 30_000;
 const MAX_LOG_LINES = 300;
+const MAX_FILE_READ = 16 << 20;
 
 const PRELUDE = String.raw`
 (() => {
@@ -48,8 +52,16 @@ const PRELUDE = String.raw`
   const gatekeepers = new Proxy({}, { get: (_, grant) => new Proxy({}, {
     get: (_, method) => async (args) => parse(await h.gk(String(grant), String(method), JSON.stringify(args ?? {}))),
   }) });
+  const files = Object.freeze({
+    list: () => parse(h.filesList()),
+    info: (id) => parse(h.fileInfo(String(id))),
+    text: (id, offset = 0, length) => h.fileText(String(id), offset, length ?? -1),
+    bytes: (id, offset = 0, length) => h.fileBytes(String(id), offset, length ?? -1),
+    write: async (name, data, mime) => parse(await h.fileWrite(String(name), data, mime ? String(mime) : "")),
+  });
   globalThis.ctx = Object.freeze({
     storage,
+    files,
     gatekeepers,
     broadcast: (event, data) => h.broadcast(String(event), JSON.stringify(data === undefined ? null : data)),
     get caller() { return parse(h.caller()); },
@@ -84,6 +96,8 @@ export class GadgetHost {
 	#broadcasts: Pending = [];
 	#logs: LogLine[] = [];
 	#caller: Caller | undefined;
+	/** Files this gadget may read (shared with it, or written by it), refreshed per call. */
+	#files = new Map<string, FileMeta>();
 	#queue: Promise<unknown> = Promise.resolve();
 	#sliceStart = 0;
 	#starting: Promise<void> | undefined;
@@ -241,6 +255,45 @@ export class GadgetHost {
 		fn("caller", () => vm.newString(JSON.stringify(this.#caller ?? null)));
 		fn("presence", () => vm.newString(JSON.stringify(hub.presence(this.channel))));
 		fn("id", () => vm.newString(crypto.randomUUID()));
+		const fileOf = (h: JSValueHandle) => {
+			const meta = this.#files.get(h.toString());
+			if (!meta) throw new Error(`No access to file ${h.toString()}: ask the user (or the agent, file_share_with_gadget) to share it with this gadget`);
+			return meta;
+		};
+		const range = (meta: FileMeta, o?: JSValueHandle, l?: JSValueHandle) => {
+			const offset = Math.max(0, o?.toNumber() || 0);
+			const want = l?.toNumber() ?? -1;
+			const length = Math.min(want < 0 ? meta.size - offset : want, MAX_FILE_READ);
+			if (want < 0 && meta.size - offset > MAX_FILE_READ) throw new Error(`File is ${meta.size} bytes; read it in ranges of at most ${MAX_FILE_READ} (offset, length)`);
+			return [offset, length] as const;
+		};
+		const pub = (m: FileMeta) => ({ id: m.id, name: m.name, mime: m.mime, kind: m.kind, size: m.size, createdAt: m.createdAt });
+		fn("filesList", () => vm.newString(JSON.stringify([...this.#files.values()].map(pub))));
+		fn("fileInfo", (id) => vm.newString(JSON.stringify(pub(fileOf(id!)))));
+		fn("fileText", (id, o, l) => {
+			const meta = fileOf(id!);
+			return vm.newString(this.env.files.bytes(meta, ...range(meta, o, l)).toString("utf8"));
+		});
+		fn("fileBytes", (id, o, l) => {
+			const meta = fileOf(id!);
+			return vm.newUint8Array(new Uint8Array(this.env.files.bytes(meta, ...range(meta, o, l))));
+		});
+		fn("fileWrite", (name, data, mime) => {
+			const deferred = vm.newPromise();
+			const bytes = data!.typeof === "string" ? Buffer.from(data!.toString(), "utf8") : Buffer.from(data!.toUint8Array());
+			const caller = this.#caller;
+			this.env.files
+				.put(bytes, { name: name!.toString(), mime: mime!.toString() || undefined, createdBy: `${this.env.name()} (${caller?.name ?? "gadget"})`, source: "gadget", gadgets: [this.gadgetId] })
+				.then(
+					(meta) => {
+						this.#files.set(meta.id, meta);
+						deferred.resolve(vm.newString(JSON.stringify(pub(meta))));
+					},
+					(error) => deferred.reject(vm.newError(error instanceof Error ? error.message : String(error))),
+				)
+				.finally(() => this.#vm === vm && this.#slice(() => vm.executePendingJobs()));
+			return deferred.handle;
+		});
 		fn("gk", (grant, method, args) => {
 			const deferred = vm.newPromise();
 			const caller = this.#caller!;
@@ -264,6 +317,8 @@ export class GadgetHost {
 		if (caller.role === "viewer" && !this.#readonly.includes(method)) throw new Error(`Viewers may only call: ${this.#readonly.join(", ") || "(nothing)"}`);
 		const vm = this.#vm!;
 		const kvBefore = new Map(this.#kv);
+		const allFiles = (await this.env.harness.snapshot(FilesDoc, ctx))?.files ?? {};
+		this.#files = new Map(Object.values(allFiles).filter((f) => f.gadgets.includes(this.gadgetId)).map((f) => [f.id, f]));
 		this.#caller = caller;
 		this.#dirty.clear();
 		this.#broadcasts = [];

@@ -35,6 +35,20 @@ export type WorkspaceDocs = {
 	approvals: { actions: Record<string, ApprovalAction> };
 	audit: { lines: AuditLine[] };
 	mailbox: { sent: { id: string; to: string; subject: string; body: string; sentAt: number }[] };
+	files: { files: Record<string, FileMeta> };
+};
+export type FileMeta = {
+	id: string;
+	name: string;
+	mime: string;
+	size: number;
+	kind: string;
+	createdAt: number;
+	createdBy: string;
+	source: "upload" | "agent" | "gadget" | "extract";
+	parent?: string;
+	chatId?: string;
+	gadgets: string[];
 };
 export type LogLine = { at: number; level: "log" | "warn" | "error" | "call"; text: string };
 
@@ -58,6 +72,33 @@ async function request<T = any>(method: string, path: string, body?: unknown): P
 	if (!res.ok) throw new ApiError(res.status, json.error ?? res.statusText);
 	return json as T;
 }
+
+/** Upload one file (raw body). Resolves with its metadata. */
+export function uploadFile(ws: string, file: File, onProgress?: (fraction: number) => void): Promise<FileMeta> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open("POST", `/api/w/${ws}/files`);
+		xhr.setRequestHeader("x-file-name", encodeURIComponent(file.name || "pasted"));
+		xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+		xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+		xhr.onload = () => {
+			const body = (() => {
+				try {
+					return JSON.parse(xhr.responseText);
+				} catch {
+					return {};
+				}
+			})();
+			if (xhr.status >= 200 && xhr.status < 300) resolve(body.file);
+			else reject(new ApiError(xhr.status, body.error ?? xhr.statusText));
+		};
+		xhr.onerror = () => reject(new Error("Upload failed"));
+		xhr.send(file);
+	});
+}
+
+export const fileUrl = (ws: string, id: string, inline = false) => `/api/w/${ws}/files/${id}${inline ? "?inline" : ""}`;
+export const formatBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`);
 
 export const api = {
 	get: <T = any>(p: string) => request<T>("GET", p),

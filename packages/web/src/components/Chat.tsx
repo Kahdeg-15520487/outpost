@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ChatMeta, type ModelInfo, type ModelRef, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type ModelInfo, type ModelRef, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
@@ -29,6 +29,16 @@ export function ChatView(props: {
 	const [resources, setResources] = useState(false);
 	/** Model picked before the chat exists; the chat is created with it on first send. */
 	const [pendingModel, setPendingModel] = useState<ModelRef>();
+	const att = useAttachments(ws.id);
+	const [dragging, setDragging] = useState(false);
+	// "Ask the agent about this file" from the Files page hands files over through sessionStorage.
+	useEffect(() => {
+		const handoff = sessionStorage.getItem("pios.attach");
+		if (handoff) {
+			sessionStorage.removeItem("pios.attach");
+			att.addExisting(JSON.parse(handoff));
+		}
+	}, []);
 	const scroller = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const canEdit = ws.role !== "viewer";
@@ -48,13 +58,15 @@ export function ChatView(props: {
 	});
 
 	const send = async (content: string, mode?: "steer") => {
+		const files = att.ids();
 		let id = chatId;
 		if (!id) {
 			id = (await api.post(`/api/w/${ws.id}/chats`, { model: pendingModel })).id as string;
 			navigate(chatHref(ws.id, id, props.openGadget));
 		}
 		stick.current = true;
-		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode });
+		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode, files });
+		att.clear();
 	};
 
 	const chatGrants = Object.values(props.grants.grants).filter((g) => g.holder.kind === "conversation" && g.holder.id === chatId);
@@ -63,7 +75,29 @@ export function ChatView(props: {
 	const chooseModel = (m: ModelRef) => (chatId ? api.patch(`/api/w/${ws.id}/chats/${chatId}`, { model: m }) : setPendingModel(m));
 
 	return (
-		<div className="main">
+		<div
+			className="main"
+			onDragOver={(e) => {
+				if (!canEdit || !e.dataTransfer.types.includes("Files")) return;
+				e.preventDefault();
+				setDragging(true);
+			}}
+			onDrop={(e) => {
+				if (!canEdit || !e.dataTransfer.files.length) return;
+				e.preventDefault();
+				setDragging(false);
+				att.add([...e.dataTransfer.files]);
+			}}
+			style={{ position: "relative" }}
+		>
+			{dragging && (
+				<div className="dropzone" onDragLeave={() => setDragging(false)}>
+					<div>
+						<div style={{ fontSize: 34 }}>⇣</div>
+						Drop files to attach — any format
+					</div>
+				</div>
+			)}
 			<div className="topbar">
 				<h2
 					contentEditable={!!chatId && canEdit}
@@ -121,7 +155,7 @@ export function ChatView(props: {
 					)}
 				</div>
 			</div>
-			{canEdit && <Composer chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} />}
+			{canEdit && <Composer chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
 			{resources && chatId && <ResourcesDialog ws={ws} holder={{ kind: "conversation", id: chatId }} grants={props.grants} onClose={() => setResources(false)} />}
 		</div>
 	);
@@ -175,7 +209,8 @@ function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>
 			return (
 				<div className="msg-user">
 					<div className="author">{entry.data?.author ?? "You"}</div>
-					<div className="body">{entry.data?.text ?? textOf(entry.model?.[0]?.content)}</div>
+					{!/^\(attached /.test(entry.data?.text ?? "") && <div className="body">{entry.data?.text ?? textOf(entry.model?.[0]?.content)}</div>}
+					{entry.data?.files?.length > 0 && <FileChips wsId={rest.wsId} files={entry.data.files} />}
 				</div>
 			);
 		case "pi.user":
@@ -239,6 +274,7 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 	const running = !result && !interrupted && live?.status !== "done";
 	const isError = result?.isError ?? live?.isError;
 	const output = result ? textOf(result.content) : (live?.output ?? "");
+	const images: any[] = Array.isArray(result?.content) ? result.content.filter((c: any) => c.type === "image") : [];
 	const details = result?.details ?? live?.details;
 	const children = nested.get(call.id) ?? [];
 	const codemodeCalls: any[] = details?.calls ?? [];
@@ -290,6 +326,13 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 							</pre>
 						</>
 					)}
+					{images.length > 0 && (
+						<div className="row" style={{ padding: "8px 12px", flexWrap: "wrap" }}>
+							{images.map((im, i) => (
+								<img key={i} src={`data:${im.mimeType};base64,${im.data}`} style={{ maxHeight: 220, maxWidth: "100%", borderRadius: 6, border: "1px solid var(--line)" }} />
+							))}
+						</div>
+					)}
 					{output && (
 						<>
 							<div className="sect label">{running ? "output (live)" : "result"}</div>
@@ -304,8 +347,10 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void> }) {
+function Composer({ chatId, state, models, model, onModel, onAbort, onSend, att }: { chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void>; att: Attachments }) {
 	const [text, setText] = useState("");
+	const picker = useRef<HTMLInputElement>(null);
+	const canSend = !!(text.trim() || att.items.some((a) => a.meta)) && !att.uploading;
 	const [error, setError] = useState("");
 	const ref = useRef<HTMLTextAreaElement>(null);
 	useEffect(() => ref.current?.focus(), [chatId]);
@@ -319,7 +364,7 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { 
 
 	const submit = async (mode?: "steer") => {
 		const t = text.trim();
-		if (!t) return;
+		if (!canSend) return;
 		setText("");
 		setError("");
 		try {
@@ -345,7 +390,32 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { 
 				{error && <span className="err">{error}</span>}
 			</div>
 			<div className="composer">
+				{att.items.length > 0 && (
+					<div className="attachments">
+						{att.items.map((a) => (
+							<div key={a.key} className={`attachment ${a.error ? "bad" : ""}`} title={a.error ?? a.name}>
+								{a.preview ? <img src={a.preview} /> : <span className="ext">{extOf(a.name)}</span>}
+								<div className="meta">
+									<div className="n">{a.name}</div>
+									<div className="s">{a.error ? a.error : a.meta ? `${a.meta.kind} · ${formatBytes(a.size)}` : `uploading ${Math.round(a.progress * 100)}%`}</div>
+								</div>
+								{!a.meta && !a.error && <div className="bar-progress" style={{ width: `${a.progress * 100}%` }} />}
+								<button className="x" onClick={() => att.remove(a.key)} title="Remove">
+									✕
+								</button>
+							</div>
+						))}
+					</div>
+				)}
 				<textarea
+					onPaste={(e) => {
+						const files = [...e.clipboardData.files];
+						if (files.length) {
+							e.preventDefault();
+							const stamp = new Date().toISOString().slice(11, 19).replaceAll(":", "");
+							att.add(files.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `pasted-${stamp}${i ? `-${i}` : ""}.${(f.type.split("/")[1] ?? "bin").replace("jpeg", "jpg")}`, { type: f.type }))));
+						}
+					}}
 					ref={ref}
 					rows={1}
 					value={text}
@@ -359,6 +429,19 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { 
 					}}
 				/>
 				<div className="bar">
+					<input
+						ref={picker}
+						type="file"
+						multiple
+						hidden
+						onChange={(e) => {
+							att.add([...(e.target.files ?? [])]);
+							e.target.value = "";
+						}}
+					/>
+					<button className="btn ghost small" onClick={() => picker.current?.click()} title="Attach files (or drop / paste them) — any format">
+						📎
+					</button>
 					<select
 						value={value}
 						title={chatId ? "Model for this chat" : "Model for the new chat"}
@@ -382,7 +465,7 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { 
 					<span className="grow" />
 					{state.busy && (
 						<>
-							<button className="btn small" onClick={() => submit("steer")} disabled={!text.trim()} title="Inject now, after the current tool round (Ctrl+Enter)">
+							<button className="btn small" onClick={() => submit("steer")} disabled={!canSend} title="Inject now, after the current tool round (Ctrl+Enter)">
 								Steer
 							</button>
 							<button className="btn small" onClick={onAbort} title="Stop the agent">
@@ -390,11 +473,70 @@ function Composer({ chatId, state, models, model, onModel, onAbort, onSend }: { 
 							</button>
 						</>
 					)}
-					<button className="btn primary small" onClick={() => submit()} disabled={!text.trim()}>
+					<button className="btn primary small" onClick={() => submit()} disabled={!canSend}>
 						{state.busy ? "Queue" : "Send"} ↵
 					</button>
 				</div>
 			</div>
+		</div>
+	);
+}
+
+// ------------------------------------------------------------------ attachments
+
+type Attachment = { key: string; name: string; size: number; progress: number; meta?: FileMeta; error?: string; preview?: string };
+type Attachments = ReturnType<typeof useAttachments>;
+const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
+
+/** Files attached to the next message: uploaded as soon as they're added, sent by id. */
+function useAttachments(wsId: string) {
+	const [items, setItems] = useState<Attachment[]>([]);
+	const patch = (key: string, p: Partial<Attachment>) => setItems((list) => list.map((a) => (a.key === key ? { ...a, ...p } : a)));
+	return {
+		items,
+		uploading: items.some((a) => !a.meta && !a.error),
+		ids: () => items.filter((a) => a.meta).map((a) => a.meta!.id),
+		add(files: File[]) {
+			for (const file of files) {
+				const key = `${Date.now()}-${Math.random()}`;
+				const preview = file.type.startsWith("image/") && file.size < 20 << 20 ? URL.createObjectURL(file) : undefined;
+				setItems((list) => [...list, { key, name: file.name, size: file.size, progress: 0, preview }]);
+				uploadFile(wsId, file, (progress) => patch(key, { progress }))
+					.then((meta) => patch(key, { meta, progress: 1 }))
+					.catch((e) => patch(key, { error: e.message }));
+			}
+		},
+		addExisting(metas: FileMeta[]) {
+			setItems((list) => [
+				...list,
+				...metas.map((meta) => ({ key: meta.id, name: meta.name, size: meta.size, progress: 1, meta, preview: /^image\//.test(meta.mime) ? fileUrl(wsId, meta.id, true) : undefined })),
+			]);
+		},
+		remove: (key: string) => setItems((list) => list.filter((a) => a.key !== key)),
+		clear: () => setItems([]),
+	};
+}
+
+function FileChips({ wsId, files }: { wsId: string; files: { id: string; name: string; kind: string; mime: string; size: number }[] }) {
+	return (
+		<div className="attachments in-message">
+			{files.map((f) =>
+				/^image\/(png|jpeg|gif|webp)$/.test(f.mime) ? (
+					<a key={f.id} href={fileUrl(wsId, f.id, true)} target="_blank" rel="noreferrer" className="attachment image" title={f.name}>
+						<img src={fileUrl(wsId, f.id, true)} />
+					</a>
+				) : (
+					<a key={f.id} href={fileUrl(wsId, f.id)} className="attachment" title={`Download ${f.name}`}>
+						<span className="ext">{extOf(f.name)}</span>
+						<div className="meta">
+							<div className="n">{f.name}</div>
+							<div className="s">
+								{f.kind} · {formatBytes(f.size)}
+							</div>
+						</div>
+					</a>
+				),
+			)}
 		</div>
 	);
 }

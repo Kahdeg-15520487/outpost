@@ -6,7 +6,7 @@ import { credentials, defaultModel, listModels, listProviders, models } from "..
 import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { hub } from "../collab/hub.ts";
-import { Router, type Req } from "./util.ts";
+import { readRaw, Router, type Req } from "./util.ts";
 
 const cookie = (token: string, maxAge: number) => `pios_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 const asRole = (r: unknown): Role => {
@@ -124,9 +124,10 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/chats/:chat/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { content, mode } = await req.body();
-		if (!String(content ?? "").trim()) throw new HttpError(400, "Empty message");
-		return { submission: await ws.send(req.params.chat!, user, String(content), mode === "steer" ? "steer" : "followUp") };
+		const { content, mode, files } = await req.body();
+		const fileIds = Array.isArray(files) ? files.map(String).slice(0, 20) : [];
+		if (!String(content ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
+		return { submission: await ws.send(req.params.chat!, user, String(content ?? ""), mode === "steer" ? "steer" : "followUp", fileIds) };
 	});
 	r.post("/api/w/:ws/chats/:chat/abort", async (req) => {
 		const { ws } = await member(req, "editor");
@@ -154,6 +155,52 @@ export function createApi(): Router {
 	r.get("/api/w/:ws/usage", async (req) => {
 		const { ws } = await member(req);
 		return await ws.harness.usage(ctx);
+	});
+
+	// ------------------------------------------------------------ files
+	// Upload: raw body; name in `x-file-name` (URI-encoded), type in content-type.
+	r.post("/api/w/:ws/files", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const name = decodeURIComponent(String(req.raw.headers["x-file-name"] ?? "upload"));
+		const bytes = await readRaw(req, config.maxUploadBytes);
+		const meta = await ws.files.put(bytes, { name, mime: req.raw.headers["content-type"], createdBy: user.displayName, source: "upload", chatId: req.query.get("chat") ?? undefined });
+		return { file: meta };
+	});
+	r.get("/api/w/:ws/files", async (req) => {
+		const { ws } = await member(req);
+		return { files: await ws.files.list() };
+	});
+	r.get("/api/w/:ws/files/:id", async (req) => {
+		const { ws } = await member(req);
+		const meta = await ws.files.get(req.params.id!).catch(() => {
+			throw new HttpError(404, "No such file");
+		});
+		// Uploaded files are untrusted: never render them as active content on our origin.
+		const inlineSafe = req.query.has("inline") && /^image\/(png|jpeg|gif|webp|bmp)$|^text\/plain$|^application\/pdf$/.test(meta.mime);
+		req.res.writeHead(200, {
+			"content-type": inlineSafe ? meta.mime : "application/octet-stream",
+			"content-length": meta.size,
+			"content-disposition": `${inlineSafe ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(meta.name)}`,
+			"content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+			"x-content-type-options": "nosniff",
+			"cache-control": "private, max-age=3600",
+		});
+		req.res.end(ws.files.all(meta));
+	});
+	r.patch("/api/w/:ws/files/:id", async (req) => {
+		const { ws } = await member(req, "editor");
+		const { name, gadgets: allow } = await req.body();
+		await ws.files.get(req.params.id!);
+		await ws.files.update(req.params.id!, (m) => {
+			if (typeof name === "string" && name.trim()) m.name = name.trim().slice(0, 240);
+			if (Array.isArray(allow)) m.gadgets = allow.map(String).filter((g) => gadgets.get(g)?.workspaceId === ws.id);
+		});
+		return { ok: true };
+	});
+	r.delete("/api/w/:ws/files/:id", async (req) => {
+		const { ws } = await member(req, "editor");
+		await ws.files.delete(req.params.id!);
+		return { ok: true };
 	});
 
 	// ------------------------------------------------------------ gadgets

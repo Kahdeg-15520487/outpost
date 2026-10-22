@@ -82,6 +82,15 @@ New chats use `models.default`, unless the workspace sets its own, falling back 
 | `PI_OS_DATA` | `dataDir`, which holds the system DB, one `workspaces/<id>.sqlite` per workspace, the secret, and stored credentials |
 | `PI_OS_SECRET` | the generated `secret.key` (32 bytes, as hex or base64) |
 
+### Files
+
+Attach files to a message with 📎, drag-and-drop, or paste (Ctrl+V a screenshot), or drop them on the **Files** page. Any format is accepted, up to `files.maxUploadMB` (default 100). Bytes are stored content-addressed in `<dataDir>/workspaces/<id>.files/`. The index lives in the durable `os.files` document.
+
+- **What the model sees:** images are sent inline (resized with Photon when large), small text files are inlined, and everything else arrives as a handle such as `[Attached file f_…: "name" — kind, mime, size]`.
+- **Taking files apart:** the agent never gets a fixed list of supported formats. Instead it has byte-level primitives: `file_info` (sniffed kind, magic bytes, preview, zip entries), `file_read` (text/hex/base64 ranges), `file_search`, `file_unzip` (docx/xlsx/pptx/epub/jar …), `file_inflate` (gzip/zlib/deflate ranges, e.g. PDF streams), `file_view` (images), and `file_write` for outputs.
+- **Tooling it builds itself:** when a format needs real parsing or an interactive view, the agent writes a gadget whose server parses the file and then uses the gadget's API as its tool. Gadget servers use `ctx.files.list/info/text/bytes/write`. Files are capabilities: a gadget reads only files shared with it (`file_share_with_gadget`, or the checkboxes in the Files preview) and files it wrote itself.
+- **Safe serving:** downloads are always sent with `sandbox` CSP and `nosniff`. Only images, plain text and PDF render inline; HTML and SVG are always downloaded.
+
 ## How it maps onto pi-durable
 
 | Concept | pi-durable primitive |

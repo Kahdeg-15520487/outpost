@@ -7,6 +7,7 @@ import { GadgetWindow } from "./GadgetWindow";
 import { ApprovalsDrawer } from "./Approvals";
 import { BlueprintsPage } from "./Blueprints";
 import { SettingsPage } from "./Settings";
+import { FilesPage } from "./Files";
 import { Avatar } from "./bits";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
@@ -107,6 +108,11 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									<span className="ico">❖</span>
 									<span className="t">Blueprints</span>
 								</a>
+								<a className={`side-item ${route.page === "files" ? "on" : ""}`} href={`#/w/${ws.id}/files`}>
+									<span className="ico">▤</span>
+									<span className="t">Files</span>
+									<span className="ago">{Object.values(docs.files.files).filter((f) => !f.parent).length || ""}</span>
+								</a>
 								<a className={`side-item ${route.page === "settings" ? "on" : ""}`} href={`#/w/${ws.id}/settings`}>
 									<span className="ico">⚙</span>
 									<span className="t">Settings</span>
@@ -169,6 +175,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
+			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} />}
 			{route.page === "gadget" && (
 				<div className="main" style={{ display: "flex" }}>

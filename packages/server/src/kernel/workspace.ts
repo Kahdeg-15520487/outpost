@@ -9,10 +9,12 @@ import { hub } from "../collab/hub.ts";
 import { createOsExtension } from "../agent/extension.ts";
 import { GadgetHost, type Caller } from "../gadgets/host.ts";
 import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
+import { FileStore, formatBytes, looksLikeText } from "../files/store.ts";
 import {
 	ApprovalsDoc,
 	AuditDoc,
 	ChatsDoc,
+	FilesDoc,
 	GadgetLogsDoc,
 	GadgetSourceDoc,
 	GadgetStateDoc,
@@ -20,6 +22,7 @@ import {
 	MailboxDoc,
 	type ApprovalAction,
 	type AuditLine,
+	type FileMeta,
 	type Grant,
 	type Holder,
 } from "./docs.ts";
@@ -37,11 +40,13 @@ const codemodeSandbox = new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 102
 export class Workspace {
 	readonly hosts = new Map<string, GadgetHost>();
 	readonly channel: string;
+	readonly files: FileStore;
 	private constructor(
 		readonly id: string,
 		readonly harness: Harness,
 	) {
 		this.channel = `ws:${id}`;
+		this.files = new FileStore(harness, config.workspaceDir, id);
 	}
 
 	get row(): WorkspaceRow {
@@ -103,7 +108,7 @@ export class Workspace {
 
 	/** Mirror workspace documents to subscribers of `ws:<id>`. Docs are created first: watchDoc only attaches to existing ones. */
 	async #watchDocs() {
-		const docs = { chats: ChatsDoc, grants: GrantsDoc, approvals: ApprovalsDoc, audit: AuditDoc, mailbox: MailboxDoc } as const;
+		const docs = { chats: ChatsDoc, grants: GrantsDoc, approvals: ApprovalsDoc, audit: AuditDoc, mailbox: MailboxDoc, files: FilesDoc } as const;
 		await this.harness.commit(async (tx) => {
 			for (const token of Object.values(docs)) await tx.doc(token as any);
 		}, ctx);
@@ -114,12 +119,13 @@ export class Workspace {
 	}
 
 	async snapshot() {
-		const [chats, grants, approvals, audit, mailbox] = await Promise.all([
+		const [chats, grants, approvals, audit, mailbox, files] = await Promise.all([
 			this.harness.snapshot(ChatsDoc, ctx),
 			this.harness.snapshot(GrantsDoc, ctx),
 			this.harness.snapshot(ApprovalsDoc, ctx),
 			this.harness.snapshot(AuditDoc, ctx),
 			this.harness.snapshot(MailboxDoc, ctx),
+			this.harness.snapshot(FilesDoc, ctx),
 		]);
 		return {
 			chats: chats ?? { chats: {} },
@@ -127,6 +133,7 @@ export class Workspace {
 			approvals: approvals ?? { actions: {} },
 			audit: audit ?? { lines: [] },
 			mailbox: mailbox ?? { sent: [] },
+			files: files ?? { files: {} },
 		};
 	}
 
@@ -167,8 +174,12 @@ export class Workspace {
 		return c;
 	}
 
-	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp") {
+	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = []) {
 		const c = await this.conversation(chatId);
+		const attached: FileMeta[] = [];
+		for (const id of fileIds) attached.push(await this.files.get(id));
+		for (const f of attached) if (!f.chatId) await this.files.update(f.id, (m) => void (m.chatId = chatId));
+		if (!content.trim() && attached.length) content = attached.length === 1 ? `(attached ${attached[0]!.name})` : `(attached ${attached.length} files)`;
 		await this.harness.commit(async (tx) => {
 			const chats = await tx.doc(ChatsDoc);
 			const chat = chats.chats[chatId];
@@ -181,13 +192,33 @@ export class Workspace {
 		const submission = await c.submit(
 			{
 				type: "input",
-				content,
+				content: attached.length ? [{ type: "text", text: content }, ...(await this.#attachmentParts(attached))] : content,
 				whenBusy: mode === "steer" ? "steer" : "followUp",
-				entry: { kind: "os.user", data: { author: user.displayName, authorId: user.id, text: content } },
+				entry: {
+					kind: "os.user",
+					data: { author: user.displayName, authorId: user.id, text: content, files: attached.map((f) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: f.size })) },
+				},
 			},
 			ctx,
 		);
 		return submission.id;
+	}
+
+	/** What the model sees for each attachment: images inline, small text inline, everything else as a handle for the file tools. */
+	async #attachmentParts(files: FileMeta[]) {
+		const parts: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [];
+		for (const f of files) {
+			const label = `[Attached file ${f.id}: "${f.name}" — ${f.kind}, ${f.mime}, ${formatBytes(f.size)}]`;
+			const image = await this.files.image(f).catch(() => undefined);
+			if (image) {
+				parts.push({ type: "text", text: `${label}${image.note ? ` (shown ${image.note})` : ""}` }, { type: "image", data: image.data, mimeType: image.mimeType });
+				continue;
+			}
+			const head = this.files.bytes(f, 0, 24_000);
+			if (looksLikeText(head) && f.size <= 24_000) parts.push({ type: "text", text: `${label}\n<file name="${f.name}">\n${head.toString("utf8")}\n</file>` });
+			else parts.push({ type: "text", text: `${label} Not inlined — inspect it with the file tools (file_info first).` });
+		}
+		return parts;
 	}
 
 	async renameChat(chatId: string, title: string) {
@@ -216,6 +247,8 @@ export class Workspace {
 		if (!host) {
 			host = new GadgetHost(gadgetId, {
 				harness: this.harness,
+				files: this.files,
+				name: () => gadgets.get(gadgetId)?.name ?? gadgetId,
 				gatekeeper: (gid, grant, method, args, caller) =>
 					this.gatekeeperCall({ kind: "gadget", id: gid }, grant, method, args, { kind: "gadget", id: gid, name: `${gadgets.get(gid)?.name ?? gid} (${caller.name})` }),
 			});
@@ -283,6 +316,8 @@ export class Workspace {
 			await tx.retireDoc(GadgetLogsDoc, gadgetId);
 			const grants = await tx.doc(GrantsDoc);
 			for (const [id, g] of Object.entries(grants.grants)) if (g.holder.kind === "gadget" && g.holder.id === gadgetId) delete grants.grants[id];
+			const files = await tx.doc(FilesDoc);
+			for (const f of Object.values(files.files)) if (f.gadgets.includes(gadgetId)) f.gadgets = f.gadgets.filter((g) => g !== gadgetId);
 		}, ctx).catch(() => {});
 		gadgets.delete(gadgetId);
 		hub.publish(`gadget:${gadgetId}`, { t: "gadget.deleted", gadgetId });

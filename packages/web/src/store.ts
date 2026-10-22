@@ -9,6 +9,7 @@ export type Route =
 	| { page: "chat"; ws: string; chat?: string; gadget?: string }
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
+	| { page: "files"; ws: string }
 	| { page: "gadget"; gadget: string }
 	| { page: "link"; token: string };
 
@@ -19,6 +20,7 @@ function parse(): Route {
 	if (parts[0] === "w" && parts[1]) {
 		if (parts[2] === "blueprints") return { page: "blueprints", ws: parts[1] };
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
+		if (parts[2] === "files") return { page: "files", ws: parts[1] };
 		return { page: "chat", ws: parts[1], chat: parts[2] === "c" ? parts[3] : undefined, gadget: q.get("g") ?? undefined };
 	}
 	if (parts[0] === "g" && parts[1]) return { page: "gadget", gadget: parts[1] };
@@ -44,7 +46,7 @@ export const chatHref = (ws: string, chat?: string, gadget?: string) => `#/w/${w
 
 // ------------------------------------------------------------------ workspace docs
 
-const emptyDocs: WorkspaceDocs = { chats: { chats: {} }, grants: { grants: {}, requests: {} }, approvals: { actions: {} }, audit: { lines: [] }, mailbox: { sent: [] } };
+const emptyDocs: WorkspaceDocs = { chats: { chats: {} }, grants: { grants: {}, requests: {} }, approvals: { actions: {} }, audit: { lines: [] }, mailbox: { sent: [] }, files: { files: {} } };
 
 export function useWorkspace(ws: string | undefined) {
 	const [docs, setDocs] = useState<WorkspaceDocs>(emptyDocs);
@@ -55,7 +57,7 @@ export function useWorkspace(ws: string | undefined) {
 		setDocs(emptyDocs);
 		const off = socket.on((m) => {
 			if (m.ws !== ws) return;
-			if (m.t === "ws.snapshot") setDocs({ chats: m.chats, grants: m.grants, approvals: m.approvals, audit: m.audit, mailbox: m.mailbox });
+			if (m.t === "ws.snapshot") setDocs({ chats: m.chats, grants: m.grants, approvals: m.approvals, audit: m.audit, mailbox: m.mailbox, files: m.files });
 			else if (m.t === "ws.doc") setDocs((d) => ({ ...d, [m.name]: m.value }));
 			else if (m.t === "ws.gadgets") setTick((t) => t + 1);
 		});

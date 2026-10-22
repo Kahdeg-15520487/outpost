@@ -116,6 +116,38 @@ export const AuditDoc = defineDoc<{ lines: AuditLine[] }>({
 
 /** Built-in `mailbox` gatekeeper: a local outbox, so approvals can be tried without any external account. */
 export type Mail = { id: string; to: string; subject: string; body: string; sentAt: number };
+// ---------------------------------------------------------------- files
+
+/**
+ * Workspace files. Bytes live content-addressed on disk next to the workspace database; this
+ * durable document is the index (so uploads, agent outputs and gadget outputs are committed and
+ * watched like everything else).
+ */
+export type FileMeta = {
+	id: string;
+	name: string;
+	mime: string;
+	size: number;
+	sha256: string;
+	/** Sniffed from the bytes: pdf, zip, docx, png, text, json, sqlite, binary, … */
+	kind: string;
+	createdAt: number;
+	createdBy: string;
+	source: "upload" | "agent" | "gadget" | "extract";
+	/** The file this one was extracted or derived from. */
+	parent?: string;
+	/** Chat it was attached in, if any. */
+	chatId?: string;
+	/** Gadgets allowed to read it through ctx.files (a capability, like a grant). */
+	gadgets: string[];
+};
+export const FilesDoc = defineDoc<{ files: Record<string, FileMeta> }>({
+	kind: "os.files",
+	version: 1,
+	scope: "session",
+	initial: () => ({ files: {} }),
+	...every(50),
+});
 export const MailboxDoc = defineDoc<{ sent: Mail[] }>({
 	kind: "os.mailbox",
 	version: 1,

@@ -87,10 +87,11 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const rowClass = (key: string, on: boolean) => `side-row ${on ? "on" : ""} ${menuOpen === key ? "menu-open" : ""}`;
 
 	const gadgetOpen = route.page === "chat" && route.gadget;
+	const chatHidden = route.page === "chat" && !!route.gadget && !!route.focus;
 	const canEdit = ws?.role !== "viewer";
 
 	return (
-		<div className={`shell ${gadgetOpen ? "with-gadget" : ""}`}>
+		<div className={`shell ${gadgetOpen ? "with-gadget" : ""} ${chatHidden ? "chat-hidden" : ""}`}>
 			<aside className="sidebar">
 				<div className="brand">
 					<div className="logo">π</div>
@@ -193,7 +194,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									</div>
 								) : (
 									<div key={g.id} className={rowClass(`g:${g.id}`, on)}>
-										<a className={`side-item ${on ? "on" : ""}`} href={chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id)}>
+										<a className={`side-item ${on ? "on" : ""}`} href={chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, true)}>
 											<span className="ico">{g.icon}</span>
 											<span className="t">{g.name}</span>
 										</a>
@@ -208,7 +209,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 													icon: "⇪",
 													hidden: g.role !== "owner",
 													onSelect: () => {
-														navigate(chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id));
+														navigate(chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, route.page === "chat" && route.gadget === g.id ? route.focus : true));
 														setTabRequest((t) => ({ gadget: g.id, tab: "share", n: (t?.n ?? 0) + 1 }));
 													},
 												},
@@ -244,7 +245,10 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 
 			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.gadget && (
-				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} tabRequest={tabRequest?.gadget === route.gadget ? tabRequest : undefined} onClose={() => navigate(chatHref(ws.id, route.chat))} />
+				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} tabRequest={tabRequest?.gadget === route.gadget ? tabRequest : undefined}
+					chatHidden={chatHidden}
+					onToggleChat={() => navigate(chatHref(ws.id, route.chat, route.gadget, !chatHidden))}
+					onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}

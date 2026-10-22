@@ -6,7 +6,7 @@ import { socket } from "./socket";
 
 export type Route =
 	| { page: "home" }
-	| { page: "chat"; ws: string; chat?: string; gadget?: string }
+	| { page: "chat"; ws: string; chat?: string; gadget?: string; /** gadget shown full width, chat hidden */ focus?: boolean }
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
 	| { page: "files"; ws: string }
@@ -21,7 +21,7 @@ function parse(): Route {
 		if (parts[2] === "blueprints") return { page: "blueprints", ws: parts[1] };
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
 		if (parts[2] === "files") return { page: "files", ws: parts[1] };
-		return { page: "chat", ws: parts[1], chat: parts[2] === "c" ? parts[3] : undefined, gadget: q.get("g") ?? undefined };
+		return { page: "chat", ws: parts[1], chat: parts[2] === "c" ? parts[3] : undefined, gadget: q.get("g") ?? undefined, focus: !!q.get("g") && q.get("focus") === "1" };
 	}
 	if (parts[0] === "g" && parts[1]) return { page: "gadget", gadget: parts[1] };
 	if (parts[0] === "link" && parts[1]) return { page: "link", token: parts[1] };
@@ -42,7 +42,8 @@ export const useRoute = () =>
 export const navigate = (hash: string) => {
 	if (location.hash !== hash) location.hash = hash;
 };
-export const chatHref = (ws: string, chat?: string, gadget?: string) => `#/w/${ws}${chat ? `/c/${chat}` : ""}${gadget ? `?g=${gadget}` : ""}`;
+/** `focus`: show the gadget full width with the chat hidden (opening it yourself); the agent opening one keeps the chat visible. */
+export const chatHref = (ws: string, chat?: string, gadget?: string, focus?: boolean) => `#/w/${ws}${chat ? `/c/${chat}` : ""}${gadget ? `?g=${gadget}${focus ? "&focus=1" : ""}` : ""}`;
 
 // ------------------------------------------------------------------ workspace docs
 

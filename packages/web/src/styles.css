@@ -74,6 +74,11 @@ textarea.input { resize: vertical; }
 /* ------------------------------------------------------------------ shell */
 .shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); height: 100%; }
 .shell.with-gadget { grid-template-columns: 252px minmax(380px, 1fr) minmax(420px, 1.25fr); }
+/* Gadget opened by you: full width, chat hidden (kept mounted so drafts and scroll survive). */
+.shell.with-gadget.chat-hidden { grid-template-columns: 252px minmax(0, 1fr); }
+.shell.chat-hidden > .main { display: none; }
+.gwin-chat { background: transparent; border-color: var(--line-2); }
+.gwin-chat.on { background: var(--ink); color: var(--ink-text); border-color: var(--ink); }
 .sidebar { background: var(--ink) var(--grain); color: var(--ink-text); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #000; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; }
 .brand .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--signal); color: var(--ink); display: grid; place-items: center; font: 700 italic 20px/1 var(--display); }

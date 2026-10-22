@@ -16,7 +16,7 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 		setBusy(bp.id);
 		try {
 			const r = await api.post(`/api/w/${ws.id}/gadgets`, { name: bp.name, blueprintId: bp.id });
-			navigate(chatHref(ws.id, undefined, r.gadget.id));
+			navigate(chatHref(ws.id, undefined, r.gadget.id, true));
 		} finally {
 			setBusy(undefined);
 		}

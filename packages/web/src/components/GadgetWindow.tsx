@@ -14,6 +14,8 @@ export function GadgetWindow({
 	onClose,
 	standalone,
 	tabRequest,
+	chatHidden,
+	onToggleChat,
 }: {
 	gadgetId: string;
 	user: User;
@@ -22,6 +24,9 @@ export function GadgetWindow({
 	standalone?: boolean;
 	/** Switch to a tab from outside (sidebar menu); `n` changes on every request. */
 	tabRequest?: { tab: Tab; n: number };
+	/** Beside a chat: whether the chat is hidden, and how to toggle it. Absent when standalone. */
+	chatHidden?: boolean;
+	onToggleChat?: () => void;
 }) {
 	const [detail, setDetail] = useState<Detail>();
 	const [error, setError] = useState("");
@@ -135,6 +140,11 @@ export function GadgetWindow({
 						</button>
 					))}
 				</div>
+				{onToggleChat && (
+					<button className={`btn small gwin-chat ${chatHidden ? "" : "on"}`} onClick={onToggleChat} aria-pressed={!chatHidden} title={chatHidden ? "Show the chat beside this gadget" : "Hide the chat; give the gadget the full width"}>
+						💬 Chat
+					</button>
+				)}
 				<button className="btn ghost small" onClick={onClose} title="Close">
 					✕
 				</button>

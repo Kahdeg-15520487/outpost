@@ -63,7 +63,8 @@ export function createApi(): Router {
 		const ws = req.query.get("ws");
 		const settings = ws && workspaces.role(ws, user.id) ? workspaces.get(ws)?.settings : undefined;
 		// What a new chat would get, so the picker can show it before the chat exists.
-		return { models: await listModels(), default: await defaultModel(settings?.defaultModel), picker: users.prefs(user.id).modelPicker ?? {} };
+		const picker = users.prefs(user.id).modelPicker ?? {};
+		return { models: await listModels(), default: await defaultModel(settings?.defaultModel, picker), picker };
 	});
 	/** Which models this user's picker shows: { provider: [modelId…] }; omitted providers show everything. */
 	r.put("/api/me/model-picker", async (req) => {

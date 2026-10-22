@@ -425,12 +425,14 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 		}
 	};
 	const value = model ? `${model.provider}/${model.modelId}` : "";
-	// Only the models this user chose to see, plus whatever this chat is using right now.
+	// Only the models this user chose to see. A hidden model this chat is using is listed apart, labelled as such.
 	const byProvider = useMemo(() => {
 		const m = new Map<string, ModelInfo[]>();
-		for (const x of models) if (pickerShows(modelPicker, x) || `${x.provider}/${x.id}` === value) m.set(x.provider, [...(m.get(x.provider) ?? []), x]);
+		for (const x of models) if (pickerShows(modelPicker, x)) m.set(x.provider, [...(m.get(x.provider) ?? []), x]);
 		return m;
-	}, [models, modelPicker, value]);
+	}, [models, modelPicker]);
+	const current = models.find((m) => `${m.provider}/${m.id}` === value);
+	const currentHidden = current && !pickerShows(modelPicker, current) ? current : undefined;
 
 	return (
 		<div className="composer-wrap">
@@ -504,6 +506,13 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 					>
 						{!value && <option value="">{models.length ? "choose a model" : "loading models…"}</option>}
 						{value && !models.some((m) => `${m.provider}/${m.id}` === value) && <option value={value}>{value}</option>}
+						{currentHidden && (
+							<optgroup label="In use · hidden in your picker">
+								<option value={value}>
+									{currentHidden.provider} · {currentHidden.name}
+								</option>
+							</optgroup>
+						)}
 						{[...byProvider].map(([p, list]) => (
 							<optgroup key={p} label={p}>
 								{list.map((m) => (

@@ -131,11 +131,24 @@ export async function listProviders() {
 	return result;
 }
 
-export async function defaultModel(preferred?: { provider: string; modelId: string }) {
-	const available = await models.getAvailable().catch(() => []);
-	const has = (r?: { provider: string; modelId: string }) => r && available.some((m) => m.provider === r.provider && m.id === r.modelId);
-	if (has(preferred)) return preferred!;
-	if (has(config.defaultModel)) return config.defaultModel!;
-	const real = available.find((m) => m.provider !== DEMO_MODEL.provider);
-	return real ? { provider: real.provider, modelId: real.id } : { ...DEMO_MODEL };
+type Ref = { provider: string; modelId: string };
+
+/** Whether a user's model picker (provider → shown model ids; unlisted providers show all) includes this model. */
+export const pickerShows = (picker: Record<string, string[]> | undefined, r: Ref) => !picker?.[r.provider] || picker[r.provider]!.includes(r.modelId);
+
+/**
+ * The model a new chat gets. Prefers models in the user's picker, so the default is never
+ * one they hid: workspace default → config default → first shown model; only then hidden ones.
+ */
+export async function defaultModel(preferred?: Ref, picker?: Record<string, string[]>): Promise<Ref> {
+	const available = (await models.getAvailable().catch(() => [])).map((m) => ({ provider: m.provider, modelId: m.id }));
+	const has = (r?: Ref): r is Ref => !!r && available.some((m) => m.provider === r.provider && m.modelId === r.modelId);
+	const shown = (r: Ref) => pickerShows(picker, r);
+	const real = available.filter((m) => m.provider !== DEMO_MODEL.provider);
+	for (const r of [preferred, config.defaultModel]) if (has(r) && shown(r)) return r;
+	const firstShown = real.find(shown);
+	if (firstShown) return firstShown;
+	if (shown(DEMO_MODEL) && !real.length) return { ...DEMO_MODEL };
+	for (const r of [preferred, config.defaultModel]) if (has(r)) return r;
+	return real[0] ?? { ...DEMO_MODEL };
 }

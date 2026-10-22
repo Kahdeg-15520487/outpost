@@ -30,7 +30,7 @@ import {
 	type Holder,
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
-import { blueprints, gadgets, HttpError, newId, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
+import { blueprints, gadgets, HttpError, newId, users, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
 
 const open = new Map<string, Promise<Workspace>>();
 const codemodeSandbox = new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 1024 });
@@ -148,7 +148,7 @@ export class Workspace {
 
 	async createChat(user: User, title?: string, model?: { provider: string; modelId: string }): Promise<string> {
 		const settings = this.row.settings;
-		const chosen = model ?? (await defaultModel(settings.defaultModel));
+		const chosen = model ?? (await defaultModel(settings.defaultModel, users.prefs(user.id).modelPicker));
 		const conversation = await this.harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },

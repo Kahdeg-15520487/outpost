@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 
@@ -26,11 +26,16 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 	return <div className={`prose ${streaming ? "cursor-blink" : ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-export function Dialog({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+export function Dialog({ onClose, children, className }: { onClose: () => void; children: React.ReactNode; className?: string }) {
+	useEffect(() => {
+		const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+		addEventListener("keydown", key);
+		return () => removeEventListener("keydown", key);
+	}, [onClose]);
 	return (
 		<>
 			<div className="scrim" onClick={onClose} />
-			<div className="dialog" role="dialog">
+			<div className={`dialog ${className ?? ""}`} role="dialog">
 				{children}
 			</div>
 		</>

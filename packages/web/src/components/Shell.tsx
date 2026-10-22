@@ -10,6 +10,7 @@ import { SettingsPage } from "./Settings";
 import { FilesPage } from "./Files";
 import { Avatar } from "./bits";
 import { InlineRename, RowMenu } from "./RowMenu";
+import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	const route = useRoute();
@@ -18,6 +19,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [shared, setShared] = useState<Gadget[]>([]);
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [defaultModel, setDefaultModel] = useState<ModelRef>();
+	const [picker, setPicker] = useState<ModelPicker>({});
+	const [managingModels, setManagingModels] = useState(false);
 	const [drawer, setDrawer] = useState(false);
 	/** Which sidebar row is being renamed ("c:<id>" / "g:<id>"), and which row's menu is open (keeps its button visible). */
 	const [renaming, setRenaming] = useState<string>();
@@ -46,6 +49,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		api.get(`/api/models${wsId ? `?ws=${wsId}` : ""}`).then((r) => {
 			setModels(r.models);
 			setDefaultModel(r.default);
+			setPicker(r.picker ?? {});
 		});
 	useEffect(() => {
 		loadModels();
@@ -238,13 +242,13 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				</div>
 			</aside>
 
-			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} onNewChat={newChat} />}
+			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.gadget && (
 				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} tabRequest={tabRequest?.gadget === route.gadget ? tabRequest : undefined} onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
-			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} />}
+			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
 			{route.page === "gadget" && (
 				<div className="main" style={{ display: "flex" }}>
 					<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} standalone onClose={() => navigate("#/")} />
@@ -252,6 +256,14 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 			)}
 			{(route.page === "home" || route.page === "link") && <div className="main" />}
 
+			{managingModels && (
+				<ModelPickerDialog
+					models={models}
+					picker={picker}
+					onClose={() => setManagingModels(false)}
+					onSave={async (next) => setPicker((await api.put("/api/me/model-picker", { picker: next })).picker)}
+				/>
+			)}
 			{drawer && ws && <ApprovalsDrawer ws={ws} docs={docs} gadgets={gadgets} onClose={() => setDrawer(false)} />}
 		</div>
 	);

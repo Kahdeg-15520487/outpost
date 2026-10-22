@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { pickerShows, type ModelPicker } from "./ModelPicker";
 import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Gadget, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
@@ -23,6 +24,9 @@ export function ChatView(props: {
 	openGadget?: string;
 	/** The gadget open beside the chat, when it's in this workspace's list. */
 	gadget?: Gadget;
+	/** This user's model dropdown selection (see ModelPickerDialog). */
+	picker: ModelPicker;
+	onManageModels: () => void;
 	onNewChat: () => void;
 }) {
 	const { ws, chatId } = props;
@@ -151,7 +155,7 @@ export function ChatView(props: {
 					)}
 				</div>
 			</div>
-			{canEdit && <Composer placeholder={props.openGadget && empty ? `Ask the agent about ${props.gadget?.name ?? "this gadget"}…` : undefined} chatId={chatId} state={state} models={props.models} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
+			{canEdit && <Composer placeholder={props.openGadget && empty ? `Ask the agent about ${props.gadget?.name ?? "this gadget"}…` : undefined} chatId={chatId} state={state} models={props.models} modelPicker={props.picker} onManageModels={props.onManageModels} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
 			{resources && chatId && <ResourcesDialog ws={ws} holder={{ kind: "conversation", id: chatId }} grants={props.grants} onClose={() => setResources(false)} />}
 		</div>
 	);
@@ -393,7 +397,7 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ placeholder, chatId, state, models, model, onModel, onAbort, onSend, att }: { placeholder?: string; chatId?: string; state: ChatState; models: ModelInfo[]; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void>; att: Attachments }) {
+function Composer({ placeholder, chatId, state, models, modelPicker, onManageModels, model, onModel, onAbort, onSend, att }: { placeholder?: string; chatId?: string; state: ChatState; models: ModelInfo[]; modelPicker: ModelPicker; onManageModels: () => void; model?: ModelRef; onModel: (m: ModelRef) => void; onAbort: () => void; onSend: (text: string, mode?: "steer") => Promise<void>; att: Attachments }) {
 	const [text, setText] = useState("");
 	const picker = useRef<HTMLInputElement>(null);
 	const canSend = !!(text.trim() || att.items.some((a) => a.meta)) && !att.uploading;
@@ -420,12 +424,13 @@ function Composer({ placeholder, chatId, state, models, model, onModel, onAbort,
 			setText(t);
 		}
 	};
+	const value = model ? `${model.provider}/${model.modelId}` : "";
+	// Only the models this user chose to see, plus whatever this chat is using right now.
 	const byProvider = useMemo(() => {
 		const m = new Map<string, ModelInfo[]>();
-		for (const x of models) m.set(x.provider, [...(m.get(x.provider) ?? []), x]);
+		for (const x of models) if (pickerShows(modelPicker, x) || `${x.provider}/${x.id}` === value) m.set(x.provider, [...(m.get(x.provider) ?? []), x]);
 		return m;
-	}, [models]);
-	const value = model ? `${model.provider}/${model.modelId}` : "";
+	}, [models, modelPicker, value]);
 
 	return (
 		<div className="composer-wrap">
@@ -492,6 +497,7 @@ function Composer({ placeholder, chatId, state, models, model, onModel, onAbort,
 						value={value}
 						title={chatId ? "Model for this chat" : "Model for the new chat"}
 						onChange={(e) => {
+							if (e.target.value === "__manage") return onManageModels();
 							const [provider, ...rest] = e.target.value.split("/");
 							if (provider && rest.length) onModel({ provider, modelId: rest.join("/") });
 						}}
@@ -507,6 +513,8 @@ function Composer({ placeholder, chatId, state, models, model, onModel, onAbort,
 								))}
 							</optgroup>
 						))}
+						{models.length > 0 && <option disabled>──────────</option>}
+						{models.length > 0 && <option value="__manage">Choose models…</option>}
 					</select>
 					<span className="grow" />
 					{state.busy && (

@@ -63,7 +63,19 @@ export function createApi(): Router {
 		const ws = req.query.get("ws");
 		const settings = ws && workspaces.role(ws, user.id) ? workspaces.get(ws)?.settings : undefined;
 		// What a new chat would get, so the picker can show it before the chat exists.
-		return { models: await listModels(), default: await defaultModel(settings?.defaultModel) };
+		return { models: await listModels(), default: await defaultModel(settings?.defaultModel), picker: users.prefs(user.id).modelPicker ?? {} };
+	});
+	/** Which models this user's picker shows: { provider: [modelId…] }; omitted providers show everything. */
+	r.put("/api/me/model-picker", async (req) => {
+		const user = req.need();
+		const { picker } = await req.body();
+		if (picker !== null && (typeof picker !== "object" || Array.isArray(picker))) throw new HttpError(400, "picker must be an object or null");
+		const clean: Record<string, string[]> = {};
+		for (const [provider, ids] of Object.entries(picker ?? {}).slice(0, 200)) {
+			if (!Array.isArray(ids)) throw new HttpError(400, `picker.${provider} must be an array of model ids`);
+			clean[String(provider).slice(0, 100)] = [...new Set(ids.map(String))].slice(0, 2000);
+		}
+		return { picker: users.setPrefs(user.id, { modelPicker: Object.keys(clean).length ? clean : undefined }).modelPicker ?? {} };
 	});
 	r.get("/api/providers", async (req) => {
 		req.need();

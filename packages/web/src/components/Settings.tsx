@@ -7,7 +7,7 @@ type Provider = { id: string; name: string; configured: boolean; source?: string
 	oauth?: { button: string; signedIn: boolean; account?: string; login?: LoginView | null };
 };
 
-export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () => void }) {
+export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace; onChanged: () => void; onManageModels: () => void }) {
 	const [providers, setProviders] = useState<Provider[]>([]);
 	const [cfg, setCfg] = useState<{ configPath: string; configFound: boolean; ambientEnv: boolean }>();
 	const [keyErr, setKeyErr] = useState("");
@@ -139,6 +139,12 @@ export function SettingsPage({ ws, onChanged }: { ws: Workspace; onChanged: () =
 								Every provider pi-ai supports. A key is taken from, in order: <b>{cfg?.configFound ? "" : "(missing) "}</b>
 								<code className="mono">{cfg?.configPath}</code> → keys saved here (encrypted in the data dir)
 								{cfg?.ambientEnv ? <> → the provider's standard env var</> : <> (ambient env vars disabled)</>}.
+							</div>
+							<div className="row" style={{ marginBottom: 10, fontSize: 13 }}>
+								<span className="muted grow">Too many models in the chat dropdown?</span>
+								<button className="btn ghost small" onClick={onManageModels}>
+									Choose models…
+								</button>
 							</div>
 							<input className="input" placeholder="Filter providers…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ marginBottom: 8 }} />
 							<div style={{ maxHeight: 520, overflowY: "auto" }}>

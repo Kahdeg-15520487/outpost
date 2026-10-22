@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS gadget_shares (gadget_id TEXT NOT NULL, user_id TEXT 
 CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, gadget_id TEXT NOT NULL, role TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blueprints (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', author_id TEXT, visibility TEXT NOT NULL, files TEXT NOT NULL, created_at INTEGER NOT NULL);
 `);
-// Added after the first release; existing databases get the column on startup.
+// Added after the first release; existing databases get the columns on startup.
+if (!(db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).some((c) => c.name === "prefs")) db.exec("ALTER TABLE users ADD COLUMN prefs TEXT NOT NULL DEFAULT '{}'");
 if (!(db.prepare("PRAGMA table_info(blueprints)").all() as { name: string }[]).some((c) => c.name === "intro")) db.exec("ALTER TABLE blueprints ADD COLUMN intro TEXT NOT NULL DEFAULT '{}'");
 
 const secret = config.secret;
@@ -83,7 +84,7 @@ export const users = {
 		if (password.length < 4) throw new HttpError(400, "Password must be at least 4 characters");
 		if (db.prepare("SELECT 1 FROM users WHERE username = ?").get(username)) throw new HttpError(409, "Username taken");
 		const user = { id: newId("u"), username, displayName: displayName?.trim() || username };
-		db.prepare("INSERT INTO users VALUES (?, ?, ?, ?, ?)").run(user.id, username, user.displayName, hashPassword(password), Date.now());
+		db.prepare("INSERT INTO users (id, username, display_name, pw_hash, created_at) VALUES (?, ?, ?, ?, ?)").run(user.id, username, user.displayName, hashPassword(password), Date.now());
 		return user;
 	},
 	login(username: string, password: string): User {
@@ -102,6 +103,25 @@ export const users = {
 	count(): number {
 		return (db.prepare("SELECT COUNT(*) AS n FROM users").get() as any).n;
 	},
+	prefs(id: string): UserPrefs {
+		const row: any = db.prepare("SELECT prefs FROM users WHERE id = ?").get(id);
+		return row ? JSON.parse(row.prefs || "{}") : {};
+	},
+	setPrefs(id: string, patch: Partial<UserPrefs>): UserPrefs {
+		const next = { ...users.prefs(id), ...patch };
+		for (const k of Object.keys(next) as (keyof UserPrefs)[]) if (next[k] === undefined) delete next[k];
+		db.prepare("UPDATE users SET prefs = ? WHERE id = ?").run(JSON.stringify(next), id);
+		return next;
+	},
+};
+
+/** Per-user preferences. */
+export type UserPrefs = {
+	/**
+	 * Which models the picker shows, per provider: provider id → model ids. A provider that
+	 * isn't listed shows all its models (so newly configured providers aren't invisible).
+	 */
+	modelPicker?: Record<string, string[]>;
 };
 
 export const sessions = {

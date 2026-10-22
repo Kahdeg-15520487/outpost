@@ -7,7 +7,22 @@ import { ResourcesPanel } from "./Resources";
 type Tab = "app" | "code" | "logs" | "data" | "share" | "access";
 type Detail = { gadget: Gadget; files?: Record<string, string>; server: { methods: string[]; readonly: string[]; error?: string }; shares?: any[]; links?: any[] };
 
-export function GadgetWindow({ gadgetId, user, grants, onClose, standalone }: { gadgetId: string; user: User; grants: WorkspaceDocs["grants"]; onClose: () => void; standalone?: boolean }) {
+export function GadgetWindow({
+	gadgetId,
+	user,
+	grants,
+	onClose,
+	standalone,
+	tabRequest,
+}: {
+	gadgetId: string;
+	user: User;
+	grants: WorkspaceDocs["grants"];
+	onClose: () => void;
+	standalone?: boolean;
+	/** Switch to a tab from outside (sidebar menu); `n` changes on every request. */
+	tabRequest?: { tab: Tab; n: number };
+}) {
 	const [detail, setDetail] = useState<Detail>();
 	const [error, setError] = useState("");
 	const [tab, setTab] = useState<Tab>("app");
@@ -17,6 +32,9 @@ export function GadgetWindow({ gadgetId, user, grants, onClose, standalone }: { 
 	const [logs, setLogs] = useState<LogLine[]>([]);
 	const [frameError, setFrameError] = useState("");
 	const frame = useRef<HTMLIFrameElement>(null);
+	useEffect(() => {
+		if (tabRequest) setTab(tabRequest.tab);
+	}, [tabRequest?.n]);
 
 	const load = () =>
 		api

@@ -100,6 +100,27 @@ textarea.input { resize: vertical; }
 .side-item .ago { font: 10.5px var(--mono); color: #6c6655; }
 .side-item .ico { width: 20px; text-align: center; flex: none; }
 .side-item .badge { background: var(--signal); color: white; font: 700 10.5px/17px var(--mono); padding: 0 6px; border-radius: 99px; }
+/* Sidebar rows with a ⋯ menu: the button shows on hover/focus (always on touch screens). */
+.side-row { position: relative; border-radius: 7px; }
+.side-row > .side-item { padding-right: 8px; }
+.side-row:hover > .side-item, .side-row:focus-within > .side-item, .side-row.menu-open > .side-item { padding-right: 32px; }
+.side-row:hover .ago, .side-row:focus-within .ago, .side-row.menu-open .ago { visibility: hidden; }
+.side-row.menu-open > .side-item:not(.on) { background: var(--ink-2); color: var(--ink-text); }
+.row-menu-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #a9a18b; font: 700 15px/1 var(--sans); letter-spacing: .02em; cursor: pointer; opacity: 0; transition: opacity .1s, background .1s; }
+.side-row:hover .row-menu-btn, .side-row:focus-within .row-menu-btn, .row-menu-btn.open { opacity: 1; }
+.row-menu-btn:hover, .row-menu-btn.open { background: var(--ink-3); color: white; }
+.row-menu-btn:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+@media (hover: none) { .row-menu-btn { opacity: 1; } .side-row > .side-item { padding-right: 32px; } .side-row .ago { display: none; } }
+.row-menu { position: fixed; z-index: 1000; min-width: 180px; padding: 4px; border-radius: 9px; background: var(--ink-2); border: 1px solid var(--ink-3); box-shadow: 0 14px 34px -10px rgba(0, 0, 0, .55); animation: rise .12s ease-out; }
+.row-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-text); font: 13px var(--sans); text-align: left; cursor: pointer; }
+.row-menu button:hover, .row-menu button:focus-visible { background: var(--ink-3); outline: none; }
+.row-menu button.danger { color: #ff9a7a; }
+.row-menu button.danger:hover, .row-menu button.danger:focus-visible { background: rgba(255, 91, 31, .16); }
+.row-menu .mi-ico { width: 16px; text-align: center; color: var(--ink-muted); }
+.row-menu button.danger .mi-ico { color: inherit; }
+.side-item.editing { background: var(--ink-3); }
+.side-rename { flex: 1; min-width: 0; padding: 1px 4px; margin: -2px 0; border: 1px solid var(--signal); border-radius: 4px; background: var(--ink); color: white; font: inherit; outline: none; }
+@media (prefers-reduced-motion: reduce) { .row-menu { animation: none; } }
 .side-foot { border-top: 1px solid var(--ink-3); padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .side-foot .who { flex: 1; min-width: 0; color: #cfc8b6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-foot button { background: none; border: 0; color: var(--ink-muted); font-size: 12px; }

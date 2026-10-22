@@ -111,7 +111,7 @@ The **App** tab runs the product from `main`:
 - It reinstalls when dependency manifests change and restarts after every merge that touches `app/`.
 - Agents check it with the `preview` tool.
 
-Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. The file tools can't write outside it. Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Done: the team, tiles, transcripts, repo layout, the backlog with its approval gate, the build scheduler (M4) and the live preview (M5). Next: dedicated approve buttons for requirements and design, and iteration on feedback.
+Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. The file tools can't write outside it. The development process (stages, roles, gates, artifacts, task lifecycle, and how it compares with Waterfall, Scrum, Kanban and BMAD): [docs/methodology.md](docs/methodology.md). Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Done: the team, tiles, transcripts, repo layout, the backlog with its approval gate, the build scheduler (M4) and the live preview (M5). Next: dedicated approve buttons for requirements and design, and iteration on feedback.
 
 ## How it maps onto pi-durable
 

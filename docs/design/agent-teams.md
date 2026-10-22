@@ -2,6 +2,8 @@
 
 Status: **approved** — M1, M3, M4 (build scheduler: assign → task_done → review → merge) and M5 (live preview from `.pios/project.json`) done, with per-project and per-agent model controls. M2's requirements/design gates still go through the Lead's question (good enough for the MVP). A real-model run (Haiku) went from goal to a running, reviewed, merged app unattended in ~6 minutes. Covered by `pnpm test` (suites `build`, `teams`, `ui`). Next: M6 (iteration on feedback, resilience).
 
+The process as built, and how it compares with human-oriented methodologies: [../methodology.md](../methodology.md).
+
 ## What it is
 
 You give pi-os a high-level goal ("a booking app for our meeting rooms"). A team of agents turns it into

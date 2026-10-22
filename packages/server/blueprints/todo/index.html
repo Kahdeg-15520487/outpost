@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --paper: #fbf9f4; --ink: #1d1b16; --muted: #8a8577; --line: #e8e3d6; --accent: #d9480f; --ok: #2b8a3e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--paper); color: var(--ink); }
+  main { max-width: 720px; margin: 0 auto; padding: 28px 22px 60px; }
+  header { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+  h1 { font: 700 30px/1.1 ui-serif, Georgia, serif; letter-spacing: -0.02em; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .faces { display: flex; }
+  .face { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: white; border: 2px solid var(--paper); margin-left: -6px; }
+  form { display: flex; gap: 8px; margin-bottom: 14px; }
+  input[type=text] { flex: 1; font: inherit; padding: 11px 14px; border: 1.5px solid var(--line); border-radius: 10px; background: white; outline: none; }
+  input[type=text]:focus { border-color: var(--ink); }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 0 16px; background: var(--ink); color: var(--paper); cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--muted); padding: 4px 8px; }
+  button.ghost:hover { color: var(--ink); }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: grid; grid-template-columns: 26px 1fr auto; align-items: start; gap: 10px; padding: 12px 4px; border-bottom: 1px solid var(--line); animation: in .18s ease-out; }
+  @keyframes in { from { opacity: 0; transform: translateY(-3px); } }
+  .check { width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid #c9c2b0; background: white; cursor: pointer; display: grid; place-items: center; padding: 0; margin-top: 1px; }
+  li.done .check { background: var(--ok); border-color: var(--ok); }
+  li.done .check::after { content: ""; width: 10px; height: 6px; border: 2px solid white; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
+  .text { outline: none; word-break: break-word; }
+  li.done .text { color: var(--muted); text-decoration: line-through; text-decoration-color: #b8b1a0; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tag { display: inline-block; padding: 0 7px; border-radius: 99px; background: #fff0e6; color: var(--accent); font-weight: 600; font-size: 11.5px; margin-right: 6px; }
+  .empty { text-align: center; color: var(--muted); padding: 50px 0; font-style: italic; }
+  footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .err { color: #c92a2a; font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1 id="title">Tasks</h1><div class="sub" id="sub">Loading…</div></div>
+    <div class="faces" id="faces"></div>
+  </header>
+  <form id="add"><input type="text" id="text" placeholder="Add a task — try “Draft Q3 plan @ana”" autocomplete="off"><button>Add</button></form>
+  <div class="err" id="err"></div>
+  <ul id="list"></ul>
+  <footer><span id="count"></span><button class="ghost" id="clear">Clear completed</button></footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const colors = ["#d9480f", "#1971c2", "#2b8a3e", "#9c36b5", "#e67700", "#0c8599"];
+  const color = (s) => colors[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length];
+  const canEdit = gadget.user.role !== "viewer";
+  let items = [];
+
+  const fail = (e) => { $("err").textContent = e.message; setTimeout(() => ($("err").textContent = ""), 3000); };
+  const act = (p) => p.then((next) => { items = next; render(); }).catch(fail);
+
+  function render() {
+    const list = $("list");
+    list.replaceChildren();
+    if (!items.length) list.innerHTML = '<div class="empty">Nothing to do. Enjoy it while it lasts.</div>';
+    for (const item of items) {
+      const li = document.createElement("li");
+      if (item.done) li.className = "done";
+      const check = document.createElement("button");
+      check.className = "check";
+      check.disabled = !canEdit;
+      check.onclick = () => act(gadget.api.toggle(item.id));
+      const body = document.createElement("div");
+      const text = document.createElement("div");
+      text.className = "text";
+      text.textContent = item.text;
+      if (canEdit) {
+        text.contentEditable = "plaintext-only";
+        text.onblur = () => text.textContent.trim() !== item.text && act(gadget.api.update(item.id, { text: text.textContent.trim() }));
+        text.onkeydown = (e) => e.key === "Enter" && (e.preventDefault(), text.blur());
+      }
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.innerHTML = (item.assignee ? `<span class="tag">@${item.assignee}</span>` : "") + `added by ${item.by}` + (item.doneBy ? ` · done by ${item.doneBy}` : "");
+      body.append(text, meta);
+      const del = document.createElement("button");
+      del.className = "ghost";
+      del.textContent = "✕";
+      del.title = "Delete";
+      del.hidden = !canEdit;
+      del.onclick = () => act(gadget.api.remove(item.id));
+      li.append(check, body, del);
+      list.append(li);
+    }
+    const open = items.filter((i) => !i.done).length;
+    $("count").textContent = `${open} open · ${items.length - open} done`;
+    $("sub").textContent = canEdit ? "Changes sync live to everyone here." : "View only.";
+  }
+
+  $("add").onsubmit = (e) => {
+    e.preventDefault();
+    const raw = $("text").value.trim();
+    if (!raw) return;
+    const m = /\s@(\w+)\s*$/.exec(raw);
+    act(gadget.api.add(m ? raw.slice(0, m.index) : raw, m ? m[1] : null));
+    $("text").value = "";
+  };
+  $("clear").onclick = () => act(gadget.api.clearDone());
+  if (!canEdit) { $("add").hidden = true; $("clear").hidden = true; }
+
+  gadget.on("changed", (next) => { items = next; render(); });
+  gadget.onPresence((users) => {
+    $("faces").replaceChildren(...users.map((u) => {
+      const d = document.createElement("div");
+      d.className = "face"; d.title = u.name; d.style.background = color(u.name);
+      d.textContent = u.name.slice(0, 1).toUpperCase();
+      return d;
+    }));
+  });
+  gadget.api.list().then((l) => { items = l; render(); }).catch(fail);
+</script>
+</body>
+</html>

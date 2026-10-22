@@ -1,0 +1,15 @@
+{
+  "name": "pi-os",
+  "private": true,
+  "type": "module",
+  "description": "An AI workspace (Cloudflare OS-style) on pi-durable: durable agents, sandboxed gadgets, capability Gatekeepers.",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:server": "pnpm --filter @pi-os/server dev",
+    "dev:web": "pnpm --filter @pi-os/web dev",
+    "build": "pnpm --filter @pi-os/web build",
+    "start": "pnpm build && pnpm --filter @pi-os/server start",
+    "typecheck": "pnpm -r typecheck",
+    "smoke": "pnpm --filter @pi-os/server smoke"
+  }
+}

@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: #ece8df; color: #1d1b16; display: grid; grid-template-rows: auto 1fr; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #d9d3c4; background: #f6f3ec; }
+  .bar h1 { font: 650 15px/1 ui-sans-serif, system-ui; margin: 0 8px 0 0; outline: none; min-width: 60px; }
+  .bar .sp { flex: 1; }
+  .bar select, .bar button { font: inherit; font-size: 13px; border: 1px solid #d0c9b8; background: white; border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+  .bar button.primary { background: #1d1b16; color: #f6f3ec; border-color: #1d1b16; }
+  .bar .live { font-size: 12px; color: #d9480f; font-weight: 600; }
+  .wrap { display: grid; grid-template-columns: 150px 1fr; min-height: 0; }
+  .rail { overflow-y: auto; padding: 12px 10px; border-right: 1px solid #d9d3c4; display: flex; flex-direction: column; gap: 10px; }
+  .thumb { position: relative; cursor: pointer; border-radius: 6px; outline: 2px solid transparent; outline-offset: 2px; }
+  .thumb.on { outline-color: #d9480f; }
+  .thumb .n { position: absolute; left: -2px; top: -2px; font-size: 10px; background: #1d1b16; color: white; border-radius: 4px; padding: 0 4px; z-index: 2; }
+  .thumb .mini { width: 1280px; transform: scale(calc(128 / 1280)); transform-origin: top left; pointer-events: none; }
+  .thumb .box { width: 128px; height: 72px; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .add { border: 1.5px dashed #b9b19c; border-radius: 6px; height: 40px; background: none; color: #8a8577; cursor: pointer; font-size: 18px; }
+  .stage { display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; padding: 18px; gap: 10px; }
+  .viewport { position: relative; min-height: 0; display: grid; place-items: center; container-type: size; }
+  .frame { width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; position: relative; box-shadow: 0 8px 30px rgba(40,30,10,.18); border-radius: 6px; overflow: hidden; }
+  .frame .slide { width: 1280px; transform-origin: top left; position: absolute; left: 0; top: 0; }
+  .notes { display: flex; gap: 8px; align-items: center; }
+  .notes textarea { flex: 1; font: inherit; font-size: 13px; resize: none; height: 46px; border: 1px solid #d0c9b8; border-radius: 8px; padding: 6px 10px; background: #fbfaf6; }
+  .notes .tools button { font-size: 12px; border: 1px solid #d0c9b8; background: white; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+
+  /* ---------- slide rendering (1280x720 canvas) ---------- */
+  .slide { height: 720px; padding: 80px 96px; display: flex; flex-direction: column; justify-content: center; gap: 28px; }
+  .slide [data-f] { outline: none; border-radius: 4px; }
+  .slide.editable [data-f]:hover { box-shadow: 0 0 0 2px rgba(217,72,15,.25); }
+  .slide.editable [data-f]:focus { box-shadow: 0 0 0 2px rgba(217,72,15,.7); }
+  .slide h2 { margin: 0; font-size: 64px; line-height: 1.05; letter-spacing: -0.025em; }
+  .slide .subtitle { font-size: 30px; opacity: .7; }
+  .slide ul { margin: 0; padding-left: 1.1em; font-size: 34px; line-height: 1.45; }
+  .slide li::marker { color: var(--accent); }
+  .slide.l-title { justify-content: flex-end; padding-bottom: 110px; }
+  .slide.l-title h2 { font-size: 92px; }
+  .slide.l-title::before { content: ""; position: absolute; left: 96px; top: 96px; width: 120px; height: 12px; background: var(--accent); }
+  .slide.l-section { background: var(--accent) !important; color: var(--on-accent); }
+  .slide.l-section h2 { font-size: 84px; }
+  .slide.l-quote blockquote { margin: 0; font-size: 54px; line-height: 1.2; font-family: var(--serif); }
+  .slide.l-quote blockquote::before { content: "“"; display: block; font-size: 140px; line-height: .6; color: var(--accent); }
+  .slide.l-quote .by { font-size: 26px; opacity: .65; }
+  .slide.l-big-number .num { font-size: 220px; font-weight: 800; line-height: .9; color: var(--accent); letter-spacing: -0.04em; }
+  .slide.l-big-number .cap { font-size: 32px; opacity: .75; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; }
+  .cols h3 { margin: 0 0 12px; font-size: 30px; color: var(--accent); }
+  .cols ul { font-size: 28px; }
+
+  .t-paper    { --bg: #fbf9f4; --fg: #1d1b16; --accent: #d9480f; --on-accent: #fff8f0; --serif: ui-serif, Georgia, serif; font-family: var(--serif); }
+  .t-midnight { --bg: #10131a; --fg: #e9ecf3; --accent: #7aa2ff; --on-accent: #0b0e14; --serif: ui-serif, Georgia, serif; font-family: ui-sans-serif, system-ui, sans-serif; }
+  .t-sunset   { --bg: linear-gradient(135deg, #2d1b3d, #5c2a3a 60%, #a8452c); --fg: #fff3e6; --accent: #ffb86b; --on-accent: #2d1b3d; --serif: ui-serif, Georgia, serif; font-family: ui-sans-serif, system-ui, sans-serif; }
+  .t-forest   { --bg: #f1f4ec; --fg: #1f2d1c; --accent: #2f6b3a; --on-accent: #f1f4ec; --serif: ui-serif, Georgia, serif; font-family: var(--serif); }
+  .slide { background: var(--bg); color: var(--fg); position: relative; }
+
+  body.presenting .bar, body.presenting .rail, body.presenting .notes { display: none; }
+  body.presenting { grid-template-rows: 1fr; background: #000; }
+  body.presenting .wrap { grid-template-columns: 1fr; }
+  body.presenting .stage { padding: 0; }
+  body.presenting .frame { box-shadow: none; border-radius: 0; }
+  .hint { position: fixed; bottom: 10px; right: 14px; color: #aaa; font-size: 12px; display: none; }
+  body.presenting .hint { display: block; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <h1 id="deckTitle" data-deck-title>Deck</h1>
+    <span class="live" id="live"></span>
+    <span class="sp"></span>
+    <select id="theme" title="Theme"></select>
+    <button id="follow" title="Follow the presenter">Follow</button>
+    <button class="primary" id="present">▶ Present</button>
+  </div>
+  <div class="wrap">
+    <div class="rail" id="rail"></div>
+    <div class="stage">
+      <div class="viewport" id="viewport"><div class="frame" id="frame"></div></div>
+      <div class="notes">
+        <textarea id="notes" placeholder="Speaker notes…"></textarea>
+        <div class="tools">
+          <button id="up" title="Move up">↑</button>
+          <button id="down" title="Move down">↓</button>
+          <select id="layout" title="Layout"></select>
+          <button id="del" title="Delete slide">🗑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="hint">← → to navigate · Esc to exit</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const canEdit = gadget.user.role !== "viewer";
+  let deck = null, at = 0, presenting = false, following = true;
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const LAYOUTS = ["title", "section", "bullets", "two-column", "quote", "big-number"];
+  $("layout").innerHTML = LAYOUTS.map((l) => `<option>${l}</option>`).join("");
+  $("theme").innerHTML = ["paper", "midnight", "sunset", "forest"].map((t) => `<option>${t}</option>`).join("");
+
+  function slideHtml(s, editable) {
+    const f = (name, tag, cls = "", value = s[name]) => `<${tag} ${cls ? `class="${cls}"` : ""} data-f="${name}" ${editable ? 'contenteditable="plaintext-only"' : ""}>${esc(value)}</${tag}>`;
+    const list = (name) => `<ul data-f="${name}" data-list ${editable ? 'contenteditable="true"' : ""}>${(s[name] || []).map((b) => `<li>${esc(b)}</li>`).join("") || "<li></li>"}</ul>`;
+    let inner = "";
+    switch (s.layout) {
+      case "title": case "section": inner = f("title", "h2") + f("subtitle", "div", "subtitle"); break;
+      case "quote": inner = f("quote", "blockquote") + f("attribution", "div", "by"); break;
+      case "big-number": inner = f("title", "h2") + f("number", "div", "num") + f("caption", "div", "cap"); break;
+      case "two-column": inner = f("title", "h2") + `<div class="cols"><div>${f("leftTitle", "h3")}${list("left")}</div><div>${f("rightTitle", "h3")}${list("right")}</div></div>`; break;
+      default: inner = f("title", "h2") + list("bullets");
+    }
+    return `<div class="slide l-${s.layout} t-${deck.theme} ${editable ? "editable" : ""}" data-id="${s.id}">${inner}</div>`;
+  }
+
+  function fit() {
+    const frame = $("frame");
+    const slide = frame.firstElementChild;
+    if (slide) slide.style.transform = `scale(${frame.clientWidth / 1280})`;
+  }
+  new ResizeObserver(fit).observe($("frame"));
+
+  function render() {
+    if (!deck) return;
+    at = Math.max(0, Math.min(deck.slides.length - 1, at));
+    $("deckTitle").textContent = deck.title;
+    $("theme").value = deck.theme;
+    $("live").textContent = deck.presenter ? `● ${deck.presenter} is presenting` : "";
+    $("follow").hidden = !deck.presenter || presenting;
+    $("follow").textContent = following ? "Following" : "Follow";
+    $("rail").innerHTML = deck.slides.map((s, i) => `<div class="thumb ${i === at ? "on" : ""}" data-i="${i}"><span class="n">${i + 1}</span><div class="box"><div class="mini">${slideHtml(s, false)}</div></div></div>`).join("") + (canEdit ? `<button class="add" id="addSlide" title="Add slide">+</button>` : "");
+    const s = deck.slides[at];
+    $("frame").innerHTML = slideHtml(s, canEdit && !presenting);
+    $("notes").value = s.notes || "";
+    $("layout").value = s.layout;
+    fit();
+  }
+
+  function readField(el) {
+    if (el.hasAttribute("data-list")) return [...el.querySelectorAll("li")].map((li) => li.textContent.trim()).filter(Boolean).length ? [...el.querySelectorAll("li")].map((li) => li.textContent.trim()).filter(Boolean) : el.innerText.split("\n").map((t) => t.trim()).filter(Boolean);
+    return el.textContent.trim();
+  }
+  const save = (patch) => gadget.api.updateSlide(deck.slides[at].id, patch).then((d) => { deck = d; }).catch((e) => alert(e.message));
+
+  $("frame").addEventListener("focusout", (e) => {
+    const el = e.target.closest("[data-f]");
+    if (!el || !canEdit) return;
+    const name = el.dataset.f, value = readField(el);
+    if (JSON.stringify(value) !== JSON.stringify(deck.slides[at][name] ?? (el.hasAttribute("data-list") ? [] : ""))) save({ [name]: value });
+  });
+  $("rail").addEventListener("click", (e) => {
+    if (e.target.id === "addSlide") return gadget.api.addSlide({ layout: "bullets", title: "New slide", bullets: ["First point"] }, at + 1).then((d) => { deck = d; at++; render(); });
+    const t = e.target.closest(".thumb");
+    if (t) go(+t.dataset.i);
+  });
+  $("notes").onchange = () => save({ notes: $("notes").value });
+  $("layout").onchange = () => save({ layout: $("layout").value }).then(render);
+  $("theme").onchange = () => gadget.api.setTheme($("theme").value).then((d) => { deck = d; render(); });
+  $("del").onclick = () => confirm("Delete this slide?") && gadget.api.removeSlide(deck.slides[at].id).then((d) => { deck = d; render(); });
+  $("up").onclick = () => at > 0 && gadget.api.moveSlide(deck.slides[at].id, at - 1).then((d) => { deck = d; at--; render(); });
+  $("down").onclick = () => at < deck.slides.length - 1 && gadget.api.moveSlide(deck.slides[at].id, at + 1).then((d) => { deck = d; at++; render(); });
+  $("deckTitle").contentEditable = canEdit ? "plaintext-only" : "false";
+  $("deckTitle").onblur = () => $("deckTitle").textContent.trim() !== deck.title && gadget.api.setTitle($("deckTitle").textContent.trim());
+  if (!canEdit) for (const id of ["theme", "notes", "up", "down", "layout", "del"]) $(id).disabled = true;
+
+  function go(i) {
+    at = Math.max(0, Math.min(deck.slides.length - 1, i));
+    render();
+    if (presenting) gadget.api.go(at).catch(() => {});
+  }
+  $("present").onclick = async () => {
+    presenting = true; document.body.classList.add("presenting");
+    if (canEdit) await gadget.api.present(true).catch(() => {});
+    render();
+  };
+  async function stopPresenting() {
+    presenting = false; document.body.classList.remove("presenting");
+    if (canEdit) await gadget.api.present(false).catch(() => {});
+    render();
+  }
+  $("follow").onclick = () => { following = !following; if (following) at = deck.current; render(); };
+  addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("[contenteditable=true],[contenteditable=plaintext-only],textarea")) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") go(at + 1);
+    if (e.key === "ArrowLeft" || e.key === "PageUp") go(at - 1);
+    if (e.key === "Escape" && presenting) stopPresenting();
+  });
+  $("frame").addEventListener("click", () => presenting && go(at + 1));
+
+  gadget.on("deck", (d) => {
+    const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest("[data-f],#notes,#deckTitle");
+    deck = d;
+    if (d.presenter && following && !presenting) at = d.current;
+    if (!focused) render();
+  });
+  gadget.api.get().then((d) => { deck = d; at = d.presenter ? d.current : 0; render(); });
+</script>
+</body>
+</html>

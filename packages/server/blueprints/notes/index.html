@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: grid; grid-template-columns: 210px 1fr; font: 15px/1.6 ui-sans-serif, system-ui, sans-serif; color: #24221d; background: #fffdf8; }
+  aside { background: #f5f2ea; border-right: 1px solid #e6e0d1; display: flex; flex-direction: column; min-height: 0; }
+  aside header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: #8a8577; }
+  aside button.new { border: 0; background: #24221d; color: white; border-radius: 7px; width: 26px; height: 26px; font-size: 16px; cursor: pointer; }
+  nav { overflow-y: auto; padding: 0 8px 12px; }
+  nav a { display: block; padding: 7px 10px; border-radius: 8px; cursor: pointer; text-decoration: none; color: inherit; }
+  nav a:hover { background: #ebe6da; }
+  nav a.on { background: white; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  nav a .t { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  nav a .m { font-size: 11.5px; color: #8a8577; }
+  main { display: flex; flex-direction: column; min-width: 0; padding: 34px 44px 20px; }
+  input.title { font: 700 32px/1.2 ui-serif, Georgia, serif; border: 0; outline: none; background: none; letter-spacing: -0.01em; margin-bottom: 4px; color: inherit; }
+  .meta { color: #8a8577; font-size: 12.5px; margin-bottom: 18px; display: flex; gap: 10px; }
+  .meta .saving { color: #d9480f; }
+  textarea { flex: 1; border: 0; outline: none; resize: none; font: 16px/1.7 ui-serif, Georgia, serif; background: none; color: inherit; }
+  .empty { margin: auto; color: #8a8577; text-align: center; }
+  .del { margin-left: auto; border: 0; background: none; color: #b0a993; cursor: pointer; }
+</style>
+</head>
+<body>
+<aside><header>Pages <button class="new" id="new" title="New page">+</button></header><nav id="nav"></nav></aside>
+<main id="main"><div class="empty">No page selected.</div></main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const canEdit = gadget.user.role !== "viewer";
+  let pages = [], current = null, dirty = false, timer = null;
+  const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : new Date(t).toLocaleDateString(); };
+
+  function renderNav() {
+    $("nav").innerHTML = pages.map((p) => `<a data-id="${p.id}" class="${current && p.id === current.id ? "on" : ""}"><div class="t"></div><div class="m">${ago(p.updatedAt)} · ${p.updatedBy}</div></a>`).join("");
+    $("nav").querySelectorAll("a").forEach((a, i) => { a.querySelector(".t").textContent = pages[i].title || "Untitled"; a.onclick = () => open(pages[i].id); });
+  }
+  function renderPage() {
+    if (!current) { $("main").innerHTML = `<div class="empty">${pages.length ? "Pick a page." : "No pages yet." + (canEdit ? " Press + to start one." : "")}</div>`; return; }
+    $("main").innerHTML = `<input class="title" id="title"><div class="meta"><span id="by"></span><span class="saving" id="saving"></span>${canEdit ? '<button class="del" id="del">Delete</button>' : ""}</div><textarea id="body" placeholder="Start writing…"></textarea>`;
+    $("title").value = current.title; $("body").value = current.body;
+    $("title").readOnly = $("body").readOnly = !canEdit;
+    meta();
+    const edit = () => { dirty = true; $("saving").textContent = "editing…"; clearTimeout(timer); timer = setTimeout(save, 600); };
+    $("title").oninput = edit; $("body").oninput = edit;
+    if (canEdit) $("del").onclick = () => confirm("Delete this page?") && gadget.api.remove(current.id);
+  }
+  function meta() { if ($("by")) $("by").textContent = `Edited ${ago(current.updatedAt)} by ${current.updatedBy}`; }
+  async function save() {
+    if (!current || !dirty) return;
+    dirty = false;
+    const r = await gadget.api.save(current.id, { title: $("title").value, body: $("body").value }, current.version);
+    if (r.conflict) { current = r.page; renderPage(); $("saving").textContent = `Reloaded — ${r.page.updatedBy} changed this page`; return; }
+    current = r.page; $("saving").textContent = ""; meta();
+  }
+  async function open(id) { await save(); current = await gadget.api.page(id); renderNav(); renderPage(); }
+  $("new").hidden = !canEdit;
+  $("new").onclick = async () => { const p = await gadget.api.create("Untitled", ""); await refresh(); open(p.id); };
+  async function refresh() { pages = await gadget.api.pages(); renderNav(); }
+
+  gadget.on("page", (p) => {
+    refresh();
+    if (current && p.id === current.id && !dirty && document.activeElement?.id !== "body" && document.activeElement?.id !== "title") { current = p; renderPage(); }
+    else if (current && p.id === current.id) { current.version = Math.max(current.version, p.version - 1); }
+  });
+  gadget.on("removed", (id) => { if (current && current.id === id) { current = null; renderPage(); } refresh(); });
+  refresh().then(() => pages[0] ? open(pages[0].id) : renderPage());
+  addEventListener("blur", save);
+</script>
+</body>
+</html>

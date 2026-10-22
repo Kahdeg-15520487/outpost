@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 13px/1.3 ui-sans-serif, system-ui, sans-serif; }
+  body { background-color: #fbf9f4; background-image: radial-gradient(#d8d2c2 1px, transparent 1px); background-size: 22px 22px; }
+  canvas { position: absolute; inset: 0; touch-action: none; cursor: crosshair; }
+  .tools { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; background: white; padding: 7px 10px; border-radius: 14px; box-shadow: 0 4px 18px rgba(30,20,0,.12); z-index: 3; }
+  .sw { width: 24px; height: 24px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 0 1px #ddd; cursor: pointer; padding: 0; }
+  .sw.on { box-shadow: 0 0 0 2px #1d1b16; }
+  .sep { width: 1px; height: 22px; background: #e5e0d4; margin: 0 4px; }
+  .tools button.t { font: inherit; border: 0; background: #f3f0e8; border-radius: 8px; padding: 5px 9px; cursor: pointer; }
+  .tools button.t.on { background: #1d1b16; color: white; }
+  .cursor { position: absolute; z-index: 2; pointer-events: none; transition: transform .08s linear; }
+  .cursor svg { display: block; }
+  .cursor span { position: absolute; left: 14px; top: 14px; padding: 1px 7px; border-radius: 6px; color: white; font-weight: 600; font-size: 11.5px; white-space: nowrap; }
+  .who { position: absolute; right: 14px; bottom: 12px; color: #8a8577; z-index: 3; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="tools" id="tools"></div>
+<div class="who" id="who"></div>
+<script>
+  const canvas = document.getElementById("c"), g = canvas.getContext("2d");
+  const canEdit = gadget.user.role !== "viewer";
+  const COLORS = ["#1d1b16", "#d9480f", "#1971c2", "#2b8a3e", "#9c36b5", "#f59f00"];
+  const tint = (s) => COLORS[1 + [...s].reduce((a, c) => a + c.charCodeAt(0), 0) % (COLORS.length - 1)];
+  let color = COLORS[0], width = 3, strokes = new Map(), drawing = null;
+
+  const tools = document.getElementById("tools");
+  if (!canEdit) tools.innerHTML = "<span>View only</span>";
+  else {
+    for (const c of COLORS) {
+      const b = document.createElement("button"); b.className = "sw" + (c === color ? " on" : ""); b.style.background = c;
+      b.onclick = () => { color = c; tools.querySelectorAll(".sw").forEach((x) => x.classList.toggle("on", x === b)); };
+      tools.append(b);
+    }
+    tools.insertAdjacentHTML("beforeend", '<span class="sep"></span>');
+    for (const [label, w] of [["Fine", 2], ["Pen", 4], ["Marker", 12]]) {
+      const b = document.createElement("button"); b.className = "t" + (w === 4 ? " on" : ""); b.textContent = label;
+      b.onclick = () => { width = w; tools.querySelectorAll(".t[data-w]").forEach((x) => x.classList.toggle("on", x === b)); };
+      b.dataset.w = w; tools.append(b);
+    }
+    width = 4;
+    tools.insertAdjacentHTML("beforeend", '<span class="sep"></span>');
+    const undo = document.createElement("button"); undo.className = "t"; undo.textContent = "Undo"; undo.onclick = () => gadget.api.undo();
+    const clear = document.createElement("button"); clear.className = "t"; clear.textContent = "Clear"; clear.onclick = () => confirm("Clear the board for everyone?") && gadget.api.clear();
+    tools.append(undo, clear);
+  }
+
+  function size() {
+    const r = devicePixelRatio || 1;
+    canvas.width = innerWidth * r; canvas.height = innerHeight * r;
+    g.setTransform(r, 0, 0, r, 0, 0); redraw();
+  }
+  function line(s) {
+    const p = s.points; if (p.length < 2) return;
+    g.strokeStyle = s.color; g.lineWidth = s.width; g.lineCap = g.lineJoin = "round";
+    g.beginPath(); g.moveTo(p[0], p[1]);
+    if (p.length === 2) g.lineTo(p[0] + .1, p[1]);
+    for (let i = 2; i < p.length - 2; i += 2) { const mx = (p[i] + p[i + 2]) / 2, my = (p[i + 1] + p[i + 3]) / 2; g.quadraticCurveTo(p[i], p[i + 1], mx, my); }
+    if (p.length > 2) g.lineTo(p[p.length - 2], p[p.length - 1]);
+    g.stroke();
+  }
+  function redraw() { g.clearRect(0, 0, innerWidth, innerHeight); for (const s of strokes.values()) line(s); if (drawing) line(drawing); }
+  addEventListener("resize", size);
+
+  let lastCursor = 0;
+  canvas.onpointermove = (e) => {
+    const now = Date.now();
+    if (now - lastCursor > 60) { lastCursor = now; gadget.api.cursor(e.clientX, e.clientY).catch(() => {}); }
+    if (!drawing) return;
+    drawing.points.push(e.clientX, e.clientY); redraw();
+  };
+  canvas.onpointerdown = (e) => {
+    if (!canEdit) return;
+    canvas.setPointerCapture(e.pointerId);
+    drawing = { color, width, points: [e.clientX, e.clientY] };
+  };
+  canvas.onpointerup = () => {
+    if (!drawing) return;
+    const s = drawing; drawing = null;
+    const temp = "local-" + Math.random(); strokes.set(temp, s); redraw();
+    gadget.api.addStroke(s).then(() => strokes.delete(temp)).catch(() => { strokes.delete(temp); redraw(); });
+  };
+
+  const cursors = new Map();
+  gadget.on("cursor", (c) => {
+    if (c.id === gadget.user.id) return;
+    let el = cursors.get(c.id);
+    if (!el) {
+      el = document.createElement("div"); el.className = "cursor";
+      const col = tint(c.name);
+      el.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 2l5 14 2-6 6-2z" fill="${col}" stroke="white" stroke-width="1.5"/></svg><span style="background:${col}"></span>`;
+      el.querySelector("span").textContent = c.name;
+      document.body.append(el); cursors.set(c.id, el);
+    }
+    el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+    clearTimeout(el._t); el._t = setTimeout(() => { el.remove(); cursors.delete(c.id); }, 4000);
+  });
+  gadget.on("stroke", (s) => { strokes.set(s.id, s); redraw(); });
+  gadget.on("remove", (id) => { strokes.delete(id); redraw(); });
+  gadget.on("clear", () => { strokes.clear(); redraw(); });
+  gadget.onPresence((users) => { document.getElementById("who").textContent = users.map((u) => u.name).join(" · "); });
+  gadget.api.strokes().then((list) => { for (const s of list) strokes.set(s.id, s); size(); });
+  size();
+</script>
+</body>
+</html>

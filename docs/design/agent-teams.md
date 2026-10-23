@@ -1,6 +1,6 @@
 # Agent teams: goal → plan → working product
 
-Status: **approved** — M1, M3, M4 (build scheduler: assign → task_done → review → merge) and M5 (live preview from `.pios/project.json`) done, with per-project and per-agent model controls. M2's requirements/design gates still go through the Lead's question (good enough for the MVP). A real-model run (Haiku) went from goal to a running, reviewed, merged app unattended in ~6 minutes. Covered by `pnpm test` (suites `build`, `teams`, `ui`). Next: M6 (iteration on feedback, resilience).
+Status: **approved**. Done: M1, M3, M4 (build scheduler: assign → task_done → review → merge), M5 (live preview from `.pios/project.json`), most of M6 (feedback on the running app → pending PBIs you approve, blocking questions holding every approval to build, pause/resume build, Repo tab). M2's requirements/design gate is still the Lead's (blocking) question, not a button. Open in M6: a restart-resume end-to-end check and a retrospective. A real-model run (Haiku) went from goal to a running, reviewed, merged app unattended in ~6 minutes. Covered by `pnpm test` (7 suites, CI on Linux and Windows).
 
 The process as built, and how it compares with human-oriented methodologies: [../methodology.md](../methodology.md).
 

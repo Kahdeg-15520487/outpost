@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { config } from "../config.ts";
 import { describeGatekeeper, GATEKEEPERS } from "../gatekeepers/catalog.ts";
 import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
+import { bundleFileName, importBundle, makeBundle, parseBundle } from "../gadgets/bundle.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
 import { oauthLogins } from "../kernel/oauth.ts";
 import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
@@ -514,6 +515,44 @@ export function createApi(): Router {
 		const { gadget, ws } = await Workspace.gadgetFor(String(gadgetId), user, "editor");
 		const bp = await ws.publishBlueprint(gadget.id, { name: String(name || gadget.name), description: String(description ?? ""), visibility: visibility === "private" ? "private" : "public", authorId: user.id });
 		return { blueprint: { id: bp.id } };
+	});
+	// ------------------------------------------------------------ export / import (move between instances)
+	r.get("/api/blueprints/:id/export", (req) => {
+		const user = req.need();
+		const bp = blueprints.get(req.params.id!);
+		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
+		const bundle = makeBundle({ blueprints: [bp] });
+		return { fileName: bundleFileName(bundle), bundle };
+	});
+	r.get("/api/gadgets/:id/export", async (req) => {
+		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
+		const withData = req.query.get("data") === "1";
+		const bundle = makeBundle({ gadgets: [{ row: gadget, files: await ws.gadgetFiles(gadget.id), data: withData ? await ws.gadgetState(gadget.id) : undefined }] });
+		return { fileName: bundleFileName(bundle), bundle };
+	});
+	/** Bulk: ?blueprints=mine and/or ?gadgets=all (this workspace), &data=1 for gadget data. */
+	r.get("/api/w/:ws/export", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const withData = req.query.get("data") === "1";
+		const bps = req.query.get("blueprints") === "mine" ? blueprints.visibleTo(user.id).filter((b) => b.authorId === user.id) : [];
+		const gs = req.query.get("gadgets") === "all" ? gadgets.inWorkspace(ws.id) : [];
+		if (!bps.length && !gs.length) throw new HttpError(400, "Nothing to export");
+		const bundle = makeBundle({ blueprints: bps, gadgets: await Promise.all(gs.map(async (g) => ({ row: g, files: await ws.gadgetFiles(g.id), data: withData ? await ws.gadgetState(g.id) : undefined }))) });
+		return { fileName: bundleFileName(bundle), bundle };
+	});
+	/** Body: a bundle. Blueprints go to the user's library, gadgets into this workspace. ?visibility=public shares imported blueprints. */
+	r.post("/api/w/:ws/import", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const raw = await readRaw(req, config.maxUploadBytes);
+		let json: unknown;
+		try {
+			json = JSON.parse(raw.toString("utf8"));
+		} catch {
+			throw new HttpError(400, "Not a pi-os export file (it isn't JSON)");
+		}
+		const result = await importBundle(ws, user.id, parseBundle(json), { visibility: req.query.get("visibility") === "public" ? "public" : "private" });
+		if (result.blueprints.length) hub.publish("blueprints", { t: "blueprints.changed" });
+		return result;
 	});
 	r.delete("/api/blueprints/:id", (req) => {
 		const user = req.need();

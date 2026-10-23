@@ -341,6 +341,15 @@ export class Workspace {
 		return { ...((await this.harness.snapshot(GadgetStateDoc, gadgetId, ctx))?.kv ?? {}) };
 	}
 
+	/** Replace a gadget's stored data (import). */
+	async setGadgetState(gadgetId: string, kv: Record<string, unknown>) {
+		await this.harness.commit(async (tx) => {
+			const st = await tx.doc(GadgetStateDoc, gadgetId, null);
+			st.kv = JSON.parse(JSON.stringify(kv));
+		}, ctx);
+		this.hosts.get(gadgetId)?.reload();
+	}
+
 	/** Apply file changes (null deletes) as one revision, then reload the server and every client. */
 	async writeGadgetFiles(gadgetId: string, changes: Record<string, string | null>) {
 		for (const path of Object.keys(changes)) {

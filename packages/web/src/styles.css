@@ -363,3 +363,20 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .renamable { cursor: text; border-radius: 4px; }
 .renamable:hover { box-shadow: 0 0 0 1px var(--line-2); background: rgba(255, 255, 255, .35); }
 .label-rename { font: inherit; color: inherit; letter-spacing: inherit; width: 100%; min-width: 120px; padding: 0 4px; margin: -1px -5px; border: 1px solid var(--signal); border-radius: 4px; background: var(--card); outline: none; box-shadow: 0 0 0 3px var(--signal-wash); }
+
+/* ---------------------------------------------------------------- export / import */
+.bp-head { align-items: center; gap: 8px; }
+.bp-head h1 { margin: 0; }
+.tx-dialog { width: min(520px, 92vw); }
+.tx-dialog h2 { margin: 0 0 6px; }
+.tx-lede { margin: 0 0 14px; font-size: 13.5px; }
+.tx-opt { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; font-size: 14px; cursor: pointer; }
+.tx-opt.sub { padding-left: 24px; font-size: 13px; }
+.tx-opt.off { opacity: .5; }
+.tx-note { font-size: 12.5px; margin: 8px 0 0; }
+.tx-drop { display: grid; place-items: center; min-height: 84px; border: 1.5px dashed var(--line-2); border-radius: 12px; background: var(--paper); color: var(--muted); cursor: pointer; font-size: 14px; }
+.tx-drop:hover, .tx-drop.has { border-color: var(--text); color: var(--text); }
+.tx-preview { display: grid; gap: 10px; margin-top: 12px; }
+.tx-list { margin: 4px 0 0; padding-left: 18px; font-size: 13.5px; display: grid; gap: 2px; }
+.bp-meta { font-size: 11px; margin-top: 8px; }
+.bp-actions { margin-top: 6px; gap: 4px; }

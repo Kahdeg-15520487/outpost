@@ -130,6 +130,30 @@ async function run() {
 	const options = await page.$$eval(".composer select option", (os) => (os as HTMLOptionElement[]).filter((o) => !o.disabled).map((o) => o.value).filter((v) => v && v !== "__manage"));
 	check("the dropdown offers only the picked models", options.length > 0 && options.every((v) => v.startsWith("pi-os-demo/")), options);
 
+	console.log("export / import");
+	const bundlePath = join(process.env.PI_OS_DATA!, "..", "import.pios.json");
+	writeFileSync(
+		bundlePath,
+		JSON.stringify({ format: "pi-os/bundle", version: 1, exportedAt: new Date().toISOString(), blueprints: [{ name: "Imported board", description: "from elsewhere", icon: "▦", files: { "index.html": "<h1>board</h1>" } }], gadgets: [{ name: "Imported gadget", icon: "◆", files: { "index.html": "<h1>hi</h1>" }, data: { count: 3 } }] }),
+	);
+	await go(`#/w/${ws}/blueprints`);
+	must("Blueprints page has Import and Export", await until("buttons", () => page.$$eval(".bp-head button", (bs) => bs.map((b) => b.textContent).join()).then((t) => /Import/.test(t) && /Export/.test(t))));
+	await clickText(".bp-head button", "Import…");
+	const fileInput = await until("file input", () => page.$(".tx-drop input[type=file]"));
+	await (fileInput as any).uploadFile(bundlePath);
+	check("import shows what the file holds before importing", await until("preview", () => text(".tx-preview").then((t) => /Imported board/.test(t) && /Imported gadget/.test(t) && /with data/.test(t))));
+	await shot("import");
+	await clickText(".tx-dialog button", "Import");
+	check("import result lists the new blueprint and gadget", await until("result", () => text(".tx-dialog").then((t) => /imported/i.test(t) && /in your library/i.test(t) && /Imported gadget/.test(t))));
+	await clickText(".tx-dialog button", "Done");
+	check("the imported blueprint is in the library", await until("listed", () => page.$$eval(".bp-grid .bp .n", (ns) => ns.some((n) => n.textContent === "Imported board"))));
+	check("the imported gadget is in the sidebar", await until("sidebar gadget", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported gadget"))));
+	await clickText(".bp-head button", "Export…");
+	check("export dialog offers my blueprints and the workspace's gadgets", await until("export dialog", () => text(".tx-dialog").then((t) => /My blueprints \(1\)/.test(t) && /Gadgets in/.test(t) && /Include their data/.test(t))));
+	await sleep(400);
+	await shot("export");
+	await page.keyboard.press("Escape");
+
 	console.log("project page");
 	const pid = await seedProject(ws);
 	const projectHash = (tab: string) => `#/w/${ws}/p/${pid}?tab=${tab}`;

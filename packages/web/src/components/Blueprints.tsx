@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { api, type Blueprint, type Workspace } from "../api";
 import { chatHref, navigate } from "../store";
 import { socket } from "../socket";
+import { useWorkspace } from "../store";
+import { ExportDialog, ImportDialog, exportBlueprint } from "./Transfer";
 
 export function BlueprintsPage({ ws }: { ws: Workspace }) {
 	const [list, setList] = useState<Blueprint[]>([]);
 	const [busy, setBusy] = useState<string>();
+	const [dialog, setDialog] = useState<"import" | "export">();
+	const { gadgets } = useWorkspace(ws.id);
+	const canEdit = ws.role !== "viewer";
 	const load = () => api.get("/api/blueprints").then((r) => setList(r.blueprints));
 	useEffect(() => {
 		load();
@@ -28,7 +33,19 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 		<div className="main">
 			<div className="page">
 				<div className="page-inner">
-					<h1>Blueprints</h1>
+					<div className="row bp-head">
+						<h1 className="grow">Blueprints</h1>
+						{canEdit && (
+							<>
+								<button className="btn small" onClick={() => setDialog("import")} title="Import blueprints and gadgets from a .pios.json file">
+									Import…
+								</button>
+								<button className="btn small" onClick={() => setDialog("export")} title="Export your blueprints and this workspace's gadgets to move them to another pi-os">
+									Export…
+								</button>
+							</>
+						)}
+					</div>
 					<p className="lede">A blueprint is a whole app, not a template of content. Using one gives you a private instance — your own server, your own data — that you or your agent can change freely.</p>
 					<Grid list={builtin} busy={busy} onUse={use} canUse={ws.role !== "viewer"} />
 					{community.length > 0 && (
@@ -41,6 +58,8 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 					)}
 				</div>
 			</div>
+			{dialog === "import" && <ImportDialog ws={ws} onClose={() => setDialog(undefined)} onImported={load} />}
+			{dialog === "export" && <ExportDialog ws={ws} mine={community.filter((b) => b.mine).length} gadgets={gadgets.length} onClose={() => setDialog(undefined)} />}
 		</div>
 	);
 }
@@ -53,10 +72,14 @@ function Grid({ list, busy, onUse, canUse, onDelete }: { list: Blueprint[]; busy
 					<div className="i">{b.icon}</div>
 					<div className="n">{b.name}</div>
 					<div className="d">{b.description}</div>
-					<div className="row" style={{ marginTop: 8 }}>
-						<span className="mono muted grow" style={{ fontSize: 11 }}>
-							{b.author} · {b.fileCount} files{b.visibility === "private" ? " · private" : ""}
-						</span>
+					<div className="mono muted bp-meta">
+						{b.author} · {b.fileCount} files{b.visibility === "private" ? " · private" : ""}
+					</div>
+					<div className="row bp-actions">
+						<span className="grow" />
+						<button className="btn ghost small" onClick={() => exportBlueprint(b.id).catch((e) => alert(e.message))} title="Download as a .pios.json file to import on another pi-os">
+							Export
+						</button>
 						{onDelete && b.mine && (
 							<button className="btn ghost small" onClick={() => confirm(`Delete blueprint “${b.name}”?`) && onDelete(b)}>
 								Delete

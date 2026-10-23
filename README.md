@@ -93,6 +93,16 @@ Attach files to a message with 📎, drag-and-drop, or paste (Ctrl+V a screensho
 - **Tooling it builds itself:** when a format needs real parsing or an interactive view, the agent writes a gadget whose server parses the file and then uses the gadget's API as its tool. Gadget servers use `ctx.files.list/info/text/bytes/write`. Files are capabilities: a gadget reads only files shared with it (`file_share_with_gadget`, or the checkboxes in the Files preview) and files it wrote itself.
 - **Safe serving:** downloads are always sent with `sandbox` CSP and `nosniff`. Only images, plain text and PDF render inline; HTML and SVG are always downloaded.
 
+### Moving blueprints and gadgets between instances
+
+Export to a single `.pios.json` file and import it on another pi-os:
+- **One gadget:** ⋯ → *Export* (code only) or *Export with data* (also what it has stored).
+- **One blueprint:** *Export* on its card, built-ins included.
+- **In bulk:** *Blueprints → Export…* exports your blueprints and the current workspace's gadgets, optionally with their data.
+- **Import:** *Blueprints → Import…* previews the file first. Blueprints go to your library, private unless you choose to share them. Gadgets go into the current workspace, owned by you.
+
+Code and data travel. Shares, share links, Gatekeeper grants, logs, and workspace files a gadget's data points to stay on the old instance; grant access again after importing. Imported code runs in the same sandbox as any gadget. The importer checks the format, version, file paths, sizes and counts, and rejects anything else.
+
 ### Projects: agent teams
 
 **Projects → +** takes a high-level goal. A **Lead** agent forms a team for that goal (product owner, architect, developers, reviewer, … as needed). The team writes requirements, a design and code in a git repository at `<dataDir>/projects/<id>/repo`. Each agent works in its own git worktree and merges into `main` with `publish`. The project page shows a live tile per agent around an artifact viewer with tabs: Overview (goal, questions waiting for you, activity), Requirements, Design, Wireframes and Repo (files and history of `main`). Click a tile to read that agent's full transcript and message it. The Lead asks you to approve the requirements before work continues.
@@ -173,11 +183,12 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | Suite | Covers |
 |---|---|
 | `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
+| `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation) |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |
 | `render` | `gadget_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
-| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
+| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
 
 Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { exportGadget } from "./Transfer";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
 import { chatHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
 import { socket } from "../socket";
@@ -249,6 +250,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 													},
 												},
 												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/g/${g.id}`) },
+												{ label: "Export", icon: "⤓", onSelect: () => exportGadget(g.id, false).catch((e) => alert(e.message)), hidden: !canChange },
+												{ label: "Export with data", icon: "⤓", onSelect: () => exportGadget(g.id, true).catch((e) => alert(e.message)), hidden: !canChange },
 												{ label: "Delete", icon: "✕", onSelect: () => deleteGadget(g), danger: true, hidden: g.role !== "owner" },
 											]}
 										/>

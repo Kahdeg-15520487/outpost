@@ -29,6 +29,10 @@ export type BacklogItem = {
 	order: number;
 	createdBy: string;
 	updatedAt: number;
+	/** The user feedback (FB-n) this item came from. */
+	feedback?: string;
+	/** Drafted by the team after the backlog was approved (from feedback): not built until the user approves it. */
+	pending?: boolean;
 	// ---- build (tasks; written by pi-os's scheduler, see build.ts)
 	/** Times the task has been handed to a developer. */
 	attempt?: number;
@@ -78,6 +82,8 @@ export type Backlog = {
 	revision: number;
 	/** The build (after approval): see build.ts. */
 	build?: BuildState;
+	/** The team asked the user to approve pending items (after the backlog itself was approved). */
+	pendingRequest?: { summary: string; requestedBy: string; requestedAt: number };
 };
 
 export const emptyBacklog = (): Backlog => ({ items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 });
@@ -128,6 +134,9 @@ export function rollUp(b: Backlog): boolean {
 	return changed;
 }
 
+/** Waiting for the user's approval: the item, its PBI or its feature is pending. */
+export const isPending = (b: Backlog, item: BacklogItem): boolean => !!item.pending || (!!item.parent && !!b.items[item.parent] && isPending(b, b.items[item.parent]!));
+
 /** Every dependency is done (a dependency on a PBI or feature waits for all of it). */
 export const depsDone = (b: Backlog, item: BacklogItem) => item.deps.every((d) => !b.items[d] || b.items[d]!.status === "done");
 export const childrenOf = (b: Backlog, id: string | undefined, type: ItemType) =>
@@ -143,7 +152,7 @@ export function renderBacklog(b: Backlog, projectName: string): string {
 	const counts = Object.values(b.items).filter((i) => i.type === "task");
 	if (counts.length) lines.push(`**Tasks:** ${STATUSES.map((s) => `${STATUS_LABEL[s]} ${counts.filter((t) => t.status === s).length}`).join(" · ")}`, "");
 	const item = (i: BacklogItem) => {
-		const meta = [i.estimate, i.area && `area: ${i.area}`, i.deps.length && `after ${i.deps.join(", ")}`, i.assignee && `@${i.assignee}`].filter(Boolean).join(" · ");
+		const meta = [i.pending && "waiting for approval", i.feedback && `from ${i.feedback}`, i.estimate, i.area && `area: ${i.area}`, i.deps.length && `after ${i.deps.join(", ")}`, i.assignee && `@${i.assignee}`].filter(Boolean).join(" · ");
 		return `${i.id} ${i.title} — ${STATUS_LABEL[i.status]}${meta ? ` (${meta})` : ""}`;
 	};
 	const featureless = { id: "", title: "No feature" } as BacklogItem;
@@ -168,7 +177,7 @@ export function renderBacklog(b: Backlog, projectName: string): string {
 export function backlogOutline(b: Backlog): string {
 	const out: string[] = [`Backlog revision ${b.revision}; approval: ${b.approval.status}${b.approval.comment ? ` (${b.approval.comment})` : ""}`];
 	const line = (i: BacklogItem, indent: string) =>
-		`${indent}${i.id} [${i.status}${i.assignee ? ` @${i.assignee}` : ""}${i.estimate ? ` ${i.estimate}` : ""}] ${i.title}${i.deps.length ? ` (after ${i.deps.join(", ")})` : ""}${i.area ? ` {${i.area}}` : ""}`;
+		`${indent}${i.id} [${i.status}${i.assignee ? ` @${i.assignee}` : ""}${i.estimate ? ` ${i.estimate}` : ""}${i.pending ? " PENDING APPROVAL" : ""}${i.feedback ? ` from ${i.feedback}` : ""}] ${i.title}${i.deps.length ? ` (after ${i.deps.join(", ")})` : ""}${i.area ? ` {${i.area}}` : ""}`;
 	for (const f of childrenOf(b, undefined, "feature")) {
 		out.push(line(f, ""));
 		for (const p of childrenOf(b, f.id, "pbi")) {
@@ -186,7 +195,7 @@ export function backlogOutline(b: Backlog): string {
 	return out.join("\n");
 }
 
-export type ItemInput = { ref?: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; deps?: string[]; area?: string; estimate?: Estimate };
+export type ItemInput = { ref?: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; deps?: string[]; area?: string; estimate?: Estimate; feedback?: string };
 
 /**
  * Add items in one go. `ref`s let items in the same call point at each other as parent or
@@ -194,7 +203,7 @@ export type ItemInput = { ref?: string; type: ItemType; parent?: string; title: 
  * item is stored once (a document stores a copy, so later changes to the object would be lost).
  * Throws without changing anything if a parent or dependency is unknown or of the wrong type.
  */
-export function addItems(b: Backlog, inputs: ItemInput[], by: string): { id: string; type: ItemType; title: string; parent?: string }[] {
+export function addItems(b: Backlog, inputs: ItemInput[], by: string, opts: { pending?: boolean } = {}): { id: string; type: ItemType; title: string; parent?: string }[] {
 	const seq = { ...b.seq };
 	const refs = new Map<string, string>();
 	const ids = inputs.map((input) => {
@@ -213,6 +222,8 @@ export function addItems(b: Backlog, inputs: ItemInput[], by: string): { id: str
 		if (input.acceptance?.length) item.acceptance = input.acceptance;
 		if (input.area) item.area = input.area;
 		if (input.estimate) item.estimate = input.estimate;
+		if (input.feedback) item.feedback = input.feedback;
+		if (opts.pending) item.pending = true;
 		if (input.parent) {
 			const p = resolve(input.parent);
 			if (!p) throw new Error(`${id} “${item.title}”: unknown parent "${input.parent}"`);

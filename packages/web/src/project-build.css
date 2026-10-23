@@ -35,3 +35,45 @@
 .at-task.blocked .mono { color: #fca5a5; }
 .at-task span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-mini .at-mini-task { position: absolute; bottom: -2px; right: -4px; font: 700 8.5px var(--mono); padding: 0 3px; border-radius: 4px; background: #1d4ed8; color: white; }
+
+/* ================================================================== questions: blocking flag + readiness */
+.q-flag { font: 700 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; }
+.q-flag.blocking { background: #fde2e2; color: #b91c1c; }
+.q-flag.nonblocking { background: var(--paper-2); color: var(--muted); }
+.q-card.nonblocking { border-style: dashed; }
+.q-assume { margin: 6px 0 2px; padding: 6px 10px; border-radius: 8px; background: var(--paper-2); font-size: 13px; }
+.q-assume .label { margin-right: 6px; }
+.ov-ready { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line); background: var(--card); }
+.ov-ready i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.ov-ready.no { border-color: #f5c2c2; background: #fff5f5; color: #7f1d1d; }
+.ov-ready.no i { background: #dc2626; }
+.ov-ready.yes i { background: #16a34a; }
+
+/* ================================================================== App tab: feedback panel */
+.pv-main { display: flex; min-height: 0; }
+.pv-main .pv-stage { flex: 1; min-width: 0; }
+.fb-panel { width: 360px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); }
+.fb-form { display: grid; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--card); }
+.fb-list { overflow-y: auto; padding: 10px 12px; display: grid; gap: 8px; align-content: start; }
+.fb-empty { font-size: 13px; }
+.fb-item { display: grid; gap: 5px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: 13px; }
+.fb-item.declined { opacity: .7; }
+.fb-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fb-meta { font-size: 10.5px; }
+.fb-status { white-space: nowrap; font: 600 10.5px var(--sans); padding: 1px 7px; border-radius: 999px; background: var(--paper-2); color: var(--muted); }
+.fb-status.pending { background: #fef3c7; color: #92400e; }
+.fb-status.doing { background: #dbeafe; color: #1d4ed8; }
+.fb-status.done { background: var(--ok-wash); color: #15803d; }
+.fb-status.declined { background: #f3f4f6; color: #6b7280; }
+.fb-text { white-space: pre-wrap; }
+.fb-files { font-size: 11px; color: var(--muted); }
+.fb-declined { font-size: 12px; color: #6b7280; font-style: italic; }
+.fb-linked { display: flex; flex-wrap: wrap; gap: 4px; }
+.fb-chip { font-size: 10.5px; padding: 1px 6px; border-radius: 5px; background: var(--paper-2); }
+.fb-chip.pending { background: #fef3c7; color: #92400e; }
+.fb-chip.doing, .fb-chip.review { background: #dbeafe; color: #1d4ed8; }
+.fb-chip.done { background: var(--ok-wash); color: #15803d; }
+.fb-actions { display: flex; gap: 4px; }
+.fb-pbi { display: grid; gap: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.fb-hint { font-size: 11.5px; }
+@media (max-width: 1100px) { .fb-panel { width: 300px; } }

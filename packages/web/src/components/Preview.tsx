@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type PreviewInfo, type PreviewLogLine } from "../api";
+import { api, type Backlog, type BacklogItem, type Feedback, type PreviewInfo, type PreviewLogLine } from "../api";
+import { timeAgo } from "../store";
+import { AttachButton, AttachmentTray, pasteInto, useAttachments } from "./Chat";
 
 const STATUS_TEXT: Record<PreviewInfo["status"], string> = {
 	off: "Stopped",
@@ -15,7 +17,13 @@ const STATUS_TEXT: Record<PreviewInfo["status"], string> = {
  * The App tab: pi-os runs the project's app from main (.pios/project.json) and shows it here, with its
  * logs. It starts when you open the tab and restarts by itself after merges that touch app/.
  */
-export function PreviewTab({ wsId, projectId, preview, canEdit }: { wsId: string; projectId: string; preview: PreviewInfo; canEdit: boolean }) {
+export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, backlog }: { wsId: string; projectId: string; preview: PreviewInfo; canEdit: boolean; feedback?: Record<string, Feedback>; backlog?: Backlog }) {
+	const [fbOpen, setFbOpen] = useState(() => localStorage.getItem("pios.preview.feedback") === "1");
+	const fbCount = Object.keys(feedback).length;
+	const toggleFb = () => {
+		setFbOpen(!fbOpen);
+		localStorage.setItem("pios.preview.feedback", fbOpen ? "0" : "1");
+	};
 	const base = `/api/w/${wsId}/projects/${projectId}/preview`;
 	const [logsOpen, setLogsOpen] = useState(() => localStorage.getItem("pios.preview.logs") === "1");
 	const [lines, setLines] = useState<PreviewLogLine[]>([]);
@@ -106,8 +114,12 @@ export function PreviewTab({ wsId, projectId, preview, canEdit }: { wsId: string
 						Logs
 					</button>
 				)}
+				<button className={`btn ghost small pv-fb-toggle ${fbOpen ? "on" : ""}`} onClick={toggleFb} title="Tell the team what to change in the app">
+					Feedback{fbCount ? ` (${fbCount})` : ""}
+				</button>
 			</div>
 
+			<div className="pv-main">
 			<div className="pv-stage">
 				{running ? (
 					<iframe key={`${p.port}-${p.readyAt}`} className="pv-frame" src={url} title="Live app" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads" />
@@ -139,6 +151,8 @@ export function PreviewTab({ wsId, projectId, preview, canEdit }: { wsId: string
 					</div>
 				)}
 			</div>
+			{fbOpen && <FeedbackPanel wsId={wsId} projectId={projectId} preview={preview} canEdit={canEdit} feedback={feedback} backlog={backlog} />}
+			</div>
 
 			{showLogs && (
 				<div
@@ -157,5 +171,186 @@ export function PreviewTab({ wsId, projectId, preview, canEdit }: { wsId: string
 				</div>
 			)}
 		</div>
+	);
+}
+
+/** Derived from the items linked to the feedback. */
+function feedbackStatus(fb: Feedback, items: BacklogItem[]): { label: string; tone: string } {
+	if (fb.declined) return { label: "Declined", tone: "declined" };
+	if (!items.length) return { label: "With the team", tone: "new" };
+	if (items.some((i) => i.pending)) return { label: "Waiting for your approval", tone: "pending" };
+	const tasks = items.filter((i) => i.type === "task");
+	if ((tasks.length ? tasks : items).every((i) => i.status === "done")) return { label: "Done", tone: "done" };
+	return { label: "In progress", tone: "doing" };
+}
+
+/**
+ * Feedback on the running app: each entry records the version of main you were looking at. The planner
+ * drafts backlog items from it (pending until you approve them on the Backlog tab); you can also make
+ * a PBI yourself, or decline it.
+ */
+function FeedbackPanel({ wsId, projectId, preview, canEdit, feedback, backlog }: { wsId: string; projectId: string; preview: PreviewInfo; canEdit: boolean; feedback: Record<string, Feedback>; backlog?: Backlog }) {
+	const base = `/api/w/${wsId}/projects/${projectId}/feedback`;
+	const att = useAttachments(wsId);
+	const [text, setText] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	const [pbiFor, setPbiFor] = useState<string>();
+	const list = Object.values(feedback).sort((a, b) => b.at - a.at);
+	const items = Object.values(backlog?.items ?? {});
+	const run = async (work: () => Promise<unknown>) => {
+		setBusy(true);
+		setErr("");
+		try {
+			await work();
+		} catch (e: any) {
+			setErr(e.message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	const submit = () =>
+		run(async () => {
+			await api.post(base, { text: text.trim(), files: att.ids() });
+			setText("");
+			att.clear();
+		});
+	return (
+		<aside className="fb-panel" aria-label="Feedback">
+			{canEdit && (
+				<form
+					className="fb-form"
+					onSubmit={(e) => {
+						e.preventDefault();
+						if (text.trim() || att.ids().length) submit();
+					}}
+				>
+					<div className="label">Your feedback {preview.head && <span className="mono muted">on main @ {preview.head}</span>}</div>
+					<textarea className="input" rows={3} placeholder="What should change? e.g. The total should round to cents" value={text} onChange={(e) => setText(e.target.value)} onPaste={(e) => pasteInto(e, att)} />
+					<AttachmentTray att={att} />
+					<div className="row">
+						<AttachButton att={att} label="📎 Attach" />
+						<span className="grow" />
+						{err && <span className="err">{err}</span>}
+						<button className="btn primary small" disabled={busy || att.uploading || (!text.trim() && !att.ids().length)}>
+							Send to the team
+						</button>
+					</div>
+				</form>
+			)}
+			<div className="fb-list">
+				{!list.length && <div className="muted fb-empty">No feedback yet. What you send goes to the planner, who drafts backlog items for your approval.</div>}
+				{list.map((fb) => {
+					const linked = items.filter((i) => i.feedback === fb.id);
+					const st = feedbackStatus(fb, linked);
+					return (
+						<div key={fb.id} className={`fb-item ${st.tone}`}>
+							<div className="fb-top">
+								<span className="kc-fb mono">{fb.id}</span>
+								<span className={`fb-status ${st.tone}`}>{st.label}</span>
+								<span className="grow" />
+								<span className="mono muted fb-meta">
+									{fb.by} · {timeAgo(fb.at)}
+									{fb.head ? ` · @${fb.head}` : ""}
+								</span>
+							</div>
+							<div className="fb-text">{fb.text}</div>
+							{fb.files?.length ? <div className="fb-files mono">📎 {fb.files.join(", ")}</div> : null}
+							{fb.declined && (
+								<div className="fb-declined">
+									{fb.declined.by}: {fb.declined.reason}
+								</div>
+							)}
+							{linked.length > 0 && (
+								<div className="fb-linked mono">
+									{linked.map((i) => (
+										<span key={i.id} className={`fb-chip ${i.pending ? "pending" : i.status}`} title={`${i.title} · ${i.pending ? "waiting for approval" : i.status}`}>
+											{i.id}
+										</span>
+									))}
+								</div>
+							)}
+							{canEdit && (
+								<div className="fb-actions">
+									{fb.declined ? (
+										<button className="btn ghost small" disabled={busy} onClick={() => run(() => api.post(`${base}/${fb.id}/reopen`, {}))}>
+											Reopen
+										</button>
+									) : (
+										<>
+											<button className="btn ghost small" disabled={busy} onClick={() => setPbiFor(pbiFor === fb.id ? undefined : fb.id)}>
+												Make PBI
+											</button>
+											<button
+												className="btn ghost small"
+												disabled={busy}
+												onClick={() => {
+													const reason = prompt(`Decline ${fb.id}? Say why (the team sees it).`);
+													if (reason?.trim()) run(() => api.post(`${base}/${fb.id}/decline`, { reason }));
+												}}
+											>
+												Decline
+											</button>
+										</>
+									)}
+								</div>
+							)}
+							{pbiFor === fb.id && <MakePbi base={base} fb={fb} backlog={backlog} onDone={() => setPbiFor(undefined)} />}
+						</div>
+					);
+				})}
+			</div>
+		</aside>
+	);
+}
+
+function MakePbi({ base, fb, backlog, onDone }: { base: string; fb: Feedback; backlog?: Backlog; onDone: () => void }) {
+	const features = Object.values(backlog?.items ?? {})
+		.filter((i) => i.type === "feature")
+		.sort((a, b) => a.order - b.order);
+	const [title, setTitle] = useState(fb.text.split("\n")[0]!.slice(0, 80));
+	const [ac, setAc] = useState("");
+	const [parent, setParent] = useState(features[0]?.id ?? "");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	return (
+		<form
+			className="fb-pbi"
+			onSubmit={async (e) => {
+				e.preventDefault();
+				setBusy(true);
+				setErr("");
+				try {
+					await api.post(`${base}/${fb.id}/pbi`, { title, acceptance: ac.split("\n").map((l) => l.trim()).filter(Boolean), parent: parent || undefined });
+					onDone();
+				} catch (e: any) {
+					setErr(e.message);
+				} finally {
+					setBusy(false);
+				}
+			}}
+		>
+			<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="PBI title" autoFocus />
+			<textarea className="input" rows={2} value={ac} onChange={(e) => setAc(e.target.value)} placeholder="Acceptance criteria, one per line" />
+			<div className="row">
+				<select className="input" value={parent} onChange={(e) => setParent(e.target.value)}>
+					<option value="">No feature</option>
+					{features.map((f) => (
+						<option key={f.id} value={f.id}>
+							{f.id} {f.title}
+						</option>
+					))}
+				</select>
+				<span className="grow" />
+				{err && <span className="err">{err}</span>}
+				<button type="button" className="btn ghost small" onClick={onDone}>
+					Cancel
+				</button>
+				<button className="btn primary small" disabled={busy || !title.trim()}>
+					Create PBI
+				</button>
+			</div>
+			<div className="muted fb-hint">The planner adds its tasks; they wait for your approval.</div>
+		</form>
 	);
 }

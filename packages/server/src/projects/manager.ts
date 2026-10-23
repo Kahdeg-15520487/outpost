@@ -7,10 +7,10 @@ import { HttpError, newId, type User } from "../kernel/system-db.ts";
 import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
-import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, type Activity, type AgentRecord, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
+import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
 import { ProjectRepo } from "./repo.ts";
 import { join } from "node:path";
-import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
+import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, isPending, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
 import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 import { BuildScheduler } from "./build.ts";
@@ -50,6 +50,8 @@ export class ProjectManager {
 	readonly coding: Extension;
 	readonly extension: Extension;
 	readonly #leadOnly: any[];
+	/** The agents' project tools by name (tests call them as an agent would). */
+	readonly tools: Map<string, any>;
 	/** conversation id → which project/agent it is. */
 	readonly #byConversation = new Map<string, { projectId: string; key: string }>();
 	readonly #watchers = new Map<string, AgentWatcher>();
@@ -65,6 +67,7 @@ export class ProjectManager {
 		this.previews = new PreviewManager(this);
 		this.coding = createCodingTools();
 		const tools = this.#tools();
+		this.tools = new Map(tools.map((t) => [t.name, t]));
 		this.#leadOnly = tools.filter((t) => ["team_add", "set_stage"].includes(t.name));
 		this.extension = defineExtension({ name: "pios-project", tools });
 	}
@@ -182,6 +185,7 @@ export class ProjectManager {
 
 	/** The user approves the backlog (Backlog tab); the Lead is told to start building. */
 	async approveBacklog(projectId: string, user: User, comment?: string) {
+		await this.assertReady(projectId);
 		const rev = await this.editBacklog(projectId, (b) => {
 			b.approval = Object.fromEntries(Object.entries({ ...b.approval, status: "approved", decidedBy: user.displayName, decidedAt: Date.now(), comment: comment || undefined, revision: b.revision + 1 }).filter(([, v]) => v !== undefined)) as Backlog["approval"];
 			return b.revision + 1;
@@ -222,6 +226,182 @@ export class ProjectManager {
 	async tellLead(projectId: string, text: string) {
 		const state = await this.state(projectId);
 		if (state.agents.lead && !state.agents.lead.removed) await this.deliver(projectId, "lead", { from: "pi-os", fromKey: "pi-os", text, kind: "message" });
+	}
+
+	// ------------------------------------------------------------------ questions and readiness
+
+	/** Nothing gets approved to build while a blocking question is open. */
+	async assertReady(projectId: string) {
+		const open = openBlocking(await this.state(projectId));
+		if (open.length)
+			throw new HttpError(409, `Not ready to build: ${open.length} blocking question${open.length === 1 ? " is" : "s are"} open (${open.map((q) => `${q.agent}: “${clip(q.text, 60)}”`).join("; ")}). Answer or dismiss ${open.length === 1 ? "it" : "them"} on the Overview tab first.`);
+	}
+
+	/** The user switches a question between blocking and non-blocking; the agent hears about it. */
+	async setQuestionBlocking(projectId: string, id: string, blocking: boolean, user: User) {
+		const q = await this.#editQuestion(projectId, id, (q) => {
+			if (q.answeredAt) throw new HttpError(409, "That question is already closed");
+			q.blocking = blocking;
+		});
+		await this.log(projectId, { at: Date.now(), agent: q.agent, kind: "user", text: `${user.displayName} marked ${q.agent}'s question ${blocking ? "blocking" : "non-blocking"}` });
+		await this.deliver(projectId, q.agent, {
+			from: "pi-os",
+			fromKey: "pi-os",
+			kind: "message",
+			text: blocking
+				? `The user marked your question as **blocking**: “${clip(q.text, 200)}”. Don't build on an assumption for it; wait for their answer.`
+				: `The user marked your question as **non-blocking**: “${clip(q.text, 200)}”. Continue with your best judgement, state the assumption you make in your work, and adjust if they answer later.`,
+		});
+	}
+
+	/** The user closes a question without answering it; the agent proceeds on its own judgement. */
+	async dismissQuestion(projectId: string, id: string, user: User, note?: string) {
+		const q = await this.#editQuestion(projectId, id, (q) => {
+			if (q.answeredAt) throw new HttpError(409, "That question is already closed");
+			q.answeredAt = Date.now();
+			q.resolution = "dismissed";
+			q.resolvedBy = user.displayName;
+			if (note) q.note = note;
+		});
+		await this.log(projectId, { at: Date.now(), agent: q.agent, kind: "user", text: `${user.displayName} dismissed ${q.agent}'s question${note ? `: ${clip(note, 120)}` : ""}` });
+		await this.deliver(projectId, q.agent, { from: user.displayName, fromKey: `user:${user.id}`, kind: "message", text: `I'm dismissing your question “${clip(q.text, 200)}”${note ? `: ${note}` : "."} Proceed with your best judgement and record the assumption you make.` });
+	}
+
+	async #editQuestion(projectId: string, id: string, fn: (q: ProjectState["questions"][string]) => void) {
+		let out!: ProjectState["questions"][string];
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			const q = st.questions[id];
+			if (!q) throw new HttpError(404, `No question ${id}`);
+			fn(q);
+			out = JSON.parse(JSON.stringify(q));
+		}, ctx);
+		return out;
+	}
+
+	// ------------------------------------------------------------------ feedback on the running app
+
+	/** Who turns feedback into backlog items: the planner, or the lead when there is none. */
+	async #triager(projectId: string) {
+		const st = await this.state(projectId);
+		const live = st.order.map((k) => st.agents[k]!).filter((a) => a && !a.removed);
+		return live.find((a) => a.role === "planner") ?? live.find((a) => a.role === "lead");
+	}
+
+	/** The user's feedback on the preview: stored with the version they saw, then sent to the team to draft backlog items. */
+	async addFeedback(projectId: string, user: User, text: string, fileIds: string[] = []): Promise<Feedback> {
+		text = text.trim();
+		if (!text && !fileIds.length) throw new HttpError(400, "Write your feedback");
+		const files = await this.attach(projectId, fileIds, user);
+		const info = this.previews.info(projectId);
+		const head = info.head ?? (await this.repo(projectId).head().catch(() => undefined));
+		let fb!: Feedback;
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			st.feedbackSeq = (st.feedbackSeq ?? 0) + 1;
+			fb = { id: `FB-${st.feedbackSeq}`, text: text || `(see ${files.map((f) => f.name).join(", ")})`, by: user.displayName, at: Date.now(), ...(head ? { head } : {}), ...(files.length ? { files: files.map((f) => f.name) } : {}) };
+			st.feedback ??= {};
+			st.feedback[fb.id] = fb;
+			pushActivity(st, { at: Date.now(), kind: "user", text: `${user.displayName} gave feedback ${fb.id}${head ? ` on main @ ${head}` : ""}: ${clip(fb.text, 140)}` });
+		}, ctx);
+		await this.#sendFeedback(projectId, fb, files);
+		return fb;
+	}
+
+	async #sendFeedback(projectId: string, fb: Feedback, files: Attached[] = []) {
+		const t = await this.#triager(projectId);
+		if (!t) return;
+		await this.deliver(projectId, t.key, {
+			from: "pi-os",
+			fromKey: "pi-os",
+			kind: "message",
+			files,
+			text: `**Feedback ${fb.id}** from ${fb.by} on the running app${fb.head ? ` (main @ ${fb.head})` : ""}:\n\n${fb.text}\n\nTurn it into backlog items: add the PBI(s), with acceptance criteria, and their tasks with backlog_add, setting \`feedback: "${fb.id}"\` on every item. Put PBIs under the feature they belong to, or add a feature. The items wait as pending until the user approves them, so finish with backlog_request_approval and a short summary. If it needs no change (it already works, it's out of scope, or it's a misunderstanding), call feedback_decline with the reason instead. If it's unclear, ask the user (ask_user, blocking).`,
+		});
+	}
+
+	/** The user turns feedback into a PBI themselves; the team adds its tasks. */
+	async pbiFromFeedback(projectId: string, fbId: string, user: User, input: { title: string; description?: string; acceptance?: string[]; parent?: string }) {
+		const fb = (await this.state(projectId)).feedback?.[fbId];
+		if (!fb) throw new HttpError(404, `No feedback ${fbId}`);
+		if (!input.title?.trim()) throw new HttpError(400, "Give the PBI a title");
+		const [made] = await this.editBacklog(projectId, (b) => {
+			if (input.parent && b.items[input.parent]?.type !== "feature") throw new HttpError(400, "A PBI's parent must be a feature");
+			return addItems(b, [{ type: "pbi", title: input.title.trim(), description: input.description || fb.text, acceptance: input.acceptance?.filter(Boolean), parent: input.parent || undefined, feedback: fbId }], `user:${user.displayName}`);
+		});
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} created ${made!.id} “${clip(made!.title, 80)}” from ${fbId}` });
+		const t = await this.#triager(projectId);
+		if (t)
+			await this.deliver(projectId, t.key, {
+				from: "pi-os",
+				fromKey: "pi-os",
+				kind: "message",
+				text: `${user.displayName} turned **${fbId}** into **${made!.id} “${made!.title}”** themselves. Add its tasks (parent ${made!.id}, \`feedback: "${fbId}"\`), and don't add another PBI for ${fbId} unless it needs one. Then backlog_request_approval.`,
+			});
+		return made!;
+	}
+
+	/** Feedback that needs no change (by the team or the user). Its pending drafts are removed. */
+	async declineFeedback(projectId: string, fbId: string, by: { name: string; agent?: string; user?: User }, reason: string) {
+		if (!reason.trim()) throw new HttpError(400, "Say why");
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			const fb = st.feedback?.[fbId];
+			if (!fb) throw new HttpError(404, `No feedback ${fbId}`);
+			fb.declined = { by: by.name, reason, at: Date.now() };
+			pushActivity(st, { at: Date.now(), ...(by.agent ? { agent: by.agent } : {}), kind: by.agent ? "question" : "user", text: `${by.name} declined ${fbId}: ${clip(reason, 140)}` });
+		}, ctx);
+		const removed = await this.editBacklog(projectId, (b) => {
+			const ids = Object.values(b.items).filter((i) => i.feedback === fbId && i.pending).map((i) => i.id);
+			return ids.flatMap((id) => (b.items[id] ? removeWithChildren(b, id) : []));
+		});
+		if (by.user) {
+			const t = await this.#triager(projectId);
+			if (t) await this.deliver(projectId, t.key, { from: by.name, fromKey: `user:${by.user.id}`, kind: "message", text: `I'm declining ${fbId}: ${reason}${removed.length ? ` (removed its pending items ${removed.join(", ")})` : ""}. No backlog work for it.` });
+		}
+		return removed;
+	}
+
+	/** The user takes declined feedback back up; it goes to the team again. */
+	async reopenFeedback(projectId: string, fbId: string, user: User) {
+		let fb!: Feedback;
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			const f = st.feedback?.[fbId];
+			if (!f) throw new HttpError(404, `No feedback ${fbId}`);
+			delete f.declined;
+			fb = JSON.parse(JSON.stringify(f));
+			pushActivity(st, { at: Date.now(), kind: "user", text: `${user.displayName} reopened ${fbId}` });
+		}, ctx);
+		await this.#sendFeedback(projectId, fb);
+	}
+
+	/** The user approves pending items (all, or one feedback's); the scheduler can then build them. */
+	async approvePending(projectId: string, user: User, feedback?: string) {
+		await this.assertReady(projectId);
+		const ids = await this.editBacklog(projectId, (b) => {
+			const items = Object.values(b.items).filter((i) => i.pending && (!feedback || i.feedback === feedback));
+			if (!items.length) throw new HttpError(409, "Nothing is waiting for approval");
+			for (const i of items) {
+				delete i.pending;
+				i.updatedAt = Date.now();
+			}
+			if (!Object.values(b.items).some((i) => i.pending)) delete b.pendingRequest;
+			return items.map((i) => i.id);
+		});
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} approved ${ids.join(", ")}${feedback ? ` (from ${feedback})` : ""}` });
+		const t = await this.#triager(projectId);
+		if (t) await this.deliver(projectId, t.key, { from: "pi-os", fromKey: "pi-os", kind: "message", text: `The user approved ${ids.join(", ")}${feedback ? ` (from ${feedback})` : ""}. pi-os schedules the tasks now.` });
+		return ids;
+	}
+
+	/** The user sends pending items back with a comment. */
+	async pendingChanges(projectId: string, user: User, comment: string, feedback?: string) {
+		if (!comment.trim()) throw new HttpError(400, "Say what should change");
+		await this.editBacklog(projectId, (b) => void delete b.pendingRequest);
+		await this.log(projectId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for changes${feedback ? ` to ${feedback}'s items` : " to the pending items"}: ${clip(comment, 140)}` });
+		const t = await this.#triager(projectId);
+		if (t) await this.deliver(projectId, t.key, { from: user.displayName, fromKey: `user:${user.id}`, kind: "message", text: `Changes requested to the pending backlog items${feedback ? ` from ${feedback}` : ""}:\n\n${comment}\n\nRevise them with the backlog tools, then backlog_request_approval again.` });
 	}
 
 	// ------------------------------------------------------------------ lifecycle
@@ -318,13 +498,20 @@ export class ProjectManager {
 	}
 
 	/** The user writes to an agent from its tile; it also answers any question that agent asked. */
-	async userMessage(projectId: string, key: string, user: User, text: string, fileIds: string[] = []) {
+	async userMessage(projectId: string, key: string, user: User, text: string, fileIds: string[] = [], questionId?: string) {
 		const files = await this.attach(projectId, fileIds, user);
 		if (!text.trim()) text = files.length === 1 ? `(attached ${files[0]!.name})` : `(attached ${files.length} files)`;
 		await this.deliver(projectId, key, { from: user.displayName, fromKey: `user:${user.id}`, text, kind: "user", files });
 		await this.ws.harness.commit(async (tx) => {
 			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
-			for (const q of Object.values(st.questions)) if (q.agent === key && !q.answeredAt) q.answeredAt = Date.now();
+			// An answer closes that question; any other message closes what the agent is stopped on (its
+			// blocking questions). Non-blocking questions stay open until answered or dismissed.
+			for (const q of Object.values(st.questions))
+				if (q.agent === key && !q.answeredAt && (questionId ? q.id === questionId : isBlocking(q))) {
+					q.answeredAt = Date.now();
+					q.resolution = "answered";
+					q.resolvedBy = user.displayName;
+				}
 			pushActivity(st, { at: Date.now(), agent: key, kind: "user", text: `${user.displayName} → ${st.agents[key]?.name ?? key}: ${clip(text, 140)}` });
 		}, ctx);
 	}
@@ -492,19 +679,27 @@ export class ProjectManager {
 			}),
 			defineTool({
 				name: "ask_user",
-				description: "Ask the user a question only they can answer. It shows on your tile and in the project's activity. End your turn after asking; the answer arrives as a message.",
-				parameters: Type.Object({ question: Type.String() }),
+				description:
+					"Ask the user a question only they can answer. It shows on your tile and the Overview tab. blocking (default): you can't go on without the answer; your turn ends and the answer arrives as a message, and nothing can be approved to build while it's open. Non-blocking: give the assumption you'll work with and keep going; adjust if they answer differently.",
+				parameters: Type.Object({
+					question: Type.String(),
+					blocking: Type.Optional(Type.Boolean({ description: "default true" })),
+					assumption: Type.Optional(Type.String({ description: "non-blocking questions: what you'll assume meanwhile (required)" })),
+				}),
 				replay: "safe",
 				execute: async (args, api) => {
 					const { projectId, me } = await this.#caller(api);
+					const blocking = args.blocking !== false;
+					if (!blocking && !args.assumption?.trim()) throw new Error("A non-blocking question needs the assumption you'll work with meanwhile (assumption).");
 					await this.ws.harness.commit(async (tx) => {
 						const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
 						const id = `q_${api.taskId}`;
 						if (st.questions[id]) return;
-						st.questions[id] = { id, agent: me.key, text: args.question, at: Date.now() };
-						pushActivity(st, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks: ${clip(args.question, 160)}` });
+						st.questions[id] = { id, agent: me.key, text: args.question, at: Date.now(), blocking, ...(blocking ? {} : { assumption: args.assumption!.trim() }) };
+						pushActivity(st, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks${blocking ? "" : " (non-blocking)"}: ${clip(args.question, 160)}` });
 					}, ctx);
-					return { ...text("Question posted to the user. End your turn now; their answer will arrive as a message."), control: { terminate: true } };
+					if (!blocking) return text(`Logged as non-blocking. Continue with your assumption (${clip(args.assumption!, 160)}) and record it where it matters (requirements, a decision record). If the user answers differently, their answer arrives as a message.`);
+					return { ...text("Blocking question posted to the user. End your turn now; their answer will arrive as a message."), control: { terminate: true } };
 				},
 			}),
 			defineTool({
@@ -611,6 +806,17 @@ export class ProjectManager {
 				},
 			}),
 			defineTool({
+				name: "feedback_decline",
+				description: "Lead or planner: the user's feedback (FB-n) needs no backlog change (it already works, it's out of scope, or it's a misunderstanding). Explain why; the user sees it and can reopen it.",
+				parameters: Type.Object({ feedback: Type.String(), reason: Type.String() }),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					if (!["lead", "planner"].includes(me.role)) throw new Error("Only the lead or the planner declines feedback.");
+					const removed = await this.declineFeedback(projectId, args.feedback, { name: me.name, agent: me.key }, args.reason);
+					return text(`${args.feedback} declined.${removed.length ? ` Removed its pending items ${removed.join(", ")}.` : ""}`);
+				},
+			}),
+			defineTool({
 				name: "preview",
 				description: "The live preview: pi-os runs the app from main (per .pios/project.json) and shows it in the App tab. Get its status and recent logs, or restart it after fixing the run config.",
 				parameters: Type.Object({ action: Type.Optional(Type.Union([Type.Literal("status"), Type.Literal("restart")])) }),
@@ -635,6 +841,7 @@ export class ProjectManager {
 			deps: Type.Optional(Type.Array(Type.String(), { description: "items (ids or refs) that must be done first" })),
 			area: Type.Optional(Type.String({ description: "tasks: the part of app/ they touch, e.g. app/src/api" })),
 			estimate: Type.Optional(Type.Union([Type.Literal("S"), Type.Literal("M"), Type.Literal("L")])),
+			feedback: Type.Optional(Type.String({ description: "the user feedback (FB-n) this item comes from; such items wait for the user's approval" })),
 		});
 		return [
 			defineTool({
@@ -643,10 +850,18 @@ export class ProjectManager {
 					"Add backlog items: features → PBIs (with acceptance criteria) → tasks (one developer, one sitting; with dependencies and area). Add many in one call; use `ref` to link items created in the same call. Returns their ids.",
 				parameters: Type.Object({ items: Type.Array(ItemInput, { minItems: 1, maxItems: 200 }) }),
 				execute: async (args, api) => {
-					const { projectId, me } = await this.#caller(api);
-					const created = await this.editBacklog(projectId, (b) => addItems(b, args.items as ItemInput[], me.key));
+					const { projectId, me, state } = await this.#caller(api);
+					const items = args.items as ItemInput[];
+					for (const fb of new Set(items.map((i) => i.feedback).filter(Boolean) as string[])) {
+						if (!state.feedback?.[fb]) throw new Error(`No feedback ${fb}.`);
+						if (state.feedback[fb]!.declined) throw new Error(`${fb} was declined; nothing to add for it.`);
+					}
+					// Feedback items, and anything added once the backlog is approved, wait for the user's approval.
+					const created = await this.editBacklog(projectId, (b) => addItems(b, items, me.key, { pending: items.some((i) => i.feedback) || b.approval.status === "approved" }));
 					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} added ${created.length} backlog item${created.length === 1 ? "" : "s"}` });
-					return text(created.map((c) => `${c.id} ${c.title}${c.parent ? ` (under ${c.parent})` : ""}`).join("\n"));
+					const b = await this.backlog(projectId);
+					const pending = created.some((c) => b.items[c.id]?.pending);
+					return text(created.map((c) => `${c.id} ${c.title}${c.parent ? ` (under ${c.parent})` : ""}`).join("\n") + (pending ? "\n\nThese wait as pending until the user approves them: call backlog_request_approval when they're complete." : ""));
 				},
 			}),
 			defineTool({
@@ -720,8 +935,18 @@ export class ProjectManager {
 					"Lead or planner: submit the backlog for the user's approval. They review it as a board in the Backlog tab and approve or request changes; you'll get their decision as a message. Don't start the build before approval, and don't also ask with ask_user.",
 				parameters: Type.Object({ summary: Type.String({ description: "a few lines: scope, how many features/PBIs/tasks, how the work splits across developers, open points" }) }),
 				execute: async (args, api) => {
-					const { projectId, me } = await this.#caller(api);
+					const { projectId, me, state } = await this.#caller(api);
 					if (!["lead", "planner"].includes(me.role)) throw new Error("Only the lead or the planner requests backlog approval.");
+					const blockers = openBlocking(state);
+					const readiness = blockers.length ? ` Note: ${blockers.length} blocking question${blockers.length === 1 ? " is" : "s are"} still open; the user can't approve until ${blockers.length === 1 ? "it's" : "they're"} answered.` : "";
+					const current = await this.backlog(projectId);
+					if (current.approval.status === "approved") {
+						const pending = Object.values(current.items).filter((i) => i.pending);
+						if (!pending.length) throw new Error("The backlog is approved and nothing is pending. Items you add now (or from feedback) become pending; request approval after adding them.");
+						await this.editBacklog(projectId, (b) => void (b.pendingRequest = { summary: args.summary, requestedBy: me.name, requestedAt: Date.now() }));
+						await this.log(projectId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve ${pending.length} new backlog item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) — see the Backlog tab` });
+						return { ...text(`Submitted ${pending.length} pending item(s). The user approves them in the Backlog tab; their decision arrives as a message. End your turn now.${readiness}`), control: { terminate: true } };
+					}
 					const n = await this.editBacklog(projectId, (b) => {
 						const tasks = Object.values(b.items).filter((i) => i.type === "task").length;
 						if (!tasks) throw new Error("The backlog has no tasks yet. Add them with backlog_add first.");
@@ -729,7 +954,7 @@ export class ProjectManager {
 						return tasks;
 					});
 					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the backlog (${n} tasks) — see the Backlog tab` });
-					return { ...text("Submitted. The user reviews it in the Backlog tab; their decision arrives as a message. End your turn now."), control: { terminate: true } };
+					return { ...text(`Submitted. The user reviews it in the Backlog tab; their decision arrives as a message. End your turn now.${readiness}`), control: { terminate: true } };
 				},
 			}),
 		];

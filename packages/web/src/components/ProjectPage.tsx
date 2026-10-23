@@ -4,7 +4,7 @@ import "../project-repo.css";
 import "../project-build.css";
 import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, type AgentRecord, type BacklogItem, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
+import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
@@ -85,8 +85,11 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 	});
 	const canEdit = ws.role !== "viewer";
 	const agents = state.order.map((k) => state.agents[k]!).filter((a) => a && !a.removed);
-	const openQuestions = Object.values(state.questions).filter((q) => !q.answeredAt);
-	const asking = new Set(openQuestions.map((q) => q.agent));
+	const openQuestions = Object.values(state.questions)
+		.filter((q) => !q.answeredAt)
+		.sort((a, b) => Number(isBlocking(b)) - Number(isBlocking(a)) || a.at - b.at);
+	// Non-blocking questions don't stop the agent, so only blocking ones make its tile say "needs you".
+	const asking = new Set(openQuestions.filter(isBlocking).map((q) => q.agent));
 	const half = Math.ceil(agents.length / 2);
 	const current = (TABS.some((t) => t.id === tab) ? tab : "overview") as Tab;
 	const totals = Object.values(summaries).reduce((a, s) => ({ tokens: a.tokens + (s.tokens ?? 0), cost: a.cost + (s.cost ?? 0) }), { tokens: 0, cost: 0 });
@@ -141,9 +144,9 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 					<span className="va-dot" /> The backlog is waiting for your approval — open Backlog
 				</a>
 			)}
-			{openQuestions.length > 0 && current !== "overview" && (
+			{openQuestions.some(isBlocking) && current !== "overview" && (
 				<a className="viewer-ask" href={projectHref(ws.id, projectId)}>
-					<span className="va-dot" /> {state.agents[openQuestions[0]!.agent]?.name ?? "An agent"} is waiting for your answer — open Overview
+					<span className="va-dot" /> {state.agents[openQuestions.find(isBlocking)!.agent]?.name ?? "An agent"} is waiting for your answer — open Overview
 				</a>
 			)}
 			<div className="viewer-body">
@@ -161,8 +164,8 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 				{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
 				{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 				{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-				{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} />}
-				{current === "app" && <PreviewTab wsId={ws.id} projectId={projectId} preview={live.preview} canEdit={canEdit} />}
+				{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} blockers={openQuestions.filter(isBlocking)} feedback={state.feedback ?? {}} />}
+				{current === "app" && <PreviewTab wsId={ws.id} projectId={projectId} preview={live.preview} canEdit={canEdit} feedback={state.feedback ?? {}} backlog={live.backlog} />}
 				{current === "repo" && <RepoTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 			</div>
 		</section>
@@ -586,6 +589,7 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 				<div className="label">Goal</div>
 				{project.goal}
 			</blockquote>
+			<Readiness questions={questions} />
 			{questions.length > 0 && (
 				<div className="ov-questions">
 					{questions.map((q) => (
@@ -612,36 +616,71 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 	);
 }
 
+/** Whether the team may be approved to build: not while a blocking question is open. */
+function Readiness({ questions }: { questions: Question[] }) {
+	const blocking = questions.filter(isBlocking).length;
+	const other = questions.length - blocking;
+	if (!questions.length) return null;
+	return (
+		<div className={`ov-ready ${blocking ? "no" : "yes"}`}>
+			<i />
+			{blocking ? (
+				<span>
+					<b>Not ready to build:</b> {blocking} blocking question{blocking === 1 ? "" : "s"} open. Nothing can be approved until {blocking === 1 ? "it's" : "they're"} answered or dismissed.
+				</span>
+			) : (
+				<span>
+					<b>No blocking questions.</b> {other} non-blocking question{other === 1 ? "" : "s"} open; the team works on its stated assumption{other === 1 ? "" : "s"}.
+				</span>
+			)}
+		</div>
+	);
+}
+
 function QuestionCard({ ws, projectId, q, agent, canEdit, onOpen }: { ws: Workspace; projectId: string; q: Question; agent?: AgentRecord; canEdit: boolean; onOpen: () => void }) {
 	const [answer, setAnswer] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
 	const att = useAttachments(ws.id);
-	const send = async (text: string) => {
+	const base = `/api/w/${ws.id}/projects/${projectId}`;
+	const blocking = isBlocking(q);
+	const run = async (work: () => Promise<unknown>) => {
 		setBusy(true);
 		setErr("");
 		try {
-			await api.post(`/api/w/${ws.id}/projects/${projectId}/agents/${q.agent}/messages`, { text, files: att.ids() });
-			setAnswer("");
-			att.clear();
+			await work();
 		} catch (e: any) {
 			setErr(e.message);
 		} finally {
 			setBusy(false);
 		}
 	};
+	const send = (text: string) =>
+		run(async () => {
+			await api.post(`${base}/agents/${q.agent}/messages`, { text, files: att.ids(), questionId: q.id });
+			setAnswer("");
+			att.clear();
+		});
 	const hasFiles = att.ids().length > 0;
 	return (
-		<div className="q-card" style={{ ["--role" as any]: agent ? roleColor(agent) : "var(--signal)" }}>
+		<div className={`q-card ${blocking ? "blocking" : "nonblocking"}`} style={{ ["--role" as any]: agent ? roleColor(agent) : "var(--signal)" }}>
 			<div className="q-who">
 				<span className="at-glyph">{initials(agent?.name ?? "?")}</span>
-				<b>{agent?.name ?? q.agent}</b> needs your answer
+				<b>{agent?.name ?? q.agent}</b> {blocking ? "needs your answer" : "asks (meanwhile it keeps going)"}
+				<span className={`q-flag ${blocking ? "blocking" : "nonblocking"}`} title={blocking ? "The agent waits for your answer, and nothing can be approved to build until it's answered" : "The agent continues on its assumption"}>
+					{blocking ? "Blocking" : "Non-blocking"}
+				</span>
 				<span className="mono muted">· {timeAgo(q.at)}</span>
 				<button className="btn ghost small" onClick={onOpen} style={{ marginLeft: "auto" }}>
 					Open transcript
 				</button>
 			</div>
 			<Markdown text={q.text} />
+			{!blocking && q.assumption && (
+				<div className="q-assume">
+					<span className="label">Assuming</span> {q.assumption}
+				</div>
+			)}
 			{canEdit && (
 				<form
 					className="q-answer"
@@ -658,6 +697,18 @@ function QuestionCard({ ws, projectId, q, agent, canEdit, onOpen }: { ws: Worksp
 							Approve
 						</button>
 						<AttachButton att={att} label="📎 Attach" />
+						<button type="button" className="btn ghost small" disabled={busy} onClick={() => run(() => api.patch(`${base}/questions/${q.id}`, { blocking: !blocking }))} title={blocking ? "Let the agent continue on its best assumption" : "Make the agent wait for your answer, and hold approvals"}>
+							{blocking ? "Not blocking" : "Make blocking"}
+						</button>
+						<button
+							type="button"
+							className="btn ghost small"
+							disabled={busy}
+							onClick={() => run(() => api.post(`${base}/questions/${q.id}/dismiss`, { note: answer.trim() || undefined }))}
+							title="Close it without an answer; the agent proceeds on its own judgement (your text, if any, goes along as a note)"
+						>
+							Dismiss
+						</button>
 						<span className="grow" />
 						{err && <span className="err">{err}</span>}
 						<button className="btn primary small" disabled={busy || att.uploading || (!answer.trim() && !hasFiles)}>

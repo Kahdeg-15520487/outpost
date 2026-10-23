@@ -116,15 +116,19 @@ export const api = {
 export type ProjectStage = "kickoff" | "discovery" | "design" | "planning" | "build" | "iterate" | "done";
 export type ProjectMeta = { id: string; name: string; goal: string; stage: ProjectStage; createdAt: number; createdBy: string; model: ModelRef; archived?: boolean };
 export type AgentRecord = { key: string; name: string; role: string; conversationId: string; brief: string; model?: ModelRef; createdAt: number; removed?: boolean };
-export type Question = { id: string; agent: string; text: string; at: number; answeredAt?: number };
+export type Question = { id: string; agent: string; text: string; at: number; blocking?: boolean; assumption?: string; answeredAt?: number; resolution?: "answered" | "dismissed"; resolvedBy?: string; note?: string };
+/** Questions from before the flag existed are blocking. */
+export const isBlocking = (q: Question) => q.blocking !== false;
+export type Feedback = { id: string; text: string; by: string; at: number; head?: string; files?: string[]; declined?: { by: string; reason: string; at: number } };
 export type Activity = { at: number; agent?: string; kind: "team" | "message" | "publish" | "question" | "stage" | "user" | "error"; text: string };
 export type AttachmentRecord = { name: string; fileId: string; original: string; kind: string; mime: string; size: number; at: number; by: string };
-export type ProjectState = { agents: Record<string, AgentRecord>; order: string[]; questions: Record<string, Question>; activity: Activity[]; attachments?: Record<string, AttachmentRecord> };
+export type ProjectState = { agents: Record<string, AgentRecord>; order: string[]; questions: Record<string, Question>; activity: Activity[]; attachments?: Record<string, AttachmentRecord>; feedback?: Record<string, Feedback>; feedbackSeq?: number };
 export type AgentSummary = { busy: boolean; status: "idle" | "thinking" | "writing" | "tool" | "error"; activity?: string; tail: string; tokens: number; cost: number; queued: number; error?: string; updatedAt: number };
 
 export type ItemType = "feature" | "pbi" | "task";
 export type ItemStatus = "todo" | "doing" | "review" | "done" | "blocked";
 export type BacklogItem = { id: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; status: ItemStatus; assignee?: string; deps: string[]; area?: string; estimate?: "S" | "M" | "L"; order: number; createdBy: string; updatedAt: number;
+	feedback?: string; pending?: boolean;
 	attempt?: number; briefed?: boolean; reviewer?: string; reviewRound?: number; reviewBriefed?: boolean;
 	submitted?: { commit: string; summary: string; at: number; by: string; files: string[] }; merged?: string; nudges?: number;
 	history?: { at: number; by: string; text: string }[];
@@ -134,4 +138,4 @@ export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "r
 export type PreviewInfo = { status: PreviewStatus; port?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
 export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "pi-os" };
 export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
-export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState };
+export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState; pendingRequest?: { summary: string; requestedBy: string; requestedAt: number } };

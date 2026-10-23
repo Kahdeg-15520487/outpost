@@ -105,6 +105,10 @@ The **Backlog** tab is a Kanban board (To do / In progress / Review / Done) of t
 - An agent that stops mid-task is reminded twice, then the task is marked blocked and the Lead is told.
 - The Backlog tab shows the progress, with a Pause / Resume button. Each task's panel shows what was submitted and its history. Tiles show the task each agent is on.
 
+**Questions and readiness.** An agent's question is *blocking* (it waits for you) or *non-blocking* (it states its assumption and carries on). While a blocking question is open, nothing can be approved to build. Answer, dismiss, or re-flag questions on the Overview tab.
+
+**Feedback.** The App tab's Feedback panel sends your feedback on the running app to the Planner as FB-n, tied to the version you saw. The Planner drafts PBIs and tasks for it. They, and anything agents add after you approved the backlog, wait as **pending** until you approve them on the Backlog tab. You can also make a PBI from feedback yourself, or decline it.
+
 The **App** tab runs the product from `main`:
 - It uses `.pios/project.json`, which the architect writes: `install`, `dev` with `$PORT`, and `readyPath`.
 - It runs in its own checkout, on a free port, with logs.
@@ -169,10 +173,11 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | Suite | Covers |
 |---|---|
 | `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
+| `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |
 | `render` | `gadget_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
-| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview) |
+| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
 
 Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 

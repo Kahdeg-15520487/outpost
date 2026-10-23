@@ -1,6 +1,6 @@
 import "../backlog.css";
 import { useMemo, useState } from "react";
-import { api, type AgentRecord, type Backlog, type BacklogItem, type ItemStatus } from "../api";
+import { api, type AgentRecord, type Backlog, type BacklogItem, type Feedback, type ItemStatus, type Question } from "../api";
 import { timeAgo } from "../store";
 import { Markdown } from "./bits";
 
@@ -45,7 +45,7 @@ function useBacklogCtx(b: Backlog): Ctx {
 	}, [b]);
 }
 
-export function BacklogTab({ wsId, projectId, backlog, agents, canEdit }: { wsId: string; projectId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean }) {
+export function BacklogTab({ wsId, projectId, backlog, agents, canEdit, blockers = [], feedback = {} }: { wsId: string; projectId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean; blockers?: Question[]; feedback?: Record<string, Feedback> }) {
 	const ctx = useBacklogCtx(backlog);
 	const [view, setView] = useState<"board" | "structure">("board");
 	const [filter, setFilter] = useState<string>();
@@ -69,7 +69,8 @@ export function BacklogTab({ wsId, projectId, backlog, agents, canEdit }: { wsId
 
 	return (
 		<div className="bl">
-			<ApprovalBar base={base} backlog={backlog} canEdit={canEdit} />
+			<ApprovalBar base={base} backlog={backlog} canEdit={canEdit} blockers={blockers} />
+			{backlog.approval.status === "approved" && <PendingBar base={base} backlog={backlog} canEdit={canEdit} blockers={blockers} feedback={feedback} onOpen={setOpen} />}
 			<div className="bl-toolbar">
 				<div className="bl-seg" role="tablist">
 					<button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>
@@ -129,7 +130,7 @@ export function BacklogTab({ wsId, projectId, backlog, agents, canEdit }: { wsId
 				<Structure ctx={ctx} filter={filter} onOpen={setOpen} />
 			)}
 
-			{open && backlog.items[open] && <ItemPanel key={open} item={backlog.items[open]!} ctx={ctx} agents={agents} canEdit={canEdit} onPatch={(p) => patch(open, p)} onDelete={async () => {
+			{open && backlog.items[open] && <ItemPanel key={open} item={backlog.items[open]!} ctx={ctx} agents={agents} canEdit={canEdit} feedback={feedback} onPatch={(p) => patch(open, p)} onDelete={async () => {
 				const n = Object.values(backlog.items).filter((i) => i.parent === open).length;
 				if (!confirm(`Remove ${open}${n ? " and everything under it" : ""}?`)) return;
 				await api.del(`${base}/${open}`).catch((e) => alert(e.message));
@@ -139,7 +140,24 @@ export function BacklogTab({ wsId, projectId, backlog, agents, canEdit }: { wsId
 	);
 }
 
-function ApprovalBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; canEdit: boolean }) {
+/** "Not ready" note: open blocking questions hold every approval to build. */
+function Blockers({ blockers }: { blockers: Question[] }) {
+	if (!blockers.length) return null;
+	return (
+		<div className="bl-blockers">
+			<b>Not ready to build:</b> {blockers.length} blocking question{blockers.length === 1 ? " is" : "s are"} open. Answer or dismiss {blockers.length === 1 ? "it" : "them"} on the Overview tab first.
+			<ul>
+				{blockers.map((q) => (
+					<li key={q.id}>
+						<span className="mono">@{q.agent}</span> {q.text.length > 140 ? `${q.text.slice(0, 139)}…` : q.text}
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+function ApprovalBar({ base, backlog, canEdit, blockers }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[] }) {
 	const a = backlog.approval;
 	const [changes, setChanges] = useState(false);
 	const [comment, setComment] = useState("");
@@ -177,12 +195,13 @@ function ApprovalBar({ base, backlog, canEdit }: { base: string; backlog: Backlo
 						<button className="btn small" disabled={busy} onClick={() => setChanges(true)}>
 							Request changes
 						</button>
-						<button className="btn primary small" disabled={busy} onClick={() => act("approve", {})}>
+						<button className="btn primary small" disabled={busy || blockers.length > 0} onClick={() => act("approve", {})} title={blockers.length ? "Blocking questions are open" : undefined}>
 							Approve backlog
 						</button>
 					</div>
 				)}
 			</div>
+			<Blockers blockers={blockers} />
 			{changes && (
 				<form
 					className="bl-ap-changes"
@@ -202,6 +221,106 @@ function ApprovalBar({ base, backlog, canEdit }: { base: string; backlog: Backlo
 					</div>
 				</form>
 			)}
+		</div>
+	);
+}
+
+/**
+ * After approval: items the team drafted from feedback (or added since) wait here for the user's
+ * approval, grouped by feedback. pi-os builds none of them before that.
+ */
+function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[]; feedback: Record<string, Feedback>; onOpen: (id: string) => void }) {
+	const [busy, setBusy] = useState(false);
+	const [changes, setChanges] = useState<string | null>(null);
+	const [comment, setComment] = useState("");
+	const pending = Object.values(backlog.items)
+		.filter((i) => i.pending)
+		.sort(byOrder);
+	if (!pending.length) return null;
+	const groups = new Map<string, BacklogItem[]>();
+	for (const i of pending) groups.set(i.feedback ?? "", [...(groups.get(i.feedback ?? "") ?? []), i]);
+	const act = async (path: string, body: object) => {
+		setBusy(true);
+		try {
+			await api.post(`${base}/${path}`, body);
+			setChanges(null);
+			setComment("");
+		} catch (e: any) {
+			alert(e.message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	const r = backlog.pendingRequest;
+	return (
+		<div className="bl-approval pending bl-pending">
+			<div className="bl-ap-main">
+				<div>
+					<b>
+						{pending.length} new item{pending.length === 1 ? "" : "s"} waiting for your approval
+					</b>
+					{r ? (
+						<span className="muted">
+							{" "}
+							· {r.requestedBy} {timeAgo(r.requestedAt)}
+						</span>
+					) : (
+						<span className="muted"> · the team is still drafting</span>
+					)}
+					{r?.summary && <div className="bl-ap-summary">{r.summary}</div>}
+				</div>
+			</div>
+			{[...groups].map(([fb, items]) => (
+				<div key={fb || "-"} className="pd-group">
+					<div className="pd-head">
+						{fb ? (
+							<>
+								<span className="kc-fb mono">{fb}</span>
+								<span className="pd-fb">{feedback[fb]?.text ?? ""}</span>
+							</>
+						) : (
+							<span className="pd-fb muted">Added after the backlog was approved</span>
+						)}
+						{canEdit && (
+							<span className="pd-actions">
+								<button className="btn small" disabled={busy} onClick={() => setChanges(fb)}>
+									Request changes
+								</button>
+								<button className="btn primary small" disabled={busy || blockers.length > 0} title={blockers.length ? "Blocking questions are open" : undefined} onClick={() => act("approve-pending", fb ? { feedback: fb } : {})}>
+									Approve{groups.size > 1 ? " these" : ""}
+								</button>
+							</span>
+						)}
+					</div>
+					<div className="pd-items">
+						{items.map((i) => (
+							<button key={i.id} className="ip-link mono" onClick={() => onOpen(i.id)}>
+								{i.id} <span>{i.title}</span>
+							</button>
+						))}
+					</div>
+					{changes === fb && (
+						<form
+							className="bl-ap-changes"
+							onSubmit={(e) => {
+								e.preventDefault();
+								if (comment.trim()) act("pending-changes", { comment, ...(fb ? { feedback: fb } : {}) });
+							}}
+						>
+							<textarea className="input" rows={2} autoFocus placeholder="What should change?" value={comment} onChange={(e) => setComment(e.target.value)} />
+							<div className="row" style={{ justifyContent: "flex-end" }}>
+								<button type="button" className="btn ghost small" onClick={() => setChanges(null)}>
+									Cancel
+								</button>
+								<button className="btn primary small" disabled={busy || !comment.trim()}>
+									Send to the team
+								</button>
+							</div>
+						</form>
+					)}
+				</div>
+			))}
+			<Blockers blockers={blockers} />
 		</div>
 	);
 }
@@ -239,6 +358,7 @@ function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; 
 						<>
 							{n("doing")} in progress · {n("review")} in review
 							{n("blocked") > 0 && <b className="bb-blocked"> · {n("blocked")} blocked</b>} · {done}/{tasks.length} merged
+							{tasks.some((t) => t.pending) && ` · ${tasks.filter((t) => t.pending).length} waiting for approval`}
 						</>
 					)}
 				</span>
@@ -267,7 +387,7 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 	const waiting = t.deps.filter((d) => ctx.b.items[d] && ctx.b.items[d]!.status !== "done");
 	return (
 		<button
-			className={`kb-card ${t.status}`}
+			className={`kb-card ${t.status} ${t.pending || (p?.pending ?? false) ? "pending" : ""}`}
 			style={{ ["--fc" as any]: ctx.color(f?.id) }}
 			draggable={canEdit}
 			onDragStart={(e) => {
@@ -279,10 +399,12 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 			<div className="kc-top">
 				<span className="kc-id mono">{t.id}</span>
 				{f && <span className="kc-feature">{f.title}</span>}
+				{t.feedback && <span className="kc-fb mono" title={`From feedback ${t.feedback}`}>{t.feedback}</span>}
 				{t.estimate && <span className="kc-est mono">{t.estimate}</span>}
 			</div>
 			<div className="kc-title">{t.title}</div>
 			{p && <div className="kc-pbi">{p.id} · {p.title}</div>}
+			{(t.pending || p?.pending) && <div className="kc-pending">waiting for your approval</div>}
 			<div className="kc-foot">
 				{t.deps.length > 0 && (
 					<span className={`kc-deps mono ${waiting.length ? "waiting" : ""}`} title={waiting.length ? `Waiting for ${waiting.join(", ")}` : "Dependencies done"}>
@@ -364,7 +486,7 @@ function Structure({ ctx, filter, onOpen }: { ctx: Ctx; filter?: string; onOpen:
 	);
 }
 
-function ItemPanel({ item, ctx, agents, canEdit, onPatch, onDelete, onOpen, onClose }: { item: BacklogItem; ctx: Ctx; agents: AgentRecord[]; canEdit: boolean; onPatch: (p: Partial<BacklogItem>) => void; onDelete: () => void; onOpen: (id: string) => void; onClose: () => void }) {
+function ItemPanel({ item, ctx, agents, canEdit, feedback = {}, onPatch, onDelete, onOpen, onClose }: { item: BacklogItem; ctx: Ctx; agents: AgentRecord[]; canEdit: boolean; feedback?: Record<string, Feedback>; onPatch: (p: Partial<BacklogItem>) => void; onDelete: () => void; onOpen: (id: string) => void; onClose: () => void }) {
 	const [title, setTitle] = useState(item.title);
 	const [desc, setDesc] = useState(item.description ?? "");
 	const [ac, setAc] = useState((item.acceptance ?? []).join("\n"));
@@ -402,6 +524,13 @@ function ItemPanel({ item, ctx, agents, canEdit, onPatch, onDelete, onOpen, onCl
 						{p && link(p.id)}
 					</div>
 				)}
+				{item.feedback && (
+					<div className="ip-fb">
+						<span className="kc-fb mono">{item.feedback}</span> {feedback[item.feedback]?.text ?? "user feedback"}
+						{feedback[item.feedback]?.head && <span className="mono muted"> · on main @ {feedback[item.feedback]!.head}</span>}
+					</div>
+				)}
+				{item.pending && <div className="ip-pending">Waiting for your approval: pi-os won't build it until you approve it on the board's approval bar.</div>}
 				<textarea className="ip-title" rows={2} value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} onBlur={() => title.trim() && title !== item.title && onPatch({ title: title.trim() })} />
 				<div className="ip-grid">
 					<label>Status</label>

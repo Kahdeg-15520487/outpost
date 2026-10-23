@@ -12,6 +12,7 @@
 		"test:ui": "tsx test/ui.ts",
 		"test:render": "tsx test/render-check.ts",
 		"test:build": "tsx test/build.ts",
+		"test:gates": "tsx test/gates.ts",
 		"test:teams": "tsx test/teams.ts"
 	},
 	"dependencies": {

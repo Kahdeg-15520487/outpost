@@ -75,6 +75,7 @@ export class Workspace {
 	static async closeAll() {
 		for (const p of open.values()) {
 			const ws = await p.catch(() => undefined);
+			ws?.projects?.build.stop();
 			ws?.projects?.previews.stopAll();
 			await ws?.harness.close(ctx).catch(() => {});
 		}

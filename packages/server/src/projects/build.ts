@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { hub } from "../collab/hub.ts";
-import { BacklogDoc, depsDone, pushHistory, rollUp, type Backlog, type BacklogItem } from "./backlog.ts";
+import { BacklogDoc, depsDone, isPending, pushHistory, rollUp, type Backlog, type BacklogItem } from "./backlog.ts";
+import { isBlocking } from "./docs.ts";
 import type { AgentRecord, ProjectState } from "./docs.ts";
 import type { ProjectManager } from "./manager.ts";
 
@@ -33,8 +34,18 @@ export class BuildScheduler {
 
 	constructor(readonly m: ProjectManager) {}
 
+	#stopped = false;
+
+	/** The workspace is closing: no more passes. */
+	stop() {
+		this.#stopped = true;
+		for (const t of this.#timers.values()) clearTimeout(t);
+		this.#timers.clear();
+	}
+
 	/** Run a pass soon (coalesces bursts of events). */
 	kick(projectId: string, delay = 300) {
+		if (this.#stopped) return;
 		clearTimeout(this.#timers.get(projectId));
 		this.#timers.set(
 			projectId,
@@ -48,7 +59,9 @@ export class BuildScheduler {
 	/** One pass, serialized per project. */
 	run(projectId: string): Promise<void> {
 		const prev = this.#running.get(projectId) ?? Promise.resolve();
-		const next = prev.then(() => this.#pass(projectId)).catch((e) => console.warn(`[build ${projectId}]`, e?.stack ?? e));
+		const next = prev.then(() => (this.#stopped ? undefined : this.#pass(projectId))).catch((e) => {
+			if (!this.#stopped) console.warn(`[build ${projectId}]`, e?.stack ?? e);
+		});
 		this.#running.set(projectId, next);
 		return next;
 	}
@@ -102,7 +115,8 @@ export class BuildScheduler {
 				for (const dev of devs) {
 					if (holding(dev.key)) continue;
 					// Tasks pinned (by the lead or the user) to another developer wait for them.
-					const ready = tasks.filter((t) => t.status === "todo" && (!t.assignee || t.assignee === dev.key || !live(state.agents[t.assignee])) && depsDone(b, t));
+					// Pending items (drafted from feedback, or added after approval) wait for the user's approval.
+					const ready = tasks.filter((t) => t.status === "todo" && !isPending(b, t) && (!t.assignee || t.assignee === dev.key || !live(state.agents[t.assignee])) && depsDone(b, t));
 					const pick = ready.find((t) => t.assignee === dev.key) ?? ready.find((t) => !t.area || !activeAreas.has(t.area)) ?? ready[0];
 					if (!pick) continue;
 					pick.status = "doing";
@@ -162,6 +176,7 @@ export class BuildScheduler {
 					await this.m.tellLead(projectId, `All ${a.tasks} backlog tasks are done and merged into main. The App tab runs the latest main. Check the result against the requirements (the preview tool shows its status and logs), tell the user what was built, and set the stage to iterate.`);
 				}
 			} catch (e: any) {
+				if (this.#stopped) return;
 				console.warn(`[build ${projectId}] ${a.kind}:`, e?.message ?? e);
 				await this.m.log(projectId, { at: Date.now(), kind: "error", text: `Build: ${a.kind} failed: ${e?.message ?? e}` });
 			}
@@ -356,7 +371,7 @@ export class BuildScheduler {
 		const state = await this.m.state(projectId);
 		const agent = state.agents[key];
 		if (!agent || agent.removed) return;
-		if (Object.values(state.questions).some((q) => q.agent === key && !q.answeredAt)) return;
+		if (Object.values(state.questions).some((q) => q.agent === key && !q.answeredAt && isBlocking(q))) return;
 		const sum = this.m.summaries.get(projectId)?.[key];
 		if (sum?.busy || (sum?.queued ?? 0) > 0) return;
 		const { working, reviewing } = await this.heldBy(projectId, key);

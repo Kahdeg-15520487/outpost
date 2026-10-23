@@ -131,3 +131,19 @@
 .ip-history li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
 .ip-history li .mono { font-size: 10.5px; padding-top: 2px; }
 .ip-history b { font-weight: 600; }
+
+/* ---------------------------------------------------------------- readiness + pending approval */
+.bl-blockers { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #fff5f5; border: 1px solid #f5c2c2; color: #7f1d1d; font-size: 12.5px; }
+.bl-blockers ul { margin: 4px 0 0; padding-left: 18px; }
+.bl-pending { display: grid; gap: 8px; }
+.pd-group { border-top: 1px solid #f0dca4; padding-top: 8px; display: grid; gap: 6px; }
+.pd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pd-fb { font-size: 13px; flex: 1; min-width: 200px; }
+.pd-actions { display: inline-flex; gap: 6px; }
+.pd-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.pd-items .ip-link { width: auto; }
+.kc-fb { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: #fef3c7; color: #92400e; flex: none; }
+.kb-card.pending { border-style: dashed; opacity: .8; }
+.kc-pending { font: 600 10.5px var(--mono); color: #92400e; margin-top: 4px; }
+.ip-fb { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: #fffbeb; border: 1px solid #fde68a; }
+.ip-pending { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: #fef3c7; color: #92400e; }

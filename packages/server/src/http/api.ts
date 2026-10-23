@@ -273,6 +273,60 @@ export function createApi(): Router {
 		await ws.projects.stopAll(req.params.p!);
 		return { ok: true };
 	});
+	// Questions: blocking flag, dismiss (answering is a message to the agent, above).
+	r.patch("/api/w/:ws/projects/:p/questions/:id", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { blocking } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		if (typeof blocking !== "boolean") throw new HttpError(400, "blocking: true or false");
+		await ws.projects.setQuestionBlocking(req.params.p!, req.params.id!, blocking, user);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/questions/:id/dismiss", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { note } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.dismissQuestion(req.params.p!, req.params.id!, user, note ? String(note).slice(0, 2000) : undefined);
+		return { ok: true };
+	});
+	// Feedback on the running app, and approval of what the team drafts from it.
+	r.post("/api/w/:ws/projects/:p/feedback", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { text, files } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		return { feedback: await ws.projects.addFeedback(req.params.p!, user, String(text ?? "").slice(0, 8000), Array.isArray(files) ? files.map(String) : []) };
+	});
+	r.post("/api/w/:ws/projects/:p/feedback/:id/pbi", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { title, description, acceptance, parent } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		return { item: await ws.projects.pbiFromFeedback(req.params.p!, req.params.id!, user, { title: String(title ?? ""), description: description ? String(description) : undefined, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined, parent: parent ? String(parent) : undefined }) };
+	});
+	r.post("/api/w/:ws/projects/:p/feedback/:id/decline", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { reason } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		return { removed: await ws.projects.declineFeedback(req.params.p!, req.params.id!, { name: user.displayName, user }, String(reason ?? "")) };
+	});
+	r.post("/api/w/:ws/projects/:p/feedback/:id/reopen", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.reopenFeedback(req.params.p!, req.params.id!, user);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/backlog/approve-pending", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { feedback } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		return { approved: await ws.projects.approvePending(req.params.p!, user, feedback ? String(feedback) : undefined) };
+	});
+	r.post("/api/w/:ws/projects/:p/backlog/pending-changes", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { comment, feedback } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		await ws.projects.pendingChanges(req.params.p!, user, String(comment ?? ""), feedback ? String(feedback) : undefined);
+		return { ok: true };
+	});
 	// Build (milestone 4): pause/resume assignments.
 	r.post("/api/w/:ws/projects/:p/build", async (req) => {
 		const { user, ws } = await member(req, "editor");
@@ -335,11 +389,11 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/projects/:p/agents/:key/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { text, files } = await req.body();
+		const { text, files, questionId } = await req.body();
 		const fileIds = Array.isArray(files) ? files.map(String) : [];
 		if (!String(text ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
 		await ws.projects.meta(req.params.p!);
-		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text ?? ""), fileIds);
+		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text ?? ""), fileIds, questionId ? String(questionId) : undefined);
 		return { ok: true };
 	});
 	r.get("/api/w/:ws/projects/:p/files", async (req) => {

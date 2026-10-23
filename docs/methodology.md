@@ -32,8 +32,10 @@ flowchart LR
     G2 -- changes --> P
     G2 -- approved --> B[Build<br/>pi-os scheduler: develop, review, merge]
     B --> A[Live preview<br/>App tab runs main]
-    B --> I[Iterate<br/>Lead reports, you give feedback]
-    I -.-> P
+    A --> F[Feedback on the app<br/>FB-n, tied to the version]
+    F --> P2[Planner drafts items<br/>pending]
+    P2 --> G3{You approve<br/>pending items}
+    G3 -- approved --> B
 ```
 
 | Stage | Led by | Input | Output | Exit | Enforced by |
@@ -43,7 +45,9 @@ flowchart LR
 | Design | Architect, UX Designer | Approved requirements | `docs/design.md`, decision records, wireframes, `.pios/project.json`, an app skeleton | Design published and reported to the Lead | Prompt |
 | Planning | Planner | Requirements, design | Backlog: features, PBIs with acceptance criteria, tasks with dependencies, estimate and area | **Gate 2:** you approve the backlog on the Backlog tab, or send it back with a comment | **Code:** the scheduler assigns nothing until the backlog is approved |
 | Build | pi-os scheduler | Approved backlog | Reviewed, merged tasks on `main`; a running preview | All tasks done; pi-os tells the Lead | **Code** |
-| Iterate | Lead, you | The running app | Your feedback, follow-up work | You're satisfied | Prompt (feedback-to-backlog is milestone M6) |
+| Iterate | You, Planner | The running app | Feedback (FB-n) → pending PBIs and tasks | **Gate 3:** you approve the pending items (Backlog tab) | **Code:** pending items are never assigned |
+
+**Readiness.** Every approval to build (the backlog, and pending items later) is refused by the server while a **blocking question** is open. The Overview tab shows whether the project is ready.
 
 The stage label in the project header follows the Lead's `set_stage` calls, except **build**, which pi-os sets itself when the backlog is approved.
 
@@ -103,7 +107,8 @@ stateDiagram-v2
 
 ### Rules the scheduler applies
 
-- **Ready** means status *todo* with every dependency *done*. A dependency on a PBI or feature waits for all of it.
+- **Ready** means status *todo*, not pending approval, with every dependency *done*.
+- **Pending** items wait for you: anything drafted from feedback, and anything an agent adds after you approved the backlog. pi-os assigns none of them until you approve them on the Backlog tab. A dependency on a PBI or feature waits for all of it.
 - **One task per developer.** A developer holding a task in *doing*, *review* or *blocked* gets no new work. The task stays theirs through review, so review notes go back to the person who wrote the code.
 - **Areas spread the work.** Among ready tasks, a developer gets one whose area nobody else is working in, to keep parallel edits from colliding.
 - **Pinned tasks wait for their person.** A task you or the Lead assigned to a developer waits for that developer.
@@ -150,7 +155,9 @@ Missing today: a definition-of-done checklist, automatic test runs as a merge co
 
 ## 9. Where you take control
 
-- **Gates:** approve or send back the requirements (Overview tab) and the backlog (Backlog tab).
+- **Gates:** approve or send back the requirements (Overview tab), the backlog, and pending items (Backlog tab). Blocking questions hold all of them.
+- **Questions:** answer, dismiss, or switch between blocking and non-blocking.
+- **Feedback:** on the App tab; make a PBI from it yourself, decline it, or reopen it.
 - **Talk to anyone:** open a tile and message the agent. Your message interrupts its current step (steer), and answers any question it asked you.
 - **Edit the plan:** drag cards, change status, assignee, estimate, title, description and acceptance criteria, or delete items.
 - **Control the build:** Pause / Resume on the Backlog tab, Stop all in the header.
@@ -162,7 +169,8 @@ Missing today: a definition-of-done checklist, automatic test runs as a merge co
 
 - **Briefs** from the Lead or from pi-os start work. They must hold everything the agent needs, because agents can't see each other's conversations.
 - **Messages** (`message`) reach one teammate by key and queue behind its current step. The team guide forbids acknowledgements and chit-chat: every message wakes the receiver and costs tokens.
-- **Questions to you** (`ask_user`) end the agent's turn and appear on its tile and the Overview tab. The agent resumes when you answer.
+- **Questions to you** (`ask_user`) appear on the agent's tile and the Overview tab. A **blocking** question (the default) ends the agent's turn; it resumes when you answer or dismiss it, and no approval to build goes through meanwhile. A **non-blocking** question carries the assumption the agent works with, and the agent keeps going. You can switch a question between the two, answer it, or dismiss it.
+- **Feedback** on the running app (App tab → Feedback) goes to the Planner (or the Lead without one) as FB-n, with the version of `main` you were looking at. The Planner drafts PBIs and tasks tagged with it; you can also make a PBI yourself, or decline the feedback.
 - **Handoffs** (`task_done`, `task_blocked`, `review_verdict`, `backlog_request_approval`) are tools, not messages, so pi-os can act on them.
 
 ## 11. Resilience
@@ -188,7 +196,7 @@ Missing today: a definition-of-done checklist, automatic test runs as a merge co
 | Status visibility | Reports, milestones | Sprint board, burndown | Board, cumulative flow | Live tiles, live board, activity feed, transcripts |
 | Review | Phase reviews, inspections | Pull requests, sprint review | Pull requests | Review agent on every task's exact commit; you at the gates |
 | Integration | Late, big-bang | Continuous, per story | Continuous | Per task, with `main` merged in before review |
-| Feedback | At the end | Every sprint review | Continuous | Continuous (live preview); a formal feedback loop is M6 |
+| Feedback | At the end | Every sprint review | Continuous | Continuous: feedback on the live app becomes pending backlog items you approve |
 | Change handling | Change requests | Next sprint | Reorder the queue | Edit the board, pause, message any agent, re-gate |
 | Scarce resource | People's time | People's time | People's time | **Your attention** and tokens; agent time is cheap |
 | Typical failures | Wrong spec found late | Scope churn, unfinished stories | Starved or blocked flow | Agents stall, drift from the spec, or misread a vague brief |
@@ -231,13 +239,13 @@ BMAD's Method (v6/v7) is the closest relative: specialist agents (analyst, produ
 
 | Gap | Effect today | Direction |
 |---|---|---|
-| Gate 1 is a question, not a button | The Lead could skip it; it relies on the prompt | Approve / request-changes buttons for requirements and design (M2) |
+| Gate 1 is a question, not a button | The Lead could skip it; it relies on the prompt (blocking questions now hold every approval to build) | Approve / request-changes buttons for requirements and design (M2) |
 | Every goal runs every stage | A small change still gets requirements, design and a backlog | Size the process to the goal |
 | Thin task briefs | Developers re-read the docs; may drift from the design | Story-style briefs with the relevant design and decisions inlined |
 | No definition of done, tests aren't a merge condition | Quality depends on the reviewer | DoD checklist; run `.pios/project.json` `test` before merging |
 | No requirement-to-test traceability | Gaps in coverage go unnoticed | Link acceptance criteria to tests in review |
 | Non-task publishes skip review | Design and skeleton changes land unreviewed | Route them through review too |
-| No feedback loop or retrospective | Iteration is ad hoc through the Lead | M6: feedback becomes PBIs; a retro after the build |
+| No retrospective | The team doesn't learn from a build | A retro after the build (M6) |
 | The shell is not sandboxed | Agents run commands on your machine | Containers per project (out of scope so far) |
 | No cost budget | A large team can spend many tokens | Per-project token budgets and alerts |
 

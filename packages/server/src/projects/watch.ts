@@ -63,7 +63,7 @@ export function describeTool(name: string, args: any): string {
 		case "message":
 			return `→ ${a.to ?? "?"}`;
 		case "ask_user":
-			return "asking you a question";
+			return a.blocking === false ? "noting a question for you" : "asking you a question";
 		case "team_add":
 			return `adding ${a.role ?? "an agent"}`;
 		case "publish":
@@ -86,6 +86,8 @@ export function describeTool(name: string, args: any): string {
 			return "reporting a blocker";
 		case "review_verdict":
 			return `${a.verdict === "approve" ? "approving" : "sending back"} ${a.task ?? "a task"}`;
+		case "feedback_decline":
+			return `declining ${a.feedback ?? "feedback"}`;
 		case "preview":
 			return a.action === "restart" ? "restarting the preview" : "checking the preview";
 		default:

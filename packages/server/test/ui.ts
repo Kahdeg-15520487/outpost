@@ -45,6 +45,10 @@ const go = async (hash: string) => {
 	await page.reload();
 	await sleep(400);
 };
+/** SHOTS=<dir> saves screenshots of key screens (for looking at the UI, not for assertions). */
+const shot = async (name: string) => {
+	if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, `ui-${name}.png`) });
+};
 const text = (sel: string) => page.$eval(sel, (e) => (e as HTMLElement).innerText).catch(() => "");
 const count = (sel: string) => page.$$eval(sel, (es) => es.length);
 const clickText = (sel: string, label: string | RegExp) =>
@@ -187,6 +191,42 @@ async function run() {
 	const src = await page.$eval(".pv-frame", (f) => (f as HTMLIFrameElement).src).catch(() => "");
 	const body = src ? await fetch(src).then((r) => r.text()).catch(() => "") : "";
 	check("the preview iframe serves the app", body.includes("Who's in"), { src, body: body.slice(0, 80) });
+
+	console.log("questions + feedback");
+	const pm = (await Workspace.get(ws)).projects;
+	const asAgent = async (key: string, name: string, args: unknown) => {
+		const a = (await pm.state(pid)).agents[key]!;
+		return pm.tools.get(name)!.execute(args, { conversationId: Number(a.conversationId), taskId: Date.now() } as any);
+	};
+	await asAgent("lead", "ask_user", { question: "Should weekends show?" });
+	await asAgent("lead", "ask_user", { question: "Week starts Monday?", blocking: false, assumption: "Monday" });
+	await pm.stopAll(pid);
+	await go(projectHash("overview"));
+	check("readiness: not ready while a blocking question is open", await until("readiness", () => text(".ov-ready.no").then((t) => /Not ready to build/.test(t))));
+	check("question cards say blocking / non-blocking, with the assumption", (await count(".q-flag.blocking")) === 1 && (await count(".q-flag.nonblocking")) === 1 && /Monday/.test(await text(".q-assume")));
+	await page.evaluate(() => ([...document.querySelectorAll(".q-card.blocking button")].find((b) => b.textContent === "Not blocking") as HTMLElement | undefined)?.click());
+	await shot("questions");
+	check("switching it to non-blocking makes the project ready", await until("ready", () => page.$(".ov-ready.yes")));
+	const before2 = await count(".q-card");
+	await page.evaluate(() => ([...document.querySelectorAll(".q-card button")].find((b) => b.textContent === "Dismiss") as HTMLElement | undefined)?.click());
+	check("dismiss closes a question", await until("dismissed", () => count(".q-card").then((n) => n === before2 - 1)));
+
+	await page.evaluate(() => localStorage.setItem("pios.preview.feedback", "1"));
+	await go(projectHash("app"));
+	must("App tab: the feedback panel opens", await until("feedback panel", () => page.$(".fb-form textarea")));
+	await page.type(".fb-form textarea", "Show the week number in the header");
+	await clickText(".fb-form button", "Send to the team");
+	check("feedback is listed, tied to the version and with the team", await until("feedback item", () => text(".fb-item").then((t) => /FB-1/.test(t) && /With the team/.test(t) && /@/.test(t))));
+	await asAgent("lead", "backlog_add", { items: [{ ref: "p", type: "pbi", parent: "F1", title: "Week number in header", feedback: "FB-1" }, { type: "task", parent: "p", title: "Render the week number", feedback: "FB-1" }] });
+	check("drafted items show as waiting for approval", await until("pending status", () => text(".fb-item").then((t) => /Waiting for your approval/.test(t))));
+	await shot("feedback");
+
+	await go(projectHash("backlog"));
+	must("Backlog: the pending items bar lists them", await until("pending bar", () => text(".bl-pending").then((t) => /2 new items waiting/.test(t) && /FB-1/.test(t))));
+	check("pending cards are marked", (await count(".kb-card.pending")) >= 1);
+	await shot("pending");
+	await clickText(".bl-pending button", /^Approve/);
+	check("approve from the bar: nothing pending any more", await until("approved", async () => !Object.values((await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.items as any[]).some((i) => i.pending)));
 
 	check("no errors in the page", errors.length === 0, errors);
 }

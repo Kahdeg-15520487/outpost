@@ -1,12 +1,19 @@
 import { blueprints, HttpError, newId, users, type BlueprintIntro, type BlueprintRow, type GadgetRow } from "../kernel/system-db.ts";
 import type { Workspace } from "../kernel/workspace.ts";
+import { assess, detectRequires, mergeRequires, producer, type Assessment, type Producer, type Requires } from "./compat.ts";
 
 /**
  * Moving blueprints and gadgets between pi-os instances: one portable JSON file (`*.pios.json`).
  *
- *   { "format": "pi-os/bundle", "version": 1, "exportedAt": "…",
- *     "blueprints": [{ name, description, icon, intro?, files: { path: text } }],
- *     "gadgets":    [{ name, icon, blueprint?, files: { path: text }, data?: { key: json } }] }
+ *   { "format": "pi-os/bundle", "version": 2, "exportedAt": "…",
+ *     "producer": { "app": "pi-os", "version": "0.7.0", "runtime": 1 },
+ *     "blueprints": [{ name, description, icon, intro?, files: { path: text }, requires }],
+ *     "gadgets":    [{ name, icon, blueprint?, files: { path: text }, data?: { key: json }, requires }] }
+ *
+ * `requires` (compat.ts) is the gadget runtime generation, the server/page features the code uses and the
+ * Gatekeepers it calls. Import checks every item against this instance (re-detecting from the code):
+ * items that can't run here are skipped, items whose Gatekeeper calls would fail come with a warning.
+ * Version 1 files (no producer, no requires) are still accepted and checked the same way.
  *
  * Code travels as its source files; a gadget's stored data (its key/value state) only when asked.
  * Things that belong to one instance stay behind: shares, share links, Gatekeeper grants, workspace
@@ -15,27 +22,29 @@ import type { Workspace } from "../kernel/workspace.ts";
  * Imported code runs in the same sandbox as any gadget (QuickJS server, CSP-locked iframe client).
  */
 export const BUNDLE_FORMAT = "pi-os/bundle";
-export const BUNDLE_VERSION = 1;
+export const BUNDLE_VERSION = 2;
 
-export type BundleBlueprint = { name: string; description: string; icon: string; intro?: BlueprintIntro; files: Record<string, string> };
-export type BundleGadget = { name: string; icon: string; blueprint?: string; files: Record<string, string>; data?: Record<string, unknown> };
-export type Bundle = { format: typeof BUNDLE_FORMAT; version: number; exportedAt: string; blueprints: BundleBlueprint[]; gadgets: BundleGadget[] };
+export type BundleBlueprint = { name: string; description: string; icon: string; intro?: BlueprintIntro; files: Record<string, string>; requires?: Requires };
+export type BundleGadget = { name: string; icon: string; blueprint?: string; files: Record<string, string>; data?: Record<string, unknown>; requires?: Requires };
+export type Bundle = { format: typeof BUNDLE_FORMAT; version: number; exportedAt: string; producer?: Producer; blueprints: BundleBlueprint[]; gadgets: BundleGadget[] };
 
 const LIMITS = { items: 200, filesPerItem: 300, fileBytes: 2 << 20, itemBytes: 10 << 20, dataBytes: 20 << 20, name: 80, description: 2000 };
 const PATH = /^[\w./-]{1,120}$/;
 
-export function makeBundle(parts: { blueprints?: BlueprintRow[]; gadgets?: { row: GadgetRow; files: Record<string, string>; data?: Record<string, unknown> }[] }): Bundle {
+export function makeBundle(parts: { blueprints?: BlueprintRow[]; gadgets?: { row: GadgetRow; files: Record<string, string>; data?: Record<string, unknown>; grants?: { id: string; label: string; gatekeeper: string }[] }[] }): Bundle {
 	return {
 		format: BUNDLE_FORMAT,
 		version: BUNDLE_VERSION,
 		exportedAt: new Date().toISOString(),
-		blueprints: (parts.blueprints ?? []).map((b) => ({ name: b.name, description: b.description, icon: b.icon, ...(b.intro && Object.keys(b.intro).length ? { intro: b.intro } : {}), files: b.files })),
-		gadgets: (parts.gadgets ?? []).map(({ row, files, data }) => ({
+		producer: producer(),
+		blueprints: (parts.blueprints ?? []).map((b) => ({ name: b.name, description: b.description, icon: b.icon, ...(b.intro && Object.keys(b.intro).length ? { intro: b.intro } : {}), files: b.files, requires: detectRequires(b.files) })),
+		gadgets: (parts.gadgets ?? []).map(({ row, files, data, grants }) => ({
 			name: row.name,
 			icon: row.icon,
 			...(row.blueprintId ? { blueprint: blueprints.get(row.blueprintId)?.name } : {}),
 			files,
 			...(data ? { data } : {}),
+			requires: detectRequires(files, grants),
 		})),
 	};
 }
@@ -75,16 +84,21 @@ export function parseBundle(input: unknown): Bundle {
 	const gs = Array.isArray(b.gadgets) ? b.gadgets : [];
 	if (!bps.length && !gs.length) throw new HttpError(400, "The file contains no blueprints or gadgets");
 	if (bps.length + gs.length > LIMITS.items) throw new HttpError(400, `Too many items (${bps.length + gs.length} > ${LIMITS.items})`);
+	const from = b.producer && typeof b.producer === "object" ? { app: str((b.producer as any).app, 40, "pi-os"), version: str((b.producer as any).version, 40), runtime: typeof (b.producer as any).runtime === "number" ? (b.producer as any).runtime : 1 } : undefined;
+	// What an item declares, joined with what its code shows; the runtime default comes from the producer.
+	const requires = (x: any, files: Record<string, string>) => mergeRequires({ runtime: from?.runtime, ...(x?.requires && typeof x.requires === "object" ? x.requires : {}) }, detectRequires(files));
 	return {
 		format: BUNDLE_FORMAT,
 		version: b.version,
 		exportedAt: str(b.exportedAt, 40),
+		...(from ? { producer: from } : {}),
 		blueprints: bps.map((x: any, i) => {
 			const where = `Blueprint ${i + 1}${x?.name ? ` “${str(x.name, 40)}”` : ""}`;
 			const name = str(x?.name, LIMITS.name).trim();
 			if (!name) throw new HttpError(400, `${where}: missing name`);
 			const intro = x?.intro && typeof x.intro === "object" ? (JSON.parse(JSON.stringify(x.intro)) as BlueprintIntro) : undefined;
-			return { name, description: str(x?.description, LIMITS.description), icon: str(x?.icon, 8, "◆") || "◆", ...(intro ? { intro } : {}), files: files(x?.files, where) };
+			const fs = files(x?.files, where);
+			return { name, description: str(x?.description, LIMITS.description), icon: str(x?.icon, 8, "◆") || "◆", ...(intro ? { intro } : {}), files: fs, requires: requires(x, fs) };
 		}),
 		gadgets: gs.map((x: any, i) => {
 			const where = `Gadget ${i + 1}${x?.name ? ` “${str(x.name, 40)}”` : ""}`;
@@ -97,29 +111,60 @@ export function parseBundle(input: unknown): Bundle {
 				if (json.length > LIMITS.dataBytes) throw new HttpError(400, `${where}: data too large`);
 				data = JSON.parse(json);
 			}
-			return { name, icon: str(x?.icon, 8, "◆") || "◆", ...(x?.blueprint ? { blueprint: str(x.blueprint, LIMITS.name) } : {}), files: files(x?.files, where), ...(data ? { data } : {}) };
+			const fs = files(x?.files, where);
+			return { name, icon: str(x?.icon, 8, "◆") || "◆", ...(x?.blueprint ? { blueprint: str(x.blueprint, LIMITS.name) } : {}), files: fs, ...(data ? { data } : {}), requires: requires(x, fs) };
 		}),
 	};
 }
 
-export type ImportResult = { blueprints: { id: string; name: string }[]; gadgets: { id: string; name: string; data: boolean }[]; notes: string[] };
+export type ItemCheck = { kind: "blueprint" | "gadget"; index: number; name: string; requires: Requires } & Assessment;
+export type BundleCheck = { producer?: Producer; local: Producer; items: ItemCheck[] };
+
+/** Check every item of a bundle against this instance, without importing anything. */
+export function checkBundle(b: Bundle): BundleCheck {
+	const item = (kind: ItemCheck["kind"], index: number, x: BundleBlueprint | BundleGadget): ItemCheck => {
+		const requires = x.requires ?? detectRequires(x.files);
+		return { kind, index, name: x.name, requires, ...assess(requires, b.producer) };
+	};
+	return { ...(b.producer ? { producer: b.producer } : {}), local: producer(), items: [...b.blueprints.map((x, i) => item("blueprint", i, x)), ...b.gadgets.map((x, i) => item("gadget", i, x))] };
+}
+
+export type ImportResult = {
+	blueprints: { id: string; name: string }[];
+	gadgets: { id: string; name: string; data: boolean }[];
+	/** Not imported: they can't run on this instance. */
+	skipped: { kind: string; name: string; issues: string[] }[];
+	/** Imported, but some parts won't work here. */
+	warnings: { kind: string; name: string; issues: string[] }[];
+	notes: string[];
+};
 
 /** Create the bundle's blueprints (for the user) and gadgets (in this workspace, owned by the user). */
 export async function importBundle(ws: Workspace | undefined, userId: string, b: Bundle, opts: { visibility: "public" | "private" }): Promise<ImportResult> {
 	if (b.gadgets.length && !ws) throw new HttpError(400, "Open a workspace to import gadgets into");
-	const result: ImportResult = { blueprints: [], gadgets: [], notes: [] };
+	const result: ImportResult = { blueprints: [], gadgets: [], skipped: [], warnings: [], notes: [] };
 	const author = users.get(userId)?.displayName ?? "you";
-	for (const bp of b.blueprints) {
+	const checks = checkBundle(b).items;
+	const verdict = (kind: "blueprint" | "gadget", i: number, name: string) => {
+		const c = checks.find((x) => x.kind === kind && x.index === i)!;
+		if (c.status === "blocked") result.skipped.push({ kind, name, issues: c.issues });
+		else if (c.status === "warn") result.warnings.push({ kind, name, issues: c.issues });
+		for (const n of c.notes) if (!result.notes.includes(`${name}: ${n}`)) result.notes.push(`${name}: ${n}`);
+		return c.status !== "blocked";
+	};
+	for (const [i, bp] of b.blueprints.entries()) {
+		if (!verdict("blueprint", i, bp.name)) continue;
 		const row: BlueprintRow = { id: newId("bp"), name: bp.name, description: bp.description, icon: bp.icon, authorId: userId, visibility: opts.visibility, files: bp.files, createdAt: Date.now(), intro: bp.intro };
 		blueprints.upsert(row);
 		result.blueprints.push({ id: row.id, name: row.name });
 	}
-	for (const g of b.gadgets) {
+	for (const [i, g] of b.gadgets.entries()) {
+		if (!verdict("gadget", i, g.name)) continue;
 		const row = await ws!.createGadget({ name: g.name, icon: g.icon, ownerId: userId, files: g.files });
 		if (g.data && Object.keys(g.data).length) await ws!.setGadgetState(row.id, g.data);
 		result.gadgets.push({ id: row.id, name: row.name, data: !!g.data });
 	}
-	if (b.gadgets.length) result.notes.push(`Gadgets arrive owned by ${author}, unshared, with no Gatekeeper access: grant what they need again.`);
+	if (result.gadgets.length) result.notes.push(`Gadgets arrive owned by ${author}, unshared, with no Gatekeeper access: grant what they need again.`);
 	if (b.gadgets.some((g) => g.data && JSON.stringify(g.data).includes('"f_'))) result.notes.push("Some gadget data refers to files from the other instance; those files weren't moved.");
 	return result;
 }

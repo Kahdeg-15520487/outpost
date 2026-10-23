@@ -113,4 +113,52 @@ async function run() {
 	check("an empty bundle is refused", /no blueprints or gadgets/.test(await bad(JSON.stringify({ format: "pi-os/bundle", version: 1 }))));
 	await viewer.ok("GET", "/api/workspaces");
 	check("importing into someone else's workspace is refused", (await viewer.call("POST", `/api/w/${wsB}/import`, undefined, JSON.stringify(code.bundle))).status >= 403);
+
+	console.log("version + capabilities");
+	check("exports record the producing pi-os and gadget runtime", code.bundle.version === 2 && code.bundle.producer?.app === "pi-os" && code.bundle.producer.version === "0.7.0" && code.bundle.producer.runtime === 1, code.bundle.producer);
+	const req = code.bundle.gadgets[0].requires;
+	check("exports record what each item needs (detected from its code)", req.runtime === 1 && req.server.includes("storage") && req.server.includes("broadcast") && req.client.includes("api"), req);
+	const caps = await bb.ok("GET", "/api/capabilities");
+	check("/api/capabilities describes this instance", caps.version === "0.7.0" && caps.runtime === 1 && caps.server.includes("storage") && caps.gatekeepers.some((g: any) => g.id === "github"), caps);
+
+	// A gadget holding a GitHub grant: its export says it needs GitHub.
+	await ws.grant({ gatekeeper: "github", resource: "octo/repo", holder: { kind: "gadget", id: gadget.id }, by: "ana" });
+	await ws.writeGadgetFiles(gadget.id, { "server.js": `export default class S { constructor(ctx) { this.ctx = ctx; } async issues() { return this.ctx.gatekeepers.github.list_issues({}); } }` });
+	const withGrant = await a.ok("GET", `/api/gadgets/${gadget.id}/export`);
+	check("gadget export lists the Gatekeepers it needs", withGrant.bundle.gadgets[0].requires.gatekeepers.some((g: any) => g.id === "github" && g.methods.includes("list_issues")), withGrant.bundle.gadgets[0].requires);
+
+	const gadgetItem = (name: string, files: Record<string, string>, extra: object = {}) => ({ name, icon: "◆", files: { "index.html": "<h1>x</h1>", ...files }, ...extra });
+	const mixed = {
+		format: "pi-os/bundle",
+		version: 2,
+		exportedAt: new Date().toISOString(),
+		producer: { app: "pi-os", version: "0.7.0", runtime: 1 },
+		blueprints: [],
+		gadgets: [
+			gadgetItem("Fine", { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} n(){ return this.ctx.storage.get('n') } }" }),
+			gadgetItem("Future runtime", {}, { requires: { runtime: 2, server: [], client: [], gatekeepers: [] } }),
+			gadgetItem("Unknown feature", { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} go(){ return this.ctx.teleport('mars') } }" }, { requires: { runtime: 1, server: [], client: [], gatekeepers: [] } }),
+			gadgetItem("Page feature", { "index.html": "<p>the gadget. Then text</p><script>gadget.vibrate(3)</script>" }),
+			gadgetItem("Slack poster", { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} post(){ return this.ctx.gatekeepers.slack.post({}) } }" }),
+			gadgetItem("Odd GitHub method", { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} x(){ return this.ctx.gatekeepers.github.deleteRepo({}) } }" }),
+		],
+	};
+	const report = await bb.ok("POST", `/api/w/${wsB}/import/check`, undefined, JSON.stringify(mixed));
+	const st = (name: string) => report.items.find((i: any) => i.name === name);
+	check("check: a plain gadget is ok", st("Fine")?.status === "ok", st("Fine"));
+	check("check: a newer gadget runtime is blocked", st("Future runtime")?.status === "blocked" && /runtime v2/.test(st("Future runtime").issues.join()), st("Future runtime"));
+	check("check: an unknown server feature is blocked, even if the file declares less", st("Unknown feature")?.status === "blocked" && /ctx\.teleport/.test(st("Unknown feature").issues.join()), st("Unknown feature"));
+	check("check: an unknown page feature is blocked (prose isn't code)", st("Page feature")?.status === "blocked" && /gadget\.vibrate/.test(st("Page feature").issues.join()) && !/gadget\.Then/.test(st("Page feature").issues.join()), st("Page feature"));
+	check("check: a missing Gatekeeper is a warning", st("Slack poster")?.status === "warn" && /slack/.test(st("Slack poster").issues.join()), st("Slack poster"));
+	check("check: a missing Gatekeeper method is a warning", st("Odd GitHub method")?.status === "warn" && /deleteRepo/.test(st("Odd GitHub method").issues.join()), st("Odd GitHub method"));
+	check("check reports both versions", report.producer?.version === "0.7.0" && report.local?.version === "0.7.0");
+	const newer = await bb.ok("POST", `/api/w/${wsB}/import/check`, undefined, JSON.stringify({ ...mixed, producer: { app: "pi-os", version: "9.1.0", runtime: 1 }, gadgets: [mixed.gadgets[0]] }));
+	check("check: a file from a newer pi-os is a warning", newer.items[0].status === "warn" && /newer pi-os \(9\.1\.0/.test(newer.items[0].issues.join()), newer.items[0]);
+	const v1 = await bb.ok("POST", `/api/w/${wsB}/import/check`, undefined, JSON.stringify({ format: "pi-os/bundle", version: 1, gadgets: [mixed.gadgets[2]].map(({ requires, ...g }: any) => g) }));
+	check("older (v1) files are checked from their code", v1.items[0].status === "blocked" && !v1.producer, v1);
+	const imported = await bb.ok("POST", `/api/w/${wsB}/import`, undefined, JSON.stringify(mixed));
+	check("import skips what can't run and says why", imported.skipped.map((x: any) => x.name).sort().join() === "Future runtime,Page feature,Unknown feature" && imported.skipped.every((x: any) => x.issues.length), imported.skipped);
+	check("import keeps what partly works, with warnings", imported.gadgets.map((x: any) => x.name).sort().join() === "Fine,Odd GitHub method,Slack poster" && imported.warnings.length === 2, imported);
+	const ghImport = await bb.ok("POST", `/api/w/${wsB}/import`, undefined, JSON.stringify(withGrant.bundle));
+	check("import notes which access to grant again", ghImport.notes.some((n: string) => /needs GitHub.* access: grant it/.test(n)), ghImport.notes);
 }

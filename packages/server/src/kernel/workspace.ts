@@ -349,6 +349,14 @@ export class Workspace {
 		return { ...((await this.harness.snapshot(GadgetStateDoc, gadgetId, ctx))?.kv ?? {}) };
 	}
 
+	/** The Gatekeeper grants a gadget holds (export records which Gatekeepers it needs). */
+	async gadgetGrants(gadgetId: string) {
+		const doc = await this.harness.snapshot(GrantsDoc, ctx);
+		return Object.values(doc?.grants ?? {})
+			.filter((g) => g.holder.kind === "gadget" && g.holder.id === gadgetId)
+			.map((g) => ({ id: g.id, label: g.label, gatekeeper: g.gatekeeper }));
+	}
+
 	/** Replace a gadget's stored data (import). */
 	async setGadgetState(gadgetId: string, kv: Record<string, unknown>) {
 		await this.harness.commit(async (tx) => {

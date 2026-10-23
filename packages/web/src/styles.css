@@ -380,3 +380,16 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .tx-list { margin: 4px 0 0; padding-left: 18px; font-size: 13.5px; display: grid; gap: 2px; }
 .bp-meta { font-size: 11px; margin-top: 8px; }
 .bp-actions { margin-top: 6px; gap: 4px; }
+.tx-producer { font-size: 11px; color: var(--muted); }
+.tx-check { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.tx-check li { display: grid; grid-template-columns: 20px 1fr; gap: 4px; }
+.tx-check li.blocked .tx-name { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(185, 28, 28, .5); }
+.tx-icon { font-size: 13px; }
+.tx-check li.ok .tx-icon { color: #15803d; }
+.tx-check li.warn .tx-icon { color: #b45309; }
+.tx-check li.blocked .tx-icon { color: #b91c1c; }
+.tx-issue { display: block; font-size: 12px; color: #92400e; }
+.tx-check li.blocked .tx-issue { color: #b91c1c; }
+.tx-issue.note { color: var(--muted); }
+.tx-bad { color: #b91c1c; font-size: 12.5px; }
+.tx-warn { color: #b45309; }

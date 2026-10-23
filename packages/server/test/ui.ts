@@ -135,7 +135,10 @@ async function run() {
 	const bundlePath = join(process.env.PI_OS_DATA!, "..", "import.pios.json");
 	writeFileSync(
 		bundlePath,
-		JSON.stringify({ format: "pi-os/bundle", version: 1, exportedAt: new Date().toISOString(), blueprints: [{ name: "Imported board", description: "from elsewhere", icon: "▦", files: { "index.html": "<h1>board</h1>" } }], gadgets: [{ name: "Imported gadget", icon: "◆", files: { "index.html": "<h1>hi</h1>" }, data: { count: 3 } }] }),
+		JSON.stringify({ format: "pi-os/bundle", version: 1, exportedAt: new Date().toISOString(), blueprints: [{ name: "Imported board", description: "from elsewhere", icon: "▦", files: { "index.html": "<h1>board</h1>" } }], gadgets: [
+				{ name: "Imported gadget", icon: "◆", files: { "index.html": "<h1>hi</h1>" }, data: { count: 3 } },
+				{ name: "Needs teleport", icon: "◆", files: { "index.html": "<h1>x</h1>", "server.js": "export default class S { constructor(ctx) { this.ctx = ctx; } go() { return this.ctx.teleport(); } }" } },
+			] }),
 	);
 	await go(`#/w/${ws}/blueprints`);
 	must("Blueprints page has Import and Export", await until("buttons", () => page.$$eval(".bp-head button", (bs) => bs.map((b) => b.textContent).join()).then((t) => /Import/.test(t) && /Export/.test(t))));
@@ -143,9 +146,12 @@ async function run() {
 	const fileInput = await until("file input", () => page.$(".tx-drop input[type=file]"));
 	await (fileInput as any).uploadFile(bundlePath);
 	check("import shows what the file holds before importing", await until("preview", () => text(".tx-preview").then((t) => /Imported board/.test(t) && /Imported gadget/.test(t) && /with data/.test(t))));
+	check("import checks each item against this pi-os (version + capabilities)", /older pi-os/.test(await text(".tx-producer")) && (await count(".tx-check li.ok")) === 2 && (await count(".tx-check li.blocked")) === 1 && /ctx\.teleport/.test(await text(".tx-check li.blocked")));
+	check("the import button counts only what can run", /Import 2 of 3/.test(await text(".tx-dialog .btn.primary")));
 	await shot("import");
-	await clickText(".tx-dialog button", "Import");
+	await clickText(".tx-dialog button", /^Import/);
 	check("import result lists the new blueprint and gadget", await until("result", () => text(".tx-dialog").then((t) => /imported/i.test(t) && /in your library/i.test(t) && /Imported gadget/.test(t))));
+	check("the result says what wasn't imported and why", /not imported/i.test(await text(".tx-dialog")) && /Needs teleport/.test(await text(".tx-dialog")));
 	await clickText(".tx-dialog button", "Done");
 	check("the imported blueprint is in the library", await until("listed", () => page.$$eval(".bp-grid .bp .n", (ns) => ns.some((n) => n.textContent === "Imported board"))));
 	check("the imported gadget is in the sidebar", await until("sidebar gadget", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported gadget"))));

@@ -101,7 +101,14 @@ Export to a single `.pios.json` file and import it on another pi-os:
 - **In bulk:** *Blueprints → Export…* exports your blueprints and the current workspace's gadgets, optionally with their data.
 - **Import:** *Blueprints → Import…* previews the file first. Blueprints go to your library, private unless you choose to share them. Gadgets go into the current workspace, owned by you.
 
-Code and data travel. Shares, share links, Gatekeeper grants, logs, and workspace files a gadget's data points to stay on the old instance; grant access again after importing. Imported code runs in the same sandbox as any gadget. The importer checks the format, version, file paths, sizes and counts, and rejects anything else.
+Code and data travel. Shares, share links, Gatekeeper grants, logs, and workspace files a gadget's data points to stay on the old instance; grant access again after importing.
+
+**Version and capability checks.** Exports record the pi-os version and gadget runtime that produced them, and what each item needs: the server features (`ctx.storage`, `ctx.files`, …), page features (`gadget.api`, `gadget.onPresence`, …) and Gatekeepers (with methods) it uses. Import re-detects these from the code (a file can't skip the check by declaring less; older exports are checked too) and rates every item before anything is created:
+- ⛔ **can't run here**: it needs a newer gadget runtime, or a feature this pi-os doesn't provide. It isn't imported.
+- ⚠ **partly works**: it calls a Gatekeeper or method this pi-os doesn't have (those calls fail), or the file comes from a newer pi-os.
+- ✓ **runs here** (with a note on which Gatekeeper access to grant again).
+
+The Import dialog shows the check before importing, and the import skips blocked items and reports why. `GET /api/capabilities` describes an instance; `POST /api/w/:ws/import/check` checks a file without importing it. When a change to the gadget API breaks existing gadgets, bump `GADGET_RUNTIME` in `packages/server/src/gadgets/compat.ts`; new features are checked by name and need no bump. Imported code runs in the same sandbox as any gadget. The importer checks the format, version, file paths, sizes and counts, and rejects anything else.
 
 ### Projects: agent teams
 
@@ -187,7 +194,7 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | Suite | Covers |
 |---|---|
 | `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
-| `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation) |
+| `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation, version and capability checks) |
 | `quality` | M2 document gates, story-style briefs, tests before review and before merge (incl. merge results when main moved), definition of done, retrospective, restart resume |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |

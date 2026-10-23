@@ -1,5 +1,6 @@
 {
   "name": "pi-os",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "An AI workspace (Cloudflare OS-style) on pi-durable: durable agents, sandboxed gadgets, capability Gatekeepers.",

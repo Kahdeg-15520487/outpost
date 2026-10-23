@@ -92,12 +92,16 @@ function getBrowser(): Promise<Browser> {
 		if (!executablePath) {
 			throw new Error("No Chrome/Chromium/Edge found for rendering. Install one, or set render.chromePath in pi-os.config.json (or PI_OS_CHROME).");
 		}
-		browser = puppeteer
-			.launch({
+		const launch = () =>
+			puppeteer.launch({
 				executablePath,
 				headless: true,
+				// A cold start (first run, slow disk, CI) can take well over puppeteer's 30 s default.
+				timeout: 90_000,
 				args: ["--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "--mute-audio", "--disable-extensions", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
-			})
+			});
+		browser = launch()
+			.catch(launch) // one retry: the second start is usually fast
 			.then((b) => {
 				b.on("disconnected", () => (browser = undefined));
 				return b;

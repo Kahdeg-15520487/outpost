@@ -309,7 +309,7 @@ async function seedProject(wsId: string): Promise<string> {
 
 // ------------------------------------------------------------------ main
 
-const browser = await puppeteer.launch({ executablePath: browserPath, headless: !process.env.HEADFUL, defaultViewport: { width: 1600, height: 1000 }, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+const browser = await puppeteer.launch({ executablePath: browserPath, headless: !process.env.HEADFUL, timeout: 90_000, defaultViewport: { width: 1600, height: 1000 }, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const errors: string[] = [];
 try {
 	page = await browser.newPage();

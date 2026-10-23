@@ -72,11 +72,19 @@ export class Workspace {
 		return ws;
 	}
 
+	/** Close one workspace (its next Workspace.get reopens it, like a restart). */
+	static async close(id: string) {
+		const p = open.get(id);
+		open.delete(id);
+		const ws = await p?.catch(() => undefined);
+		ws?.projects?.stop();
+		await ws?.harness.close(ctx).catch(() => {});
+	}
+
 	static async closeAll() {
 		for (const p of open.values()) {
 			const ws = await p.catch(() => undefined);
-			ws?.projects?.build.stop();
-			ws?.projects?.previews.stopAll();
+			ws?.projects?.stop();
 			await ws?.harness.close(ctx).catch(() => {});
 		}
 	}

@@ -2,7 +2,7 @@
  * Agent-team checks that need no model and no server: backlog edits against a real stored
  * document, and the agent environment's path handling. Run: pnpm --filter @pi-os/server test:teams
  */
-import { check, finish, sleep, testDir, until } from "./lib/harness.ts";
+import { check, finish, sleep, testDir, until, passDocGates } from "./lib/harness.ts";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +19,7 @@ const { agentEnv, fromGitBashPath } = await import("../src/projects/env.ts");
 const u = users.create("teams", "password123");
 const ws = await Workspace.get(workspaces.create("teams", u.id).id);
 const p = await ws.projects.create(u, { goal: "Agent team regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+await passDocGates(ws, p.id);
 await ws.projects.stopAll(p.id);
 
 await ws.projects.editBacklog(p.id, (b) =>

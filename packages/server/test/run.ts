@@ -13,6 +13,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "teams", file: "teams.ts", what: "backlog, approval, model controls, agent sandbox" },
 	{ name: "build", file: "build.ts", what: "M4 scheduler + M5 preview" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
+	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
 	{ name: "transfer", file: "transfer.ts", what: "export/import of blueprints and gadgets between two instances" },
 	{ name: "smoke", file: "smoke.ts", what: "HTTP/WS end to end: chat, gadgets, sharing, gatekeepers, files, blueprints" },
 	{ name: "render", file: "render-check.ts", what: "gadget_screenshot (browser)" },

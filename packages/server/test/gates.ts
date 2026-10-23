@@ -7,7 +7,7 @@
  *    user approves; the user can make a PBI themselves, decline and reopen.
  * Agents are scripted: the test calls their real tools. Run: pnpm --filter @pi-os/server test -- gates
  */
-import { check, finish, until } from "./lib/harness.ts";
+import { check, finish, until, passDocGates } from "./lib/harness.ts";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
@@ -18,6 +18,7 @@ const ws = await Workspace.get(workspaces.create("gates", u.id).id);
 const pm = ws.projects;
 pm.build.nudges = false;
 const p = await pm.create(u, { goal: "Approval gates regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+await passDocGates(ws, p.id);
 await pm.stopAll(p.id);
 for (const role of ["planner", "worker"]) await pm.addAgent(p.id, { role, brief: "wait", start: false });
 const agent = async (k: string) => (await pm.state(p.id)).agents[k]!;

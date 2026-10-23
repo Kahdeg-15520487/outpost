@@ -209,6 +209,74 @@ export class ProjectRepo {
 		return join(this.root, "preview");
 	}
 
+	/** The checkout where pi-os runs the project's tests on submitted work and on merge results. */
+	get verifyDir() {
+		return join(this.root, "verify");
+	}
+
+	/** Put a commit in the verify checkout (detached; ignored files such as node_modules stay). */
+	checkoutVerify(commit: string): Promise<void> {
+		return withLock(this.projectId, async () => {
+			const dir = this.verifyDir;
+			if (!existsSync(join(dir, ".git"))) {
+				await git(this.main, ["worktree", "prune"]).catch(() => {});
+				await git(this.main, ["worktree", "add", "-q", "--detach", dir, commit]);
+				return;
+			}
+			await git(dir, ["merge", "--abort"]).catch(() => {});
+			await git(dir, ["reset", "-q", "--hard"]);
+			await git(dir, ["clean", "-fdq"]);
+			await git(dir, ["checkout", "-q", "--detach", commit]);
+		});
+	}
+
+	/** True if `main` hasn't moved since `commit` was made (main is already part of it): merging it changes nothing else. */
+	async containsMain(commit: string) {
+		return git(this.main, ["merge-base", "--is-ancestor", "main", commit]).then(
+			() => true,
+			() => false,
+		);
+	}
+
+	/**
+	 * Build the merge of `commit` into the current `main` in the verify checkout, without touching main.
+	 * Returns the merge commit and the main it was built on, or the conflicting files.
+	 */
+	prepareMerge(commit: string, message: string): Promise<{ sha?: string; base?: string; conflict?: string }> {
+		return withLock(this.projectId, async () => {
+			const base = (await git(this.main, ["rev-parse", "main"])).trim();
+			const dir = this.verifyDir;
+			if (!existsSync(join(dir, ".git"))) {
+				await git(this.main, ["worktree", "prune"]).catch(() => {});
+				await git(this.main, ["worktree", "add", "-q", "--detach", dir, base]);
+			} else {
+				await git(dir, ["merge", "--abort"]).catch(() => {});
+				await git(dir, ["reset", "-q", "--hard"]);
+				await git(dir, ["clean", "-fdq"]);
+				await git(dir, ["checkout", "-q", "--detach", base]);
+			}
+			try {
+				await git(dir, ["merge", "-q", "--no-ff", "-m", message, commit]);
+			} catch (e) {
+				const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+				await git(dir, ["merge", "--abort"]).catch(() => {});
+				return { conflict: conflicted || (e as Error).message.split("\n")[0] };
+			}
+			return { sha: (await git(dir, ["rev-parse", "HEAD"])).trim(), base };
+		});
+	}
+
+	/** Move main to a prepared (and tested) merge commit, if main is still where it was built from. */
+	advanceMain(sha: string, base: string): Promise<{ moved: boolean; commit?: string; files: string[] }> {
+		return withLock(this.projectId, async () => {
+			const now = (await git(this.main, ["rev-parse", "main"])).trim();
+			if (now !== base) return { moved: true, files: [] };
+			const files = (await git(this.main, ["diff", "--name-only", base, sha])).trim().split("\n").filter(Boolean);
+			await git(this.main, ["merge", "-q", "--ff-only", sha]);
+			return { moved: false, commit: await this.head(), files };
+		});
+	}
+
 	/** Update the preview checkout to `main`'s HEAD; returns that commit. Ignored files (node_modules) stay. */
 	updatePreview(): Promise<string> {
 		return withLock(this.projectId, async () => {

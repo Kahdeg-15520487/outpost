@@ -274,6 +274,25 @@ export function createApi(): Router {
 		await ws.projects.stopAll(req.params.p!);
 		return { ok: true };
 	});
+	// Document gates (M2): requirements and design.
+	r.post("/api/w/:ws/projects/:p/gates/:gate/approve", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { comment } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
+		if (!gate) throw new HttpError(404, "No such gate");
+		await ws.projects.approveGate(req.params.p!, gate, user, comment ? String(comment) : undefined);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/projects/:p/gates/:gate/changes", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { comment } = await req.body();
+		await ws.projects.meta(req.params.p!);
+		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
+		if (!gate) throw new HttpError(404, "No such gate");
+		await ws.projects.gateChanges(req.params.p!, gate, user, String(comment ?? ""));
+		return { ok: true };
+	});
 	// Questions: blocking flag, dismiss (answering is a message to the agent, above).
 	r.patch("/api/w/:ws/projects/:p/questions/:id", async (req) => {
 		const { user, ws } = await member(req, "editor");

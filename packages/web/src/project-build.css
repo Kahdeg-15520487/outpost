@@ -77,3 +77,24 @@
 .fb-pbi { display: grid; gap: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 .fb-hint { font-size: 11.5px; }
 @media (max-width: 1100px) { .fb-panel { width: 300px; } }
+
+/* ================================================================== document gates (M2) + retrospective */
+.gate-bar { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; border: 1px solid var(--line); background: var(--card); }
+.gate-bar.idle { color: var(--muted); font-size: 12.5px; }
+.gate-bar.ok { border-color: #bfe0c8; background: var(--ok-wash); color: #1d5a33; }
+.gate-bar.changes { border-color: #f3c7b5; background: var(--signal-wash); color: var(--signal-ink); }
+.gate-bar.pending { border-color: #f0dca4; background: #fffaf0; box-shadow: 0 8px 24px -16px rgba(181, 122, 6, .7); display: grid; gap: 8px; }
+.gate-main { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.gate-summary { margin-top: 4px; white-space: pre-wrap; font-size: 13px; }
+.gate-actions { display: flex; gap: 6px; flex: none; }
+.gate-block { font-size: 12.5px; color: #7f1d1d; }
+.gate-changes { display: grid; gap: 6px; }
+.vt-badge.gate { background: #b45309; }
+.ov-gate { display: flex; align-items: center; gap: 9px; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid #f0dca4; background: #fffaf0; font-size: 13px; color: var(--text); text-decoration: none; }
+.ov-gate i { width: 9px; height: 9px; border-radius: 50%; background: #d97706; flex: none; }
+.ov-gate span:nth-child(2) { flex: 1; }
+.ov-gate-go { font-weight: 600; color: #b45309; flex: none; }
+.ov-gate:hover { border-color: #d97706; }
+.ov-retro { margin: 0 0 16px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); }
+.ov-retro summary { cursor: pointer; font-size: 13px; }
+.ov-retro[open] summary { margin-bottom: 8px; }

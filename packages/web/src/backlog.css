@@ -161,3 +161,17 @@ span.mq.kc-area { display: inline-block; vertical-align: middle; }
 	80%, 100% { transform: translateX(var(--mq-shift, 0)); }
 }
 /* Not switched off for prefers-reduced-motion: it only runs while you hover a card, and many Windows setups report "reduce" by default. */
+
+/* ---------------------------------------------------------------- checks + definition of done */
+.kc-check { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--paper-2); color: var(--muted); white-space: nowrap; }
+.kc-check.running { background: #dbeafe; color: #1d4ed8; }
+.kc-check.passed { background: var(--ok-wash); color: #15803d; }
+.kc-check.failed { background: #fde2e2; color: #b91c1c; }
+.ip-check { font-size: 13px; display: grid; gap: 4px; }
+.ip-check details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.ip-output { margin: 4px 0 0; padding: 8px 10px; max-height: 260px; overflow: auto; border-radius: 8px; background: #15130f; color: #e8e2d2; font: 11px/1.45 var(--mono); white-space: pre-wrap; }
+.ip-dod { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.ip-dod li span { color: #15803d; font-weight: 700; margin-right: 4px; }
+.ip-dod li.unmet span { color: #b91c1c; }
+.ip-dod em { color: var(--muted); }
+.ip-context { margin: 0; padding-left: 16px; font-size: 11.5px; }

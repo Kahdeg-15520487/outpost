@@ -4,7 +4,7 @@
  * history, live preview). Needs Chrome, Edge or Chromium (or PI_OS_CHROME) and a built web app
  * (pnpm build). Run: pnpm --filter @pi-os/server test:ui   (HEADFUL=1 to watch)
  */
-import { check, finish, must, sleep, startServer, until } from "./lib/harness.ts";
+import { check, finish, must, sleep, startServer, until, passDocGates } from "./lib/harness.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import puppeteer, { type Page } from "puppeteer-core";
@@ -22,6 +22,7 @@ const base = await startServer();
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { users } = await import("../src/kernel/system-db.ts");
 const { addItems } = await import("../src/projects/backlog.ts");
+const { DEFAULT_DOD } = await import("../src/projects/checks.ts");
 
 let page: Page;
 
@@ -224,6 +225,8 @@ async function run() {
 	await until("resumed", async () => !(await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.build?.paused);
 	await page.evaluate(() => ([...document.querySelectorAll(".kb-card")].find((c) => c.querySelector(".kc-id")?.textContent === "T1") as HTMLElement | undefined)?.click());
 	check("a task's panel shows its review and merge history", await until("history", () => text(".ip-history").then((t) => /Changes requested/.test(t) && /Merged into main/.test(t))));
+	check("the panel shows the definition of done the reviewer confirmed", (await count(".ip-dod li.met")) === 5 && /confirmed by Reviewer/i.test(await text(".ip")));
+	check("the panel shows the checks", /no tests/i.test(await text(".ip-check")));
 
 	await go(projectHash("app"));
 	const running = await until("preview running", () => text(".pv-status").then((t) => /Running/.test(t)), 40000);
@@ -268,6 +271,24 @@ async function run() {
 	await clickText(".bl-pending button", /^Approve/);
 	check("approve from the bar: nothing pending any more", await until("approved", async () => !Object.values((await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.items as any[]).some((i) => i.pending)));
 
+	console.log("document gates");
+	const { ProjectDoc } = await import("../src/projects/docs.ts");
+	const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
+	await (await Workspace.get(ws)).harness.commit(async (tx: any) => void ((await tx.doc(ProjectDoc, pid, null)).gates = {}), BACKGROUND_CONTEXT);
+	await asAgent("lead", "request_review", { gate: "requirements", summary: "Three stories, one open point" });
+	await pm.stopAll(pid);
+	await go(projectHash("overview"));
+	check("Overview: the requirements wait for approval", await until("ov gate", () => text(".ov-gate").then((t) => /requirements are waiting for your approval/i.test(t))));
+	await go(projectHash("requirements"));
+	must("Requirements tab: approval bar", await until("gate bar", () => text(".gate-bar.pending").then((t) => /waiting for your approval/.test(t) && /Three stories/.test(t))));
+	await shot("gate");
+	await clickText(".gate-bar button", /^Approve requirements/);
+	check("approve from the tab", await until("approved", async () => (await api("GET", `/api/w/${ws}/projects/${pid}`)).state.gates?.requirements?.status === "approved" && /approved/.test(await text(".gate-bar"))));
+	await go(projectHash("design"));
+	check("Design tab: not submitted yet", /not submitted for your approval yet/.test(await text(".gate-bar.idle")));
+	await go(projectHash("backlog"));
+	check("the backlog says which documents still need approval", /Approve the design first/.test(await text(".bl")) || (await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.approval.status === "approved");
+
 	check("no errors in the page", errors.length === 0, errors);
 }
 
@@ -279,6 +300,7 @@ async function seedProject(wsId: string): Promise<string> {
 	const ana = users.byUsername("ana")!;
 	const { project } = await api("POST", `/api/w/${wsId}/projects`, { goal: "A team availability board: who is in the office which day", model: { provider: "pi-os-demo", modelId: "demo" } });
 	const pid = project.id as string;
+	await passDocGates(ws, pid);
 	await pm.stopAll(pid);
 	for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(pid, { role, brief: "wait", start: false });
 	const repo = pm.repo(pid);
@@ -318,7 +340,7 @@ async function seedProject(wsId: string): Promise<string> {
 	await pm.build.verdict(pid, await agent("reviewer"), "T1", "changes", "Set the content type");
 	await pm.build.taskDone(pid, await agent("dev-1"), "content type set", false);
 	await until("review 2", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewRound === 2);
-	await pm.build.verdict(pid, await agent("reviewer"), "T1", "approve", "ok");
+	await pm.build.verdict(pid, await agent("reviewer"), "T1", "approve", "ok", DEFAULT_DOD.map((_, i) => ({ item: i + 1, met: true })));
 	await until("T2 briefed", async () => (await item("T2")).briefed);
 	return pid;
 }

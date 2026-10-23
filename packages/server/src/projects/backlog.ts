@@ -29,6 +29,8 @@ export type BacklogItem = {
 	order: number;
 	createdBy: string;
 	updatedAt: number;
+	/** Tasks: the docs a developer needs, inlined into their brief: "docs/design.md#Data model", "docs/decisions/0003-auth.md". */
+	context?: string[];
 	/** The user feedback (FB-n) this item came from. */
 	feedback?: string;
 	/** Drafted by the team after the backlog was approved (from feedback): not built until the user approves it. */
@@ -47,17 +49,29 @@ export type BacklogItem = {
 	submitted?: { commit: string; summary: string; at: number; by: string; files: string[] };
 	/** The merge commit on main once done. */
 	merged?: string;
+	/** Tests pi-os ran: on the submitted commit (stage submit), or on the merge result (stage merge). */
+	checks?: TaskCheck;
+	/** The reviewer approved; pi-os merges after the final checks. */
+	approvedBy?: string;
+	/** The reviewer's definition-of-done checklist at approval. */
+	dod?: { by: string; at: number; items: { text: string; met: boolean; note?: string }[] };
 	/** Reminders sent to the agent holding it while it sat idle. */
 	nudges?: number;
 	/** What happened to it, oldest first (bounded). */
 	history?: { at: number; by: string; text: string }[];
 };
 
+export type TaskCheck = { status: "running" | "passed" | "failed" | "skipped"; stage: "submit" | "merge"; commit: string; at: number; command?: string; output?: string; reason?: string; ms?: number };
+
 export type BuildState = {
 	/** No new assignments while paused; work in progress continues. */
 	paused?: boolean;
 	startedAt?: number;
 	finishedAt?: number;
+	/** The latest retrospective (docs/retrospectives/NNNN-date.md), written when a build finishes. */
+	retro?: string;
+	/** The lead added its lessons to it. */
+	retroNotes?: boolean;
 };
 
 export type Approval = {
@@ -195,7 +209,7 @@ export function backlogOutline(b: Backlog): string {
 	return out.join("\n");
 }
 
-export type ItemInput = { ref?: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; deps?: string[]; area?: string; estimate?: Estimate; feedback?: string };
+export type ItemInput = { ref?: string; type: ItemType; parent?: string; title: string; description?: string; acceptance?: string[]; deps?: string[]; area?: string; estimate?: Estimate; feedback?: string; context?: string[] };
 
 /**
  * Add items in one go. `ref`s let items in the same call point at each other as parent or
@@ -223,6 +237,7 @@ export function addItems(b: Backlog, inputs: ItemInput[], by: string, opts: { pe
 		if (input.area) item.area = input.area;
 		if (input.estimate) item.estimate = input.estimate;
 		if (input.feedback) item.feedback = input.feedback;
+		if (input.context?.length) item.context = input.context.map((c) => c.trim()).filter(Boolean).slice(0, 12);
 		if (opts.pending) item.pending = true;
 		if (input.parent) {
 			const p = resolve(input.parent);

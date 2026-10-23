@@ -115,6 +115,10 @@ The **Backlog** tab is a Kanban board (To do / In progress / Review / Done) of t
 - An agent that stops mid-task is reminded twice, then the task is marked blocked and the Lead is told.
 - The Backlog tab shows the progress, with a Pause / Resume button. Each task's panel shows what was submitted and its history. Tiles show the task each agent is on.
 
+**Document gates.** The Lead submits the requirements, then the design, for your approval; you approve or request changes on the Requirements and Design tabs. The backlog can't be approved before both are (projects created before gates existed aren't held to this).
+
+**Quality gates in the build.** Developer briefs inline the design sections and decision records the Planner named for each task, what dependencies delivered, and the last retrospective's actions. `task_done` runs the project's `test` command (`.pios/project.json`) on the submitted commit; failing work goes back to the developer. The reviewer approves only by confirming the **definition of done** (pi-os defaults plus the project's `definitionOfDone`). If `main` moved since the submission, pi-os tests the merge result before moving `main`. The task panel shows the checks with their output and the confirmed checklist. When a build finishes, pi-os writes `docs/retrospectives/NNNN-date.md` with its facts and the Lead adds lessons (Overview → Retrospective).
+
 **Questions and readiness.** An agent's question is *blocking* (it waits for you) or *non-blocking* (it states its assumption and carries on). While a blocking question is open, nothing can be approved to build. Answer, dismiss, or re-flag questions on the Overview tab.
 
 **Feedback.** The App tab's Feedback panel sends your feedback on the running app to the Planner as FB-n, tied to the version you saw. The Planner drafts PBIs and tasks for it. They, and anything agents add after you approved the backlog, wait as **pending** until you approve them on the Backlog tab. You can also make a PBI from feedback yourself, or decline it.
@@ -184,6 +188,7 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 |---|---|
 | `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
 | `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation) |
+| `quality` | M2 document gates, story-style briefs, tests before review and before merge (incl. merge results when main moved), definition of done, retrospective, restart resume |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |

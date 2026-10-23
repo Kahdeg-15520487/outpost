@@ -7,7 +7,7 @@ import { HttpError, newId, type User } from "../kernel/system-db.ts";
 import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
-import { ACTIVITY_LIMIT, ProjectDoc, ProjectsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
+import { ACTIVITY_LIMIT, GATE_DOCS, ProjectDoc, ProjectsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type GateName, type ProjectMeta, type ProjectStage, type ProjectState } from "./docs.ts";
 import { ProjectRepo } from "./repo.ts";
 import { join } from "node:path";
 import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, isPending, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
@@ -15,6 +15,8 @@ import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 import { BuildScheduler } from "./build.ts";
 import { PreviewManager } from "./preview.ts";
+import { Checks } from "./checks.ts";
+import { retroLessons } from "./retro.ts";
 
 type ModelRef = { provider: string; modelId: string };
 /** A user file handed to the team: its absolute path in the attachments folder, plus what the transcript's file chips need. */
@@ -61,14 +63,17 @@ export class ProjectManager {
 	readonly build: BuildScheduler;
 	/** Milestone 5: runs the app from main for the App tab. */
 	readonly previews: PreviewManager;
+	/** Tests on submitted work and merge results. */
+	readonly checks: Checks;
 
 	constructor(readonly ws: Workspace) {
 		this.build = new BuildScheduler(this);
 		this.previews = new PreviewManager(this);
+		this.checks = new Checks(this);
 		this.coding = createCodingTools();
 		const tools = this.#tools();
 		this.tools = new Map(tools.map((t) => [t.name, t]));
-		this.#leadOnly = tools.filter((t) => ["team_add", "set_stage"].includes(t.name));
+		this.#leadOnly = tools.filter((t) => ["team_add", "set_stage", "request_review", "retro_notes"].includes(t.name));
 		this.extension = defineExtension({ name: "pios-project", tools });
 	}
 
@@ -98,8 +103,8 @@ export class ProjectManager {
 			}
 			// Resume the build: re-send briefs that never went out, assign what's ready.
 			this.build.kick(p.id, 3000);
-			// A dev server a killed pi-os left behind.
-			void this.previews.reap(p.id);
+			// A dev server a killed pi-os left behind, then the preview itself if it was running.
+			void this.previews.reap(p.id).then(() => this.previews.resume(p.id));
 		}
 	}
 
@@ -164,6 +169,14 @@ export class ProjectManager {
 	}
 
 	readonly #snapshotTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** The workspace is closing: stop timers, the scheduler and previews (they'd write to a closed session). */
+	stop() {
+		for (const t of this.#snapshotTimers.values()) clearTimeout(t);
+		this.#snapshotTimers.clear();
+		this.build.stop();
+		this.previews.stopAll();
+	}
 	/** Rewrite docs/backlog.md on main a few seconds after the last backlog change. */
 	snapshotSoon(projectId: string) {
 		clearTimeout(this.#snapshotTimers.get(projectId));
@@ -186,6 +199,8 @@ export class ProjectManager {
 	/** The user approves the backlog (Backlog tab); the Lead is told to start building. */
 	async approveBacklog(projectId: string, user: User, comment?: string) {
 		await this.assertReady(projectId);
+		const missing = await this.unapprovedGates(projectId);
+		if (missing.length) throw new HttpError(409, `Approve the ${missing.join(" and the ")} first (on ${missing.length === 1 ? "its tab" : "their tabs"}); the backlog is planned from ${missing.length === 1 ? "it" : "them"}.`);
 		const rev = await this.editBacklog(projectId, (b) => {
 			b.approval = Object.fromEntries(Object.entries({ ...b.approval, status: "approved", decidedBy: user.displayName, decidedAt: Date.now(), comment: comment || undefined, revision: b.revision + 1 }).filter(([, v]) => v !== undefined)) as Backlog["approval"];
 			return b.revision + 1;
@@ -277,6 +292,46 @@ export class ProjectManager {
 			out = JSON.parse(JSON.stringify(q));
 		}, ctx);
 		return out;
+	}
+
+	// ------------------------------------------------------------------ document gates (M2)
+
+	/** Gates a project created with gates still needs approved before its backlog can be. */
+	async unapprovedGates(projectId: string): Promise<GateName[]> {
+		const gates = (await this.state(projectId)).gates;
+		if (!gates) return [];
+		return (["requirements", "design"] as GateName[]).filter((g) => gates[g]?.status !== "approved");
+	}
+
+	/** The user approves requirements or design; the lead moves on. */
+	async approveGate(projectId: string, gate: GateName, user: User, comment?: string) {
+		await this.assertReady(projectId);
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			st.gates ??= {};
+			const g = st.gates[gate];
+			if (!g || g.status !== "pending") throw new HttpError(409, `The ${gate} aren't waiting for approval`.replace("design aren't", "design isn't"));
+			Object.assign(g, { status: "approved", decidedBy: user.displayName, decidedAt: Date.now() }, comment ? { comment } : {});
+			pushActivity(st, { at: Date.now(), kind: "user", text: `${user.displayName} approved the ${gate}${comment ? `: ${clip(comment, 120)}` : ""}` });
+		}, ctx);
+		await this.setStage(projectId, gate === "requirements" ? "design" : "planning", `${gate} approved`);
+		await this.tellLead(
+			projectId,
+			`The user (${user.displayName}) **approved the ${gate}**.${comment ? `\n\nTheir note: ${comment}` : ""}\n\n${gate === "requirements" ? "Start the design: brief the architect (and the designer, if you have one)." : "Start planning: brief the planner to build the backlog."}`,
+		);
+	}
+
+	/** The user sends requirements or design back with a comment. */
+	async gateChanges(projectId: string, gate: GateName, user: User, comment: string) {
+		if (!comment.trim()) throw new HttpError(400, "Say what should change");
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+			const g = st.gates?.[gate];
+			if (!g || g.status !== "pending") throw new HttpError(409, `The ${gate} isn't waiting for approval`);
+			Object.assign(g, { status: "changes", decidedBy: user.displayName, decidedAt: Date.now(), comment });
+			pushActivity(st, { at: Date.now(), kind: "user", text: `${user.displayName} asked for changes to the ${gate}: ${clip(comment, 140)}` });
+		}, ctx);
+		await this.tellLead(projectId, `The user (${user.displayName}) **requested changes to the ${gate}** (${GATE_DOCS[gate]}):\n\n${comment}\n\nHave it revised and published, then request_review again.`);
 	}
 
 	// ------------------------------------------------------------------ feedback on the running app
@@ -417,6 +472,7 @@ export class ProjectManager {
 			const all = await tx.doc(ProjectsDoc);
 			all.projects[id] = meta;
 			const st = (await tx.doc(ProjectDoc, id, null)) as ProjectState;
+			st.gates = {};
 			st.activity.push({ at: Date.now(), kind: "user", text: `${user.displayName} started the project` });
 		}, ctx);
 		this.#publishList();
@@ -752,6 +808,27 @@ export class ProjectManager {
 				},
 			}),
 			defineTool({
+				name: "request_review",
+				description:
+					"Lead only. Ask the user to approve the requirements (docs/requirements.md) or the design (docs/design.md, decision records, wireframes) on main. They approve or request changes on that document's tab; their decision arrives as a message. End your turn after it. The backlog can't be approved until both are.",
+				parameters: Type.Object({ gate: Type.Union([Type.Literal("requirements"), Type.Literal("design")]), summary: Type.String({ description: "a few lines: what's in it, the main choices, open points" }) }),
+				execute: async (args, api) => {
+					const { projectId, me, state } = await this.#caller(api);
+					if (me.role !== "lead") throw new Error("Only the lead requests reviews.");
+					const gate = args.gate as GateName;
+					if (!(await this.repo(projectId).read(GATE_DOCS[gate]).catch(() => undefined))) throw new Error(`${GATE_DOCS[gate]} isn't on main yet. Have it written and published first.`);
+					if (gate === "design" && state.gates && state.gates.requirements?.status !== "approved") throw new Error("Get the requirements approved first.");
+					const commit = await this.repo(projectId).head().catch(() => undefined);
+					await this.ws.harness.commit(async (tx) => {
+						const st = (await tx.doc(ProjectDoc, projectId, null)) as ProjectState;
+						st.gates ??= {};
+						st.gates[gate] = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now(), ...(commit ? { commit } : {}) };
+						pushActivity(st, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the ${gate} — see the ${gate === "requirements" ? "Requirements" : "Design"} tab` });
+					}, ctx);
+					return { ...text(`Submitted the ${gate} for review. The user decides on its tab; their decision arrives as a message. End your turn now.`), control: { terminate: true } };
+				},
+			}),
+			defineTool({
 				name: "set_stage",
 				description: `Lead only. Move the project to a stage the user sees: ${STAGES.join(", ")}.`,
 				parameters: Type.Object({ stage: Type.String(), note: Type.Optional(Type.String()) }),
@@ -794,15 +871,44 @@ export class ProjectManager {
 			}),
 			defineTool({
 				name: "review_verdict",
-				description: "Reviewers: your verdict on a task pi-os gave you to review. approve: pi-os merges it into main; changes: it goes back to the developer with your notes. End your turn after it.",
+				description:
+					"Reviewers: your verdict on a task pi-os gave you to review. approve (with checklist confirming every definition-of-done item from the review brief): pi-os tests the merge result and merges it into main; changes: it goes back to the developer with your notes. End your turn after it.",
 				parameters: Type.Object({
 					task: Type.String({ description: "task id, e.g. T4" }),
 					verdict: Type.Union([Type.Literal("approve"), Type.Literal("changes")]),
 					notes: Type.String({ description: "changes: concrete, actionable findings; approve: optional remarks" }),
+					checklist: Type.Optional(
+						Type.Array(Type.Object({ item: Type.Number({ description: "definition-of-done item number, from 1" }), met: Type.Boolean(), note: Type.Optional(Type.String()) }), { description: "approve: one entry per definition-of-done item" }),
+					),
 				}),
 				execute: async (args, api) => {
 					const { projectId, me } = await this.#caller(api);
-					return { ...text(await this.build.verdict(projectId, me, args.task, args.verdict, args.notes)), control: { terminate: true } };
+					return { ...text(await this.build.verdict(projectId, me, args.task, args.verdict, args.notes, args.checklist ?? [])), control: { terminate: true } };
+				},
+			}),
+			defineTool({
+				name: "retro_notes",
+				description: "Lead only, after pi-os reports a finished build: add the lessons to the retrospective it wrote (what went well, what to improve, concrete actions for the next build). The actions go into every developer's brief from then on.",
+				parameters: Type.Object({
+					went_well: Type.Array(Type.String()),
+					to_improve: Type.Array(Type.String()),
+					actions: Type.Array(Type.String(), { description: "concrete, checkable practices for the next build, e.g. \"run the UI tests before task_done\"" }),
+				}),
+				execute: async (args, api) => {
+					const { projectId, me } = await this.#caller(api);
+					if (me.role !== "lead") throw new Error("Only the lead writes the retrospective's lessons.");
+					const b = await this.backlog(projectId);
+					const path = b.build?.retro;
+					if (!path) throw new Error("There's no retrospective yet: pi-os writes one when a build finishes.");
+					const repo = this.repo(projectId);
+					const md = (await repo.read(path))?.text ?? "";
+					const i = md.indexOf("## Lessons");
+					const next = (i >= 0 ? md.slice(0, i) : `${md.trimEnd()}\n\n`) + retroLessons(args);
+					await repo.writeMain(path, next, `Retrospective lessons (${me.name})`);
+					hub.publish(this.channel(projectId), { t: "project.repo", ws: this.ws.id, project: projectId, head: await repo.head(), files: [path] });
+					await this.editBacklog(projectId, (b) => void (b.build && (b.build.retroNotes = true)));
+					await this.log(projectId, { at: Date.now(), agent: me.key, kind: "team", text: `${me.name} added ${args.actions.length} action${args.actions.length === 1 ? "" : "s"} to the retrospective` });
+					return text(`Lessons added to ${path}. Developers' briefs carry the actions from now on.`);
 				},
 			}),
 			defineTool({
@@ -842,6 +948,7 @@ export class ProjectManager {
 			area: Type.Optional(Type.String({ description: "tasks: the part of app/ they touch, e.g. app/src/api" })),
 			estimate: Type.Optional(Type.Union([Type.Literal("S"), Type.Literal("M"), Type.Literal("L")])),
 			feedback: Type.Optional(Type.String({ description: "the user feedback (FB-n) this item comes from; such items wait for the user's approval" })),
+			context: Type.Optional(Type.Array(Type.String(), { description: 'tasks: the docs a developer needs, inlined into their brief by pi-os, e.g. "docs/design.md#Data model", "docs/decisions/0003-auth.md", "docs/wireframes/grid.html"' })),
 		});
 		return [
 			defineTool({
@@ -878,6 +985,7 @@ export class ProjectManager {
 					area: Type.Optional(Type.String()),
 					estimate: Type.Optional(Type.Union([Type.Literal("S"), Type.Literal("M"), Type.Literal("L")])),
 					parent: Type.Optional(Type.String()),
+					context: Type.Optional(Type.Array(Type.String(), { description: "tasks: docs inlined into the developer's brief (path or path#Heading)" })),
 				}),
 				execute: async (args, api) => {
 					const { projectId, me } = await this.#caller(api);
@@ -900,7 +1008,7 @@ export class ProjectManager {
 							if (args.assignee) item.assignee = args.assignee;
 							else delete item.assignee;
 						}
-						for (const k of ["status", "title", "description", "acceptance", "area", "estimate"] as const) if (args[k] !== undefined) (item as any)[k] = args[k];
+						for (const k of ["status", "title", "description", "acceptance", "area", "estimate", "context"] as const) if (args[k] !== undefined) (item as any)[k] = args[k];
 						item.updatedAt = Date.now();
 						return was !== item.status ? `${item.id} “${clip(item.title, 60)}” → ${STATUS_LABEL[item.status]}` : undefined;
 					});
@@ -938,7 +1046,8 @@ export class ProjectManager {
 					const { projectId, me, state } = await this.#caller(api);
 					if (!["lead", "planner"].includes(me.role)) throw new Error("Only the lead or the planner requests backlog approval.");
 					const blockers = openBlocking(state);
-					const readiness = blockers.length ? ` Note: ${blockers.length} blocking question${blockers.length === 1 ? " is" : "s are"} still open; the user can't approve until ${blockers.length === 1 ? "it's" : "they're"} answered.` : "";
+					const gatesLeft = state.gates ? (["requirements", "design"] as GateName[]).filter((g) => state.gates![g]?.status !== "approved") : [];
+					const readiness = gatesLeft.length ? ` Note: the ${gatesLeft.join(" and the ")} ${gatesLeft.length === 1 ? "isn't" : "aren't"} approved yet; the user can't approve the backlog before that (request_review).` : blockers.length ? ` Note: ${blockers.length} blocking question${blockers.length === 1 ? " is" : "s are"} still open; the user can't approve until ${blockers.length === 1 ? "it's" : "they're"} answered.` : "";
 					const current = await this.backlog(projectId);
 					if (current.approval.status === "approved") {
 						const pending = Object.values(current.items).filter((i) => i.pending);

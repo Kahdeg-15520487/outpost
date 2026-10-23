@@ -25,7 +25,7 @@ export type PreviewInfo = { status: PreviewStatus; port?: number; /** Address th
 export type RunConfig = { install?: string; test?: string; dev?: { command: string; readyPath?: string } | string };
 
 const LOG_LIMIT = 1500;
-const MANIFESTS = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "requirements.txt", "pyproject.toml", "poetry.lock", "Gemfile.lock", "go.sum", "Cargo.lock", "composer.lock"];
+export const MANIFESTS = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "requirements.txt", "pyproject.toml", "poetry.lock", "Gemfile.lock", "go.sum", "Cargo.lock", "composer.lock"];
 
 class Preview {
 	info: PreviewInfo = { status: "off", logSeq: 0 };
@@ -104,7 +104,7 @@ function killTracked(list: Tracked[], table?: Map<number, { ppid: number; create
 }
 
 let shellPath: string | null | undefined;
-function shell(): string | null {
+export function shell(): string | null {
 	if (shellPath !== undefined) return shellPath;
 	if (process.platform === "win32") {
 		const candidates = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]].filter(Boolean).map((p) => `${p}\\Git\\bin\\bash.exe`);
@@ -133,7 +133,7 @@ function freePort(): Promise<number> {
 }
 
 /** Kill a process and everything it started (dev servers spawn children). */
-function killTree(p: ChildProcess | undefined) {
+export function killTree(p: ChildProcess | undefined) {
 	if (!p?.pid || p.exitCode !== null) return;
 	try {
 		if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(p.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
@@ -248,7 +248,10 @@ export class PreviewManager {
 		p.tracked = [];
 		rmSync(this.#pidFile(projectId), { force: true });
 		p.install = p.proc = undefined;
-		if (byUser) this.#log(projectId, "Stopped");
+		if (byUser) {
+			this.#log(projectId, "Stopped");
+			rmSync(this.#wantFile(projectId), { force: true });
+		}
 		this.#set(projectId, { status: "off", port: undefined, host: undefined, error: undefined, readyAt: undefined, stoppedByUser: byUser || undefined });
 	}
 
@@ -263,6 +266,16 @@ export class PreviewManager {
 			rmSync(this.#pidFile(id), { force: true });
 			this.#previews.delete(id);
 		}
+	}
+
+	/** Present while the preview should run (started, not stopped by the user): a restarted pi-os brings it back. */
+	#wantFile(projectId: string) {
+		return join(this.m.repo(projectId).root, "preview.want");
+	}
+
+	/** After a restart: start the preview again if it was running before. */
+	async resume(projectId: string) {
+		if (existsSync(this.#wantFile(projectId)) && this.#get(projectId).info.status === "off") await this.start(projectId, "pi-os restarted").catch(() => {});
 	}
 
 	#pidFile(projectId: string) {
@@ -378,6 +391,7 @@ export class PreviewManager {
 						if (stale()) return p.info;
 						if (candidate !== port) this.#log(projectId, `The app ignored $PORT and listens on ${candidate}; using that.`);
 						this.#set(projectId, { status: "running", port: candidate, host, readyAt: Date.now() });
+						writeFileSync(this.#wantFile(projectId), String(Date.now()));
 						this.#log(projectId, `ready on http://${host}:${candidate}${readyPath}`);
 						// Remember the whole tree (Windows can't always kill it through npm/bash wrappers).
 						if (process.platform === "win32" && proc.pid) {

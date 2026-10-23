@@ -4,7 +4,7 @@
  * test writes files into their worktrees and calls the same methods their tools call.
  * Run: pnpm --filter @pi-os/server test:build
  */
-import { check, finish, sleep, testDir, until } from "./lib/harness.ts";
+import { check, finish, sleep, testDir, until, passDocGates } from "./lib/harness.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,8 @@ const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { addItems } = await import("../src/projects/backlog.ts");
 const { git } = await import("../src/projects/repo.ts");
+const { DEFAULT_DOD } = await import("../src/projects/checks.ts");
+const dod = DEFAULT_DOD.map((_, i) => ({ item: i + 1, met: true }));
 
 
 const u = users.create("builder", "password123");
@@ -21,6 +23,7 @@ const ws = await Workspace.get(workspaces.create("build", u.id).id);
 const pm = ws.projects;
 pm.build.nudges = false;
 const p = await pm.create(u, { goal: "Build flow regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+await passDocGates(ws, p.id);
 await pm.stopAll(p.id);
 for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(p.id, { role, brief: "wait for pi-os", start: false });
 const agent = async (key: string) => (await pm.state(p.id)).agents[key]!;
@@ -85,10 +88,10 @@ write("dev-1", "app/server.js", `require("http").createServer((q, s) => s.end("h
 await pm.build.taskDone(p.id, await agent("dev-1"), "added the newline", false);
 await until("second review", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewRound === 2);
 const before = (await repo.files()).includes("app/server.js");
-const v2 = await pm.build.verdict(p.id, await agent("reviewer"), "T1", "approve", "");
+const v2 = await pm.build.verdict(p.id, await agent("reviewer"), "T1", "approve", "", dod);
 r1 = await item("T1");
 check("approve merges into main", r1.status === "done" && !!r1.merged && !before && (await repo.files()).includes("app/server.js"), [v2, r1.status]);
-check("history tells the story", (r1.history ?? []).map((h) => h.text.split(/[: ]/)[0]).join(",") === "Assigned,Submitted,Review,Changes,Submitted,Review,Approved,Merged", (r1.history ?? []).map((h) => h.text));
+check("history tells the story", (r1.history ?? []).map((h) => h.text.split(/[: ]/)[0]).join(",") === "Assigned,Submitted,No,Review,Changes,Submitted,No,Review,Approved,Merged", (r1.history ?? []).map((h) => h.text));
 
 // ------------------------------------------------------------------ the dependency unlocks; preview runs main
 await until("T2 assigned", async () => (await item("T2")).briefed);
@@ -110,7 +113,7 @@ write("dev-1", "app/server.js", `require("http").createServer((q, s) => s.end("h
 await pm.build.taskDone(p.id, await agent("dev-1"), "v2 greeting", false);
 for (let i = 0; i < 2; i++) {
 	const t = await until("a review", async () => Object.values((await pm.backlog(p.id)).items).find((x) => x.status === "review" && x.reviewBriefed));
-	if (t) await pm.build.verdict(p.id, await agent("reviewer"), t.id, "approve", "ok");
+	if (t) await pm.build.verdict(p.id, await agent("reviewer"), t.id, "approve", "ok", dod);
 }
 await until("all done", async () => (await pm.backlog(p.id)).build?.finishedAt);
 b = await pm.backlog(p.id);

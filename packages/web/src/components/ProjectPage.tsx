@@ -4,7 +4,7 @@ import "../project-repo.css";
 import "../project-build.css";
 import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
+import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateName, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
@@ -123,6 +123,7 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 					<a key={t.id} href={projectHref(ws.id, projectId, t.id === "overview" ? undefined : t.id)} className={current === t.id ? "on" : ""}>
 						{t.label}
 						{t.id === "overview" && openQuestions.length > 0 && <span className="vt-badge">{openQuestions.length}</span>}
+						{(t.id === "requirements" || t.id === "design") && state.gates?.[t.id]?.status === "pending" && <span className="vt-badge gate" title="Waiting for your approval">!</span>}
 						{t.id === "requirements" && Object.keys(state.attachments ?? {}).length > 0 && (
 							<span className="vt-count" title="Attachments">
 								<svg viewBox="0 0 16 16" aria-hidden>
@@ -158,13 +159,27 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 						path="docs/requirements.md"
 						tick={live.repoTick}
 						empty="The product owner hasn't published requirements yet."
-						before={<AttachmentStrip wsId={ws.id} attachments={Object.values(state.attachments ?? {}).sort((a, b) => a.at - b.at)} />}
+						before={
+							<>
+								<GateBar ws={ws.id} projectId={projectId} gate="requirements" g={state.gates?.requirements} hasGates={!!state.gates} canEdit={canEdit} blockers={openQuestions.filter(isBlocking).length} />
+								<AttachmentStrip wsId={ws.id} attachments={Object.values(state.attachments ?? {}).sort((a, b) => a.at - b.at)} />
+							</>
+						}
 					/>
 				)}
-				{current === "design" && <DocTab ws={ws.id} projectId={projectId} path="docs/design.md" tick={live.repoTick} empty="The architect publishes the design once requirements are approved." />}
+				{current === "design" && (
+					<DocTab
+						ws={ws.id}
+						projectId={projectId}
+						path="docs/design.md"
+						tick={live.repoTick}
+						empty="The architect publishes the design once requirements are approved."
+						before={<GateBar ws={ws.id} projectId={projectId} gate="design" g={state.gates?.design} hasGates={!!state.gates} canEdit={canEdit} blockers={openQuestions.filter(isBlocking).length} />}
+					/>
+				)}
 				{current === "decisions" && <DecisionsTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 				{current === "wireframes" && <WireframesTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
-				{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} blockers={openQuestions.filter(isBlocking)} feedback={state.feedback ?? {}} />}
+				{current === "backlog" && <BacklogTab wsId={ws.id} projectId={projectId} backlog={live.backlog} agents={agents} canEdit={canEdit} blockers={openQuestions.filter(isBlocking)} feedback={state.feedback ?? {}} gatesLeft={state.gates ? (["requirements", "design"] as GateName[]).filter((g) => state.gates![g]?.status !== "approved") : []} />}
 				{current === "app" && <PreviewTab wsId={ws.id} projectId={projectId} preview={live.preview} canEdit={canEdit} feedback={state.feedback ?? {}} backlog={live.backlog} />}
 				{current === "repo" && <RepoTab ws={ws.id} projectId={projectId} tick={live.repoTick} />}
 			</div>
@@ -589,6 +604,17 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 				<div className="label">Goal</div>
 				{project.goal}
 			</blockquote>
+			{(["requirements", "design"] as GateName[])
+				.filter((g) => state.gates?.[g]?.status === "pending")
+				.map((g) => (
+					<a key={g} className="ov-gate" href={projectHref(ws.id, project.id, g)}>
+						<i />
+						<span>
+							<b>The {g} {g === "design" ? "is" : "are"} waiting for your approval.</b> {state.gates![g]!.summary ? `${state.gates![g]!.summary!.slice(0, 160)}${state.gates![g]!.summary!.length > 160 ? "…" : ""}` : ""}
+						</span>
+						<span className="ov-gate-go">Review →</span>
+					</a>
+				))}
 			<Readiness questions={questions} />
 			{questions.length > 0 && (
 				<div className="ov-questions">
@@ -597,6 +623,7 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 					))}
 				</div>
 			)}
+			{live.backlog.build?.retro && <RetroCard ws={ws.id} projectId={project.id} path={live.backlog.build.retro} tick={live.repoTick} />}
 			<div className="ov-activity">
 				<div className="label">Activity</div>
 				<ol>
@@ -613,6 +640,104 @@ function Overview({ ws, project, live, questions, canEdit, onOpenAgent }: { ws: 
 				</ol>
 			</div>
 		</div>
+	);
+}
+
+/** Approve or send back the requirements or the design (M2). */
+function GateBar({ ws, projectId, gate, g, hasGates, canEdit, blockers }: { ws: string; projectId: string; gate: GateName; g?: DocGate; hasGates: boolean; canEdit: boolean; blockers: number }) {
+	const [changes, setChanges] = useState(false);
+	const [comment, setComment] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState("");
+	if (!hasGates) return null;
+	const label = gate === "requirements" ? "Requirements" : "Design";
+	const act = async (what: "approve" | "changes") => {
+		setBusy(true);
+		setErr("");
+		try {
+			await api.post(`/api/w/${ws}/projects/${projectId}/gates/${gate}/${what}`, { comment: comment.trim() || undefined });
+			setChanges(false);
+			setComment("");
+		} catch (e: any) {
+			setErr(e.message);
+		} finally {
+			setBusy(false);
+		}
+	};
+	if (!g) return <div className="gate-bar idle">{label}: not submitted for your approval yet. The lead asks when they're ready.</div>;
+	if (g.status === "approved")
+		return (
+			<div className="gate-bar ok">
+				<b>✓ {label} approved</b> by {g.decidedBy} {g.decidedAt ? timeAgo(g.decidedAt) : ""}
+				{g.comment && <span className="muted"> · “{g.comment}”</span>}
+			</div>
+		);
+	if (g.status === "changes")
+		return (
+			<div className="gate-bar changes">
+				<b>Changes requested</b> by {g.decidedBy}: “{g.comment}” <span className="muted">· the team is revising</span>
+			</div>
+		);
+	return (
+		<div className="gate-bar pending">
+			<div className="gate-main">
+				<div>
+					<b>{label}: waiting for your approval</b>
+					<span className="muted">
+						{" "}
+						· {g.requestedBy} {g.requestedAt ? timeAgo(g.requestedAt) : ""}
+						{g.commit ? ` · main @ ${g.commit}` : ""}
+					</span>
+					{g.summary && <div className="gate-summary">{g.summary}</div>}
+				</div>
+				{canEdit && !changes && (
+					<div className="gate-actions">
+						<button className="btn small" disabled={busy} onClick={() => setChanges(true)}>
+							Request changes
+						</button>
+						<button className="btn primary small" disabled={busy || blockers > 0} title={blockers ? "Blocking questions are open (Overview)" : undefined} onClick={() => act("approve")}>
+							Approve {gate}
+						</button>
+					</div>
+				)}
+			</div>
+			{blockers > 0 && <div className="gate-block">Not ready: {blockers} blocking question{blockers === 1 ? " is" : "s are"} open on the Overview tab.</div>}
+			{changes && (
+				<form
+					className="gate-changes"
+					onSubmit={(e) => {
+						e.preventDefault();
+						if (comment.trim()) act("changes");
+					}}
+				>
+					<textarea className="input" rows={3} autoFocus placeholder={`What should change in the ${gate}?`} value={comment} onChange={(e) => setComment(e.target.value)} />
+					<div className="row" style={{ justifyContent: "flex-end" }}>
+						<button type="button" className="btn ghost small" onClick={() => setChanges(false)}>
+							Cancel
+						</button>
+						<button className="btn primary small" disabled={busy || !comment.trim()}>
+							Send to the team
+						</button>
+					</div>
+				</form>
+			)}
+			{err && <div className="err">{err}</div>}
+		</div>
+	);
+}
+
+/** The latest build's retrospective (facts by pi-os, lessons by the lead). */
+function RetroCard({ ws, projectId, path, tick }: { ws: string; projectId: string; path: string; tick: number }) {
+	const file = useRepoFile(ws, projectId, path, tick);
+	const waiting = !!file?.text && /_Waiting for the lead._/.test(file.text);
+	return (
+		<details className="ov-retro">
+			<summary>
+				<span className="label">Retrospective</span> <span className="mono muted">{path}</span>
+				{waiting && <span className="muted"> · lessons pending</span>}
+			</summary>
+			{file?.text ? <Markdown text={file.text} /> : <div className="muted">Loading…</div>}
+		</details>
 	);
 }
 

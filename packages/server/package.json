@@ -13,6 +13,7 @@
 		"test:render": "tsx test/render-check.ts",
 		"test:build": "tsx test/build.ts",
 		"test:gates": "tsx test/gates.ts",
+		"test:quality": "tsx test/quality.ts",
 		"test:transfer": "tsx test/transfer.ts",
 		"test:teams": "tsx test/teams.ts"
 	},

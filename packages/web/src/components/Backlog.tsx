@@ -45,7 +45,7 @@ function useBacklogCtx(b: Backlog): Ctx {
 	}, [b]);
 }
 
-export function BacklogTab({ wsId, projectId, backlog, agents, canEdit, blockers = [], feedback = {} }: { wsId: string; projectId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean; blockers?: Question[]; feedback?: Record<string, Feedback> }) {
+export function BacklogTab({ wsId, projectId, backlog, agents, canEdit, blockers = [], feedback = {}, gatesLeft = [] }: { wsId: string; projectId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean; blockers?: Question[]; feedback?: Record<string, Feedback>; gatesLeft?: string[] }) {
 	const ctx = useBacklogCtx(backlog);
 	const [view, setView] = useState<"board" | "structure">("board");
 	const [filter, setFilter] = useState<string>();
@@ -69,7 +69,7 @@ export function BacklogTab({ wsId, projectId, backlog, agents, canEdit, blockers
 
 	return (
 		<div className="bl">
-			<ApprovalBar base={base} backlog={backlog} canEdit={canEdit} blockers={blockers} />
+			<ApprovalBar base={base} backlog={backlog} canEdit={canEdit} blockers={blockers} gatesLeft={gatesLeft} />
 			{backlog.approval.status === "approved" && <PendingBar base={base} backlog={backlog} canEdit={canEdit} blockers={blockers} feedback={feedback} onOpen={setOpen} />}
 			<div className="bl-toolbar">
 				<div className="bl-seg" role="tablist">
@@ -157,7 +157,7 @@ function Blockers({ blockers }: { blockers: Question[] }) {
 	);
 }
 
-function ApprovalBar({ base, backlog, canEdit, blockers }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[] }) {
+function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[]; gatesLeft: string[] }) {
 	const a = backlog.approval;
 	const [changes, setChanges] = useState(false);
 	const [comment, setComment] = useState("");
@@ -195,12 +195,17 @@ function ApprovalBar({ base, backlog, canEdit, blockers }: { base: string; backl
 						<button className="btn small" disabled={busy} onClick={() => setChanges(true)}>
 							Request changes
 						</button>
-						<button className="btn primary small" disabled={busy || blockers.length > 0} onClick={() => act("approve", {})} title={blockers.length ? "Blocking questions are open" : undefined}>
+						<button className="btn primary small" disabled={busy || blockers.length > 0 || gatesLeft.length > 0} onClick={() => act("approve", {})} title={gatesLeft.length ? `Approve the ${gatesLeft.join(" and the ")} first` : blockers.length ? "Blocking questions are open" : undefined}>
 							Approve backlog
 						</button>
 					</div>
 				)}
 			</div>
+			{gatesLeft.length > 0 && (
+				<div className="bl-blockers">
+					<b>Approve the {gatesLeft.join(" and the ")} first</b> (on {gatesLeft.length === 1 ? "its tab" : "their tabs"}): the backlog is planned from {gatesLeft.length === 1 ? "it" : "them"}.
+				</div>
+			)}
 			<Blockers blockers={blockers} />
 			{changes && (
 				<form
@@ -358,6 +363,7 @@ function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; 
 						<>
 							{n("doing")} in progress · {n("review")} in review
 							{n("blocked") > 0 && <b className="bb-blocked"> · {n("blocked")} blocked</b>} · {done}/{tasks.length} merged
+							{tasks.some((t) => t.checks?.status === "running") && ` · ${tasks.filter((t) => t.checks?.status === "running").length} testing`}
 							{tasks.some((t) => t.pending) && ` · ${tasks.filter((t) => t.pending).length} waiting for approval`}
 						</>
 					)}
@@ -378,6 +384,16 @@ function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; 
 				<span className="bb-doing" style={{ width: `${tasks.length ? (n("doing") / tasks.length) * 100 : 0}%` }} />
 			</div>
 		</div>
+	);
+}
+
+const CHECK_LABEL = { running: "testing", passed: "tests pass", failed: "tests fail", skipped: "no tests" } as const;
+function CheckChip({ c }: { c: NonNullable<BacklogItem["checks"]> }) {
+	const label = c.status === "running" && c.stage === "merge" ? "testing merge" : CHECK_LABEL[c.status];
+	return (
+		<span className={`kc-check mono ${c.status}`} title={`${c.stage === "merge" ? "Merge result" : "Submitted commit"}: ${label}${c.reason ? ` (${c.reason})` : ""}${c.command ? ` · ${c.command}` : ""}`}>
+			{c.status === "running" ? "◌" : c.status === "passed" ? "✓" : c.status === "failed" ? "✗" : "–"} {label}
+		</span>
 	);
 }
 
@@ -449,7 +465,8 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 				)}
 				{t.area && <Marquee className="kc-area mono">{t.area}</Marquee>}
 				{t.status === "review" && t.reviewer ? <span className="kc-who review mono" title={`${t.reviewer} is reviewing it`}>⌕ @{t.reviewer}</span> : t.assignee && <span className="kc-who mono">@{t.assignee}</span>}
-				{t.status === "review" && !t.reviewer && <span className="kc-who waiting mono">waiting for review</span>}
+				{t.status === "review" && !t.reviewer && !t.approvedBy && t.checks?.status !== "running" && <span className="kc-who waiting mono">waiting for review</span>}
+				{t.status !== "done" && t.checks && <CheckChip c={t.checks} />}
 			</div>
 		</button>
 	);
@@ -666,6 +683,46 @@ function ItemPanel({ item, ctx, agents, canEdit, feedback = {}, onPatch, onDelet
 							{item.reviewer && item.status === "review" && <div className="mono">under review by @{item.reviewer} (round {item.reviewRound ?? 1})</div>}
 							{item.merged && <div className="mono ip-merged">✓ merged into main as {item.merged}</div>}
 						</div>
+					</div>
+				)}
+				{item.type === "task" && item.context?.length ? (
+					<div className="ip-section">
+						<div className="label">Context in the brief</div>
+						<ul className="ip-context mono">
+							{item.context.map((c) => (
+								<li key={c}>{c}</li>
+							))}
+						</ul>
+					</div>
+				) : null}
+				{item.type === "task" && item.checks && (
+					<div className="ip-section">
+						<div className="label">Checks</div>
+						<div className={`ip-check ${item.checks.status}`}>
+							<CheckChip c={item.checks} /> <span className="mono muted">{item.checks.stage === "merge" ? "merge result" : "submitted commit"} {item.checks.commit.slice(0, 8)}</span>
+							{item.checks.command && <span className="mono muted"> · {item.checks.command}</span>}
+							{item.checks.ms !== undefined && <span className="mono muted"> · {(item.checks.ms / 1000).toFixed(1)} s</span>}
+							{item.checks.reason && item.checks.status !== "passed" && <div className="muted">{item.checks.reason}</div>}
+							{item.checks.output && (
+								<details>
+									<summary>Output</summary>
+									<pre className="ip-output">{item.checks.output}</pre>
+								</details>
+							)}
+						</div>
+					</div>
+				)}
+				{item.type === "task" && item.dod && (
+					<div className="ip-section">
+						<div className="label">Definition of done · confirmed by {item.dod.by}</div>
+						<ul className="ip-dod">
+							{item.dod.items.map((d, n) => (
+								<li key={n} className={d.met ? "met" : "unmet"}>
+									<span>{d.met ? "✓" : "✗"}</span> {d.text}
+									{d.note && <em> · {d.note}</em>}
+								</li>
+							))}
+						</ul>
 					</div>
 				)}
 				{item.history?.length ? (

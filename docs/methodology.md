@@ -41,10 +41,10 @@ flowchart LR
 | Stage | Led by | Input | Output | Exit | Enforced by |
 |---|---|---|---|---|---|
 | Kickoff | Lead | Your goal, attachments | A team sized for the goal; questions to you if the goal is too vague | Team formed, product owner briefed | Prompt |
-| Discovery | Product Owner | Goal, attachments | `docs/requirements.md` with acceptance criteria, assumptions, open questions; first decision records | **Gate 1:** you approve the requirements (the Lead asks you on the Overview tab) | Prompt (the Lead must wait for your answer) |
-| Design | Architect, UX Designer | Approved requirements | `docs/design.md`, decision records, wireframes, `.pios/project.json`, an app skeleton | Design published and reported to the Lead | Prompt |
+| Discovery | Product Owner | Goal, attachments | `docs/requirements.md` with acceptance criteria, assumptions, open questions; first decision records | **Gate 1:** you approve the requirements on the Requirements tab (the Lead calls `request_review`) | **Code:** the backlog can't be approved before it |
+| Design | Architect, UX Designer | Approved requirements | `docs/design.md`, decision records, wireframes, `.pios/project.json` (with `test` and an optional `definitionOfDone`), an app skeleton | **Gate 1b:** you approve the design on the Design tab | **Code:** design review needs approved requirements; the backlog can't be approved before it |
 | Planning | Planner | Requirements, design | Backlog: features, PBIs with acceptance criteria, tasks with dependencies, estimate and area | **Gate 2:** you approve the backlog on the Backlog tab, or send it back with a comment | **Code:** the scheduler assigns nothing until the backlog is approved |
-| Build | pi-os scheduler | Approved backlog | Reviewed, merged tasks on `main`; a running preview | All tasks done; pi-os tells the Lead | **Code** |
+| Build | pi-os scheduler | Approved backlog | Tested, reviewed, merged tasks on `main`; a running preview | All tasks done; pi-os writes the retrospective's facts, the Lead adds lessons | **Code** |
 | Iterate | You, Planner | The running app | Feedback (FB-n) → pending PBIs and tasks | **Gate 3:** you approve the pending items (Backlog tab) | **Code:** pending items are never assigned |
 
 **Readiness.** Every approval to build (the backlog, and pending items later) is refused by the server while a **blocking question** is open. The Overview tab shows whether the project is ready.
@@ -97,9 +97,9 @@ The repository layout is fixed: `app/` holds everything the product needs to bui
 stateDiagram-v2
     [*] --> todo
     todo --> doing: scheduler assigns (dependencies done, developer free)
-    doing --> review: developer calls task_done
-    review --> done: reviewer approves, pi-os merges the submitted commit
-    review --> doing: reviewer requests changes, or the merge conflicts
+    doing --> review: task_done, then tests pass on the submitted commit
+    review --> done: reviewer confirms the definition of done; tests pass on the merge result; pi-os merges
+    review --> doing: tests fail, reviewer requests changes, or the merge conflicts
     doing --> blocked: task_blocked, or no response after two reminders
     blocked --> doing: Lead or you unblock it
     done --> [*]
@@ -112,7 +112,10 @@ stateDiagram-v2
 - **One task per developer.** A developer holding a task in *doing*, *review* or *blocked* gets no new work. The task stays theirs through review, so review notes go back to the person who wrote the code.
 - **Areas spread the work.** Among ready tasks, a developer gets one whose area nobody else is working in, to keep parallel edits from colliding.
 - **Pinned tasks wait for their person.** A task you or the Lead assigned to a developer waits for that developer.
-- **Briefs carry context.** pi-os syncs the developer's worktree with `main`, then sends the task, its PBI, the PBI's acceptance criteria, what it builds on, and earlier review notes.
+- **Briefs carry context (story-style).** pi-os syncs the developer's worktree with `main`, then sends the task, its PBI and acceptance criteria, earlier review notes, and a *Context from main* section: the design sections and decision records the Planner named for the task (`context: ["docs/design.md#Data model", …]`, inlined), what the dependencies delivered, the decision index, the design's outline, and the actions from the last retrospective.
+- **Tests before review.** `task_done` triggers the project's `test` command on the submitted commit, in a separate checkout. Failing work goes straight back to the developer with the output; only passing work (or a project without tests) reaches the reviewer.
+- **Definition of done.** The reviewer approves only by confirming each item: pi-os's five defaults plus the project's `definitionOfDone` in `.pios/project.json`. An unmet item means *changes*.
+- **Tests before merge.** If `main` moved since the submission, pi-os builds the merge result aside, runs the tests on it, and moves `main` only if they pass (rebuilding if `main` moves again meanwhile). A failure sends the task back.
 - **Reminders, then escalation.** If an agent ends its turn holding a task (no `task_done`, no question waiting for you), pi-os reminds it. After two reminders the task becomes *blocked* and the Lead gets the reason.
 - **Review is optional.** With no reviewer on the team, submitted work merges at once. The Lead prompt asks for a reviewer.
 - **Pause** stops new assignments; work in progress continues.
@@ -147,11 +150,14 @@ gitGraph
 | Repository layout | Fixed layout in every agent's instructions; reviewers check it | Prompt |
 | Isolation | Worktree per agent; file tools refuse writes outside it | **Code** (the shell is not confined) |
 | Review before merge | Detached checkout of the submitted commit; approve or send back | **Code** routes it; the verdict is the reviewer's judgement |
-| Tests | Developers write and run them; reviewers run them | Prompt |
+| Tests | pi-os runs the project's `test` command on every submission and on merge results when `main` moved; nothing with failing tests reaches `main` | **Code** (needs `test` in `.pios/project.json`) |
+| Definition of done | The reviewer confirms each item to approve; recorded on the task | **Code** checks the checklist is complete; meeting it is the reviewer's judgement |
+| Context in briefs | The Planner names design sections and decision records per task; pi-os inlines them | **Code** inlines; choosing them is the Planner's judgement |
+| Retrospective | pi-os writes the facts of each finished build; the Lead adds lessons; briefs carry its actions | **Code** (facts), prompt (lessons) |
 | Running product | The preview runs `main` after each merge; agents read its status and logs with the `preview` tool | **Code** |
 | Human acceptance | Gates 1 and 2; the App tab | You |
 
-Missing today: a definition-of-done checklist, automatic test runs as a merge condition, traceability from each requirement to its tests, and review of non-task publishes.
+Missing today: traceability from each requirement to its tests, and review of non-task publishes.
 
 ## 9. Where you take control
 
@@ -177,7 +183,8 @@ Missing today: a definition-of-done checklist, automatic test runs as a merge co
 
 - Agents are durable pi-durable conversations: a restart resumes every agent where it stopped.
 - The scheduler keeps all state in the backlog document and marks each brief as sent only after delivery. On restart it re-sends exactly the briefs that never went out.
-- The preview records its dev server's processes, kills them on stop and restart, and removes leftovers from a crashed pi-os on the next start.
+- Test runs and approved merges in progress are recorded on the task; after a restart pi-os runs them again.
+- The preview records its dev server's processes, kills them on stop and restart, and removes leftovers from a crashed pi-os on the next start. A preview that was running comes back after a restart.
 
 ## 12. Compared with human-oriented methodologies
 
@@ -215,9 +222,9 @@ Missing today: a definition-of-done checklist, automatic test runs as a merge co
 | Daily stand-up | Who's doing what, who's blocked | Live tiles, the board, `team_list`, blocked tasks escalated to the Lead |
 | Scrum Master | Remove impediments, guard the process | The scheduler (reminders, escalation, routing) and the Lead (unblocking) |
 | Sprint backlog / board | Make work visible | The Backlog tab, live |
-| Definition of done | Shared quality bar | Partly: review against acceptance criteria. No checklist yet |
+| Definition of done | Shared quality bar | Default + per-project checklist the reviewer confirms; tests run by pi-os before review and merge |
 | Sprint review | Inspect the increment with stakeholders | The App tab, at any time |
-| Retrospective | Improve the process | Missing (M6) |
+| Retrospective | Improve the process | pi-os writes the build's facts; the Lead adds lessons; their actions go into later briefs |
 | Velocity, burndown | Forecasting | Build progress bar and counts; no forecasting |
 
 **Coordination should be deterministic.** In a human team people negotiate who takes what. Letting a model do that wastes tokens and fails in odd ways (forgotten tasks, double assignment). pi-os uses models for judgement (what to build, how, whether it's good) and code for logistics (who's free, what's ready, what to merge).
@@ -239,13 +246,11 @@ BMAD's Method (v6/v7) is the closest relative: specialist agents (analyst, produ
 
 | Gap | Effect today | Direction |
 |---|---|---|
-| Gate 1 is a question, not a button | The Lead could skip it; it relies on the prompt (blocking questions now hold every approval to build) | Approve / request-changes buttons for requirements and design (M2) |
 | Every goal runs every stage | A small change still gets requirements, design and a backlog | Size the process to the goal |
-| Thin task briefs | Developers re-read the docs; may drift from the design | Story-style briefs with the relevant design and decisions inlined |
-| No definition of done, tests aren't a merge condition | Quality depends on the reviewer | DoD checklist; run `.pios/project.json` `test` before merging |
 | No requirement-to-test traceability | Gaps in coverage go unnoticed | Link acceptance criteria to tests in review |
 | Non-task publishes skip review | Design and skeleton changes land unreviewed | Route them through review too |
-| No retrospective | The team doesn't learn from a build | A retro after the build (M6) |
+| Story context depends on the Planner | A task with no `context` gets only the outline and indexes | Suggest sections automatically from the task's area and PBI |
+| Projects without a `test` command skip the checks | Quality falls back on the reviewer | The architect's prompt asks for one; flag projects without it |
 | The shell is not sandboxed | Agents run commands on your machine | Containers per project (out of scope so far) |
 | No cost budget | A large team can spend many tokens | Per-project token budgets and alerts |
 

@@ -66,6 +66,11 @@ export const openBlocking = (st: Pick<ProjectState, "questions">) => Object.valu
 export type Feedback = { id: string; text: string; by: string; at: number; head?: string; files?: string[]; declined?: { by: string; reason: string; at: number } };
 export type Activity = { at: number; agent?: string; kind: "team" | "message" | "publish" | "question" | "stage" | "user" | "error"; text: string };
 
+/** The user's approval of a document stage (M2). Requested by the lead, decided on the doc's tab. */
+export type GateName = "requirements" | "design";
+export const GATE_DOCS: Record<GateName, string> = { requirements: "docs/requirements.md", design: "docs/design.md" };
+export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
+
 export type ProjectState = {
 	agents: Record<string, AgentRecord>;
 	/** Display order of agents (tiles). */
@@ -78,6 +83,8 @@ export type ProjectState = {
 	/** FB-1, FB-2, … */
 	feedback?: Record<string, Feedback>;
 	feedbackSeq?: number;
+	/** Document gates. Present (possibly empty) on projects created with gates; older projects have none and aren't held to them. */
+	gates?: Partial<Record<GateName, DocGate>>;
 };
 
 /** One document per project: its team, open questions for the user, and activity feed. */

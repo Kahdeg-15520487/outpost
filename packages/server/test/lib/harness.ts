@@ -101,3 +101,13 @@ export async function finish(error?: unknown): Promise<never> {
 	}, 300);
 	return new Promise<never>(() => {});
 }
+
+/** Mark a project's requirements and design approved (for suites that test what comes after M2's gates). */
+export async function passDocGates(ws: { harness: any }, projectId: string) {
+	const { ProjectDoc } = await import("../../src/projects/docs.ts");
+	const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
+	await ws.harness.commit(async (tx: any) => {
+		const st = await tx.doc(ProjectDoc, projectId, null);
+		st.gates = { requirements: { status: "approved" }, design: { status: "approved" } };
+	}, BACKGROUND_CONTEXT);
+}

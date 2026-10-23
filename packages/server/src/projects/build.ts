@@ -4,6 +4,9 @@ import { BacklogDoc, depsDone, isPending, pushHistory, rollUp, type Backlog, typ
 import { isBlocking } from "./docs.ts";
 import type { AgentRecord, ProjectState } from "./docs.ts";
 import type { ProjectManager } from "./manager.ts";
+import { storyContext } from "./story.ts";
+import { definitionOfDone, readRunConfig, type CheckResult } from "./checks.ts";
+import { retroFacts } from "./retro.ts";
 
 /**
  * The build scheduler (milestone 4): deterministic code, not an LLM.
@@ -31,6 +34,9 @@ export class BuildScheduler {
 	readonly #running = new Map<string, Promise<void>>();
 	/** Remind idle agents that hold a task (tests turn it off: their scripted agents never call the tools). */
 	nudges = true;
+	/** Check runs and merges in flight (in memory: after a restart the pass resumes what was persisted as running). */
+	readonly #verifying = new Set<string>();
+	readonly #merging = new Set<string>();
 
 	constructor(readonly m: ProjectManager) {}
 
@@ -86,7 +92,7 @@ export class BuildScheduler {
 		const devs = state.order.map((k) => state.agents[k]!).filter((a) => live(a) && a.role === "worker");
 		const reviewers = state.order.map((k) => state.agents[k]!).filter((a) => live(a) && a.role === "reviewer");
 
-		type Action = { kind: "brief"; task: BacklogItem; agent: string } | { kind: "review"; task: BacklogItem; agent: string } | { kind: "merge"; id: string } | { kind: "started" } | { kind: "finished"; tasks: number };
+		type Action = { kind: "brief"; task: BacklogItem; agent: string } | { kind: "review"; task: BacklogItem; agent: string } | { kind: "merge"; id: string } | { kind: "verify"; id: string; commit: string } | { kind: "started" } | { kind: "finished"; tasks: number };
 		const actions = await this.#edit(projectId, (b) => {
 			const acts: Action[] = [];
 			let changed = rollUp(b);
@@ -132,9 +138,17 @@ export class BuildScheduler {
 				}
 			}
 
-			// Route submitted work: to a free reviewer, or straight to main when the team has none.
+			// Resume what a restart interrupted: test runs on submitted work, and approved merges.
+			for (const t of tasks) {
+				if (t.status !== "review" || !t.submitted) continue;
+				if (t.checks?.status === "running" && t.checks.stage === "submit" && !this.#verifying.has(`${projectId}:${t.id}`)) acts.push({ kind: "verify", id: t.id, commit: t.submitted.commit });
+				else if ((t.approvedBy || (t.checks?.stage === "merge" && t.checks.status === "running")) && !this.#merging.has(`${projectId}:${t.id}`)) acts.push({ kind: "merge", id: t.id });
+			}
+
+			// Route submitted work whose checks passed: to a free reviewer, or straight to main when the team has none.
 			const reviewing = (key: string) => tasks.some((t) => t.status === "review" && t.reviewer === key);
-			for (const t of tasks.filter((t) => t.status === "review" && t.submitted && (!t.reviewer || !live(state.agents[t.reviewer])))) {
+			const checked = (t: BacklogItem) => !t.checks || t.checks.status === "passed" || t.checks.status === "skipped";
+			for (const t of tasks.filter((t) => t.status === "review" && t.submitted && !t.approvedBy && checked(t) && (!t.reviewer || !live(state.agents[t.reviewer])))) {
 				if (!reviewers.length) {
 					acts.push({ kind: "merge", id: t.id });
 					continue;
@@ -171,9 +185,14 @@ export class BuildScheduler {
 				} else if (a.kind === "brief") await this.#brief(projectId, a.task, state.agents[a.agent]!);
 				else if (a.kind === "review") await this.#reviewBrief(projectId, a.task, state.agents[a.agent]!, state);
 				else if (a.kind === "merge") await this.merge(projectId, a.id, "no reviewer on the team");
+				else if (a.kind === "verify") void this.#verify(projectId, a.id, a.commit);
 				else if (a.kind === "finished") {
 					await this.m.log(projectId, { at: Date.now(), kind: "stage", text: `All ${a.tasks} tasks are done and merged` });
-					await this.m.tellLead(projectId, `All ${a.tasks} backlog tasks are done and merged into main. The App tab runs the latest main. Check the result against the requirements (the preview tool shows its status and logs), tell the user what was built, and set the stage to iterate.`);
+					const retro = await this.writeRetro(projectId).catch((e) => (console.warn(`[build ${projectId}] retro:`, e?.message ?? e), undefined));
+					await this.m.tellLead(
+						projectId,
+						`All ${a.tasks} backlog tasks are done and merged into main. The App tab runs the latest main. Check the result against the requirements (the preview tool shows its status and logs), tell the user what was built, and set the stage to iterate.${retro ? `\n\npi-os wrote the facts of this build to **${retro}**. Read them, then call **retro_notes** with what went well, what to improve, and concrete actions for the next build (they go into every developer's brief from now on).` : ""}`,
+					);
 				}
 			} catch (e: any) {
 				if (this.#stopped) return;
@@ -188,6 +207,7 @@ export class BuildScheduler {
 		const pbi = t.parent ? b.items[t.parent] : undefined;
 		const feature = pbi?.parent ? b.items[pbi.parent] : undefined;
 		await this.m.repo(projectId).sync(dev.key);
+		const context = await storyContext(this.m.repo(projectId), b, t).catch(() => "");
 		const deps = t.deps.map((d) => b.items[d]).filter(Boolean) as BacklogItem[];
 		const prior = (t.history ?? []).filter((h) => h.by !== "pi-os" || /review|conflict|blocked/i.test(h.text)).slice(-4);
 		const text = [
@@ -196,6 +216,7 @@ export class BuildScheduler {
 			pbi ? `\nPart of ${pbi.id} “${pbi.title}”${feature ? ` (feature ${feature.id} “${feature.title}”)` : ""}.${pbi.acceptance?.length ? `\nAcceptance criteria of ${pbi.id}:\n${pbi.acceptance.map((c) => `- ${c}`).join("\n")}` : ""}` : "",
 			deps.length ? `\nBuilt on (already merged): ${deps.map((d) => `${d.id} ${d.title}`).join("; ")}.` : "",
 			prior.length ? `\nEarlier on this task:\n${prior.map((h) => `- ${h.by}: ${h.text}`).join("\n")}` : "",
+			context ? `\n\n## Context from main\n${context}` : "",
 			`\nYour worktree is synced with main. Read the design and decision records that matter, implement the task in \`app/\`, and run the tests. When it's complete, call **task_done** with a short summary: pi-os commits your branch, has it reviewed and merges it. If you can't finish it, call **task_blocked** with what you need. Don't publish task work yourself.`,
 		].join("");
 		await this.m.deliver(projectId, dev.key, { from: "pi-os", fromKey: "pi-os", text, kind: "message" }, `assign:${t.id}:${t.attempt ?? 1}`);
@@ -209,14 +230,17 @@ export class BuildScheduler {
 		const pbi = t.parent ? b.items[t.parent] : undefined;
 		await this.m.repo(projectId).checkoutDetached(reviewer.key, t.submitted.commit);
 		const author = state.agents[t.assignee ?? ""]?.name ?? t.assignee ?? "a developer";
+		const dod = definitionOfDone(readRunConfig(this.m.repo(projectId).main));
 		const text = [
 			`**Review ${t.id}: ${t.title}** (round ${t.reviewRound ?? 1}), submitted by ${author}.`,
 			t.description ? `\n${t.description}` : "",
 			pbi?.acceptance?.length ? `\nAcceptance criteria of ${pbi.id} “${pbi.title}”:\n${pbi.acceptance.map((c) => `- ${c}`).join("\n")}` : "",
 			`\nTheir summary: ${t.submitted.summary}`,
 			`\nFiles changed: ${t.submitted.files.join(", ") || "(none)"}`,
-			`\nThe submitted commit ${t.submitted.commit.slice(0, 10)} is checked out (detached) in your worktree. See the change with \`git diff main...HEAD\`; install, build and run the tests in \`app/\`. Check it against the task, the acceptance criteria, the design, the decision records and the repository layout.`,
-			`\nThen call **review_verdict** for ${t.id}: \`approve\` (pi-os merges it into main) or \`changes\` with concrete, actionable notes (it goes back to ${author}). Don't edit the code yourself.`,
+			`\nThe submitted commit ${t.submitted.commit.slice(0, 10)} is checked out (detached) in your worktree. See the change with \`git diff main...HEAD\`; build and run it in \`app/\`. Check it against the task, the acceptance criteria, the design, the decision records and the repository layout.`,
+			t.checks ? `\n\nAutomated checks: ${t.checks.status === "passed" ? `the test suite passed (\`${t.checks.command}\`)` : `not run (${t.checks.reason ?? "no test command"}); run what tests exist yourself`}.` : "",
+			`\n\n**Definition of done** (confirm every item to approve):\n${dod.map((d, i) => `${i + 1}. ${d}`).join("\n")}`,
+			`\n\nThen call **review_verdict** for ${t.id}: \`approve\` with \`checklist\` confirming each item (pi-os runs the tests on the merge result and merges it), or \`changes\` with concrete, actionable notes (it goes back to ${author}). Don't edit the code yourself.`,
 		].join("");
 		await this.m.deliver(projectId, reviewer.key, { from: "pi-os", fromKey: "pi-os", text, kind: "message" }, `review:${t.id}:${t.attempt ?? 1}:${t.reviewRound ?? 1}`);
 		await this.#mark(projectId, t.id, (i) => void (i.reviewBriefed = true));
@@ -254,15 +278,18 @@ export class BuildScheduler {
 			const i = b.items[t.id]!;
 			i.status = "review";
 			i.submitted = { commit: r.commit!, summary, at: Date.now(), by: dev.key, files: r.files };
+			i.checks = { status: "running", stage: "submit", commit: r.commit!, at: Date.now() };
 			delete i.reviewer;
+			delete i.approvedBy;
+			delete i.dod;
 			i.nudges = 0;
 			i.updatedAt = Date.now();
 			pushHistory(i, dev.name, `Submitted: ${summary}`);
 			return { changed: true, result: undefined };
 		});
 		await this.m.log(projectId, { at: Date.now(), agent: dev.key, kind: "team", text: `${dev.name} finished ${t.id} “${clip(t.title, 60)}” (${r.files.length} file${r.files.length === 1 ? "" : "s"})` });
-		this.kick(projectId, 50);
-		return `Submitted ${t.id} (${r.files.length} file${r.files.length === 1 ? "" : "s"} changed). It goes to review and is merged when approved. Stop here: the review result or your next task arrives as a message.`;
+		void this.#verify(projectId, t.id, r.commit!);
+		return `Submitted ${t.id} (${r.files.length} file${r.files.length === 1 ? "" : "s"} changed). pi-os runs the project's tests on it now; if they pass it goes to review, and it's merged when approved. Stop here: the result arrives as a message.`;
 	}
 
 	/** task_blocked: hand the problem to the lead. */
@@ -288,20 +315,98 @@ export class BuildScheduler {
 		);
 	}
 
-	/** review_verdict from the reviewer. */
-	async verdict(projectId: string, reviewer: AgentRecord, id: string, verdict: "approve" | "changes", notes: string): Promise<string> {
+	// ------------------------------------------------------------------ retrospective (M6)
+
+	/** Write the facts of the finished build to docs/retrospectives/NNNN-date.md on main. Returns its path. */
+	async writeRetro(projectId: string): Promise<string> {
+		const repo = this.m.repo(projectId);
+		const [b, meta, files] = await Promise.all([this.m.backlog(projectId), this.m.meta(projectId), repo.files().catch(() => [] as string[])]);
+		const n = files.filter((f) => /^docs\/retrospectives\/\d{4}-.*\.md$/.test(f)).length + 1;
+		const path = `docs/retrospectives/${String(n).padStart(4, "0")}-${new Date().toISOString().slice(0, 10)}.md`;
+		const tokens = Object.fromEntries(Object.entries(this.m.summaries.get(projectId) ?? {}).map(([k, s]) => [k, s.tokens ?? 0]).filter(([, t]) => (t as number) > 0));
+		if (await repo.writeMain(path, retroFacts(b, tokens as Record<string, number>, n, meta.name), `Retrospective ${String(n).padStart(4, "0")}`))
+			hub.publish(this.m.channel(projectId), { t: "project.repo", ws: this.m.ws.id, project: projectId, head: await repo.head(), files: [path] });
+		await this.#edit(projectId, (b) => {
+			b.build ??= {};
+			b.build.retro = path;
+			delete b.build.retroNotes;
+			return { changed: true, result: undefined };
+		});
+		await this.m.log(projectId, { at: Date.now(), kind: "stage", text: `Retrospective written: ${path}` });
+		return path;
+	}
+
+	// ------------------------------------------------------------------ checks (tests before review and before merge)
+
+	/** Run the tests on submitted work; failing work goes straight back to its developer. */
+	async #verify(projectId: string, id: string, commit: string) {
+		const key = `${projectId}:${id}`;
+		if (this.#verifying.has(key) || this.#stopped) return;
+		this.#verifying.add(key);
+		try {
+			const r = await this.m.checks.run(projectId, commit);
+			if (this.#stopped) return;
+			const back = await this.#edit(projectId, (b) => {
+				const i = b.items[id];
+				if (!i || i.status !== "review" || i.submitted?.commit !== commit) return { changed: false, result: undefined };
+				i.checks = checkRecord(r, "submit", commit);
+				i.updatedAt = Date.now();
+				if (r.status === "failed") {
+					i.status = "doing";
+					delete i.reviewer;
+					i.nudges = 0;
+					pushHistory(i, "pi-os", `Tests failed (${r.reason ?? "failed"}): \`${r.command}\``);
+					return { changed: true, result: { dev: i.assignee, title: i.title } };
+				}
+				pushHistory(i, "pi-os", r.status === "passed" ? `Tests passed (${(r.ms / 1000).toFixed(1)} s)` : `No tests run: ${r.reason}`);
+				return { changed: true, result: undefined };
+			});
+			if (back?.dev)
+				await this.m.deliver(
+					projectId,
+					back.dev,
+					{ from: "pi-os", fromKey: "pi-os", kind: "message", text: `The tests fail on your submission of **${id} “${back.title}”** (\`${r.command}\`, ${r.reason}). Fix it on your branch and call task_done again.\n\n\`\`\`\n${r.output ?? ""}\n\`\`\`` },
+					`checks:${id}:${commit.slice(0, 12)}`,
+				);
+			if (back?.dev) await this.m.log(projectId, { at: Date.now(), agent: back.dev, kind: "error", text: `${id}: tests failed, back to the developer` });
+			this.kick(projectId, 50);
+		} catch (e: any) {
+			if (!this.#stopped) console.warn(`[build ${projectId}] checks ${id}:`, e?.message ?? e);
+		} finally {
+			this.#verifying.delete(key);
+		}
+	}
+
+	/** review_verdict from the reviewer. Approving requires every definition-of-done item confirmed. */
+	async verdict(projectId: string, reviewer: AgentRecord, id: string, verdict: "approve" | "changes", notes: string, checklist: { item: number; met: boolean; note?: string }[] = []): Promise<string> {
 		const b = await this.m.backlog(projectId);
 		const t = b.items[id];
 		if (!t || t.type !== "task") throw new Error(`No task ${id}.`);
 		if (t.status !== "review" || t.reviewer !== reviewer.key) throw new Error(`${id} isn't waiting for your review (status ${t.status}${t.reviewer ? `, reviewer ${t.reviewer}` : ""}).`);
 		if (verdict === "approve") {
+			const dod = definitionOfDone(readRunConfig(this.m.repo(projectId).main));
+			const byItem = new Map(checklist.map((c) => [Number(c.item), c]));
+			const missing = dod.map((_, n) => n + 1).filter((n) => !byItem.has(n));
+			const unmet = dod.map((_, n) => n + 1).filter((n) => byItem.has(n) && !byItem.get(n)!.met);
+			if (missing.length || unmet.length)
+				throw new Error(
+					`To approve, confirm every definition-of-done item in checklist (item numbers 1-${dod.length}, met: true).${missing.length ? ` Missing: ${missing.join(", ")}.` : ""}${unmet.length ? ` Not met: ${unmet.map((n) => `${n}. ${dod[n - 1]}`).join("; ")}. If an item isn't met, use verdict "changes" with notes instead.` : ""}`,
+				);
 			await this.#edit(projectId, (b) => {
-				pushHistory(b.items[id]!, reviewer.name, `Approved${notes ? `: ${notes}` : ""}`);
+				const i = b.items[id]!;
+				i.approvedBy = reviewer.name;
+				i.dod = { by: reviewer.name, at: Date.now(), items: dod.map((text, n) => clean({ text, met: true, note: byItem.get(n + 1)?.note || undefined })) };
+				delete i.reviewer;
+				pushHistory(i, reviewer.name, `Approved${notes ? `: ${notes}` : ""} (definition of done confirmed)`);
 				return { changed: true, result: undefined };
 			});
-			const merged = await this.merge(projectId, id, reviewer.name);
 			await this.m.repo(projectId).checkoutOwnBranch(reviewer.key).catch(() => {});
-			return merged ? `Approved and merged into main as ${merged}. Stop here; your next review arrives as a message.` : `Approved, but it didn't merge cleanly; it went back to the developer to resolve. Stop here.`;
+			const merged = await this.merge(projectId, id, reviewer.name);
+			return merged === "pending"
+				? `Approved. main moved since this was submitted, so pi-os tests the merge result before merging it. Stop here; your next review arrives as a message.`
+				: merged
+					? `Approved and merged into main as ${merged}. Stop here; your next review arrives as a message.`
+					: `Approved, but it didn't merge cleanly; it went back to the developer to resolve. Stop here.`;
 		}
 		if (!notes.trim()) throw new Error("Say what has to change: concrete, actionable notes.");
 		const dev = await this.#edit(projectId, (b) => {
@@ -321,41 +426,92 @@ export class BuildScheduler {
 		return `Sent back to ${dev ?? "the developer"} with your notes. Stop here; you'll review it again when it's resubmitted.`;
 	}
 
-	/** Merge a task's submitted commit into main. Returns the merge commit, or undefined when it conflicted (the task goes back to its developer). */
-	async merge(projectId: string, id: string, by: string): Promise<string | undefined> {
+	/**
+	 * Merge a task's submitted commit into main. When main hasn't moved since the submission, the merge
+	 * changes nothing the tests didn't already see: merge now and return the commit. Otherwise build the
+	 * merge result aside, test it, and move main only if it passes ("pending" while that runs).
+	 * Returns undefined when it conflicted or failed (the task goes back to its developer).
+	 */
+	async merge(projectId: string, id: string, by: string): Promise<string | "pending" | undefined> {
 		const b = await this.m.backlog(projectId);
 		const t = b.items[id];
-		if (!t?.submitted) return undefined;
+		if (!t?.submitted || t.status !== "review") return undefined;
+		const key = `${projectId}:${id}`;
+		if (this.#merging.has(key)) return "pending";
 		const repo = this.m.repo(projectId);
-		const r = await repo.mergeCommit(t.submitted.commit, `${t.id}: ${t.title} (${t.assignee ?? "?"})`);
-		if (r.conflict) {
-			await this.#edit(projectId, (b) => {
-				const i = b.items[id]!;
-				i.status = "doing";
-				delete i.reviewer;
-				i.updatedAt = Date.now();
-				pushHistory(i, "pi-os", `Merge conflict with main in ${r.conflict}`);
-				return { changed: true, result: undefined };
-			});
-			if (t.assignee) await this.m.deliver(projectId, t.assignee, { from: "pi-os", fromKey: "pi-os", text: `${t.id} was approved, but main moved on and it no longer merges cleanly (conflicts in ${r.conflict}). Run \`git merge main\` in your worktree, resolve the conflicts, run the tests, and call task_done again.`, kind: "message" }, `conflict:${id}:${t.submitted.commit.slice(0, 12)}`);
-			this.kick(projectId, 50);
-			return undefined;
+		const message = `${t.id}: ${t.title} (${t.assignee ?? "?"})`;
+		if (await repo.containsMain(t.submitted.commit)) {
+			this.#merging.add(key);
+			try {
+				const r = await repo.mergeCommit(t.submitted.commit, message);
+				if (r.conflict) return void (await this.#mergeFailed(projectId, id, `Merge conflict with main in ${r.conflict}`, `${t.id} no longer merges cleanly (conflicts in ${r.conflict})`));
+				await this.#merged(projectId, id, r.commit!, r.files, by);
+				return r.commit;
+			} finally {
+				this.#merging.delete(key);
+			}
 		}
-		await this.#edit(projectId, (b) => {
+		this.#merging.add(key);
+		await this.#mark(projectId, id, (i) => void (i.checks = { status: "running", stage: "merge", commit: t.submitted!.commit, at: Date.now() }));
+		void this.#mergeTested(projectId, id, message, by).finally(() => this.#merging.delete(key));
+		return "pending";
+	}
+
+	async #mergeTested(projectId: string, id: string, message: string, by: string) {
+		const repo = this.m.repo(projectId);
+		try {
+			for (let attempt = 0; attempt < 3 && !this.#stopped; attempt++) {
+				const commit = (await this.m.backlog(projectId)).items[id]?.submitted?.commit;
+				if (!commit) return;
+				const r = await this.m.checks.runMerge(projectId, commit, message);
+				if (this.#stopped) return;
+				if (r.conflict) return void (await this.#mergeFailed(projectId, id, `Merge conflict with main in ${r.conflict}`, `${id} no longer merges cleanly (conflicts in ${r.conflict})`));
+				if (r.result!.status === "failed") {
+					await this.#mark(projectId, id, (i) => void (i.checks = checkRecord(r.result!, "merge", r.sha!)));
+					return void (await this.#mergeFailed(projectId, id, `Tests fail on the merge with main (${r.result!.reason}): \`${r.result!.command}\``, `${id} passes on its own, but the tests fail once it's merged with the latest main (\`${r.result!.command}\`, ${r.result!.reason}):\n\n\`\`\`\n${r.result!.output ?? ""}\n\`\`\``));
+				}
+				const adv = await repo.advanceMain(r.sha!, r.base!);
+				if (adv.moved) continue; // someone merged meanwhile: rebuild on the new main and test again
+				await this.#mark(projectId, id, (i) => void (i.checks = checkRecord(r.result!, "merge", r.sha!)));
+				await this.#merged(projectId, id, adv.commit!, adv.files, by);
+				return;
+			}
+		} catch (e: any) {
+			if (!this.#stopped) console.warn(`[build ${projectId}] merge ${id}:`, e?.message ?? e);
+		}
+	}
+
+	/** The merge didn't happen: back to the developer with the reason. */
+	async #mergeFailed(projectId: string, id: string, history: string, message: string) {
+		const t = await this.#edit(projectId, (b) => {
+			const i = b.items[id]!;
+			i.status = "doing";
+			delete i.reviewer;
+			delete i.approvedBy;
+			i.nudges = 0;
+			i.updatedAt = Date.now();
+			pushHistory(i, "pi-os", history);
+			return { changed: true, result: plain(i) };
+		});
+		if (t.assignee) await this.m.deliver(projectId, t.assignee, { from: "pi-os", fromKey: "pi-os", text: `${message}\n\nRun \`git merge main\` in your worktree, fix it, run the tests, and call task_done again.`, kind: "message" }, `mergefail:${id}:${t.submitted?.commit.slice(0, 12)}:${(t.history ?? []).length}`);
+		this.kick(projectId, 50);
+	}
+
+	async #merged(projectId: string, id: string, commit: string, files: string[], by: string) {
+		const t = await this.#edit(projectId, (b) => {
 			const i = b.items[id]!;
 			i.status = "done";
-			i.merged = r.commit;
+			i.merged = commit;
 			delete i.reviewer;
 			i.updatedAt = Date.now();
-			pushHistory(i, "pi-os", `Merged into main as ${r.commit}${by === "no reviewer on the team" ? " (no reviewer on the team)" : ""}`);
+			pushHistory(i, "pi-os", `Merged into main as ${commit}${by === "no reviewer on the team" ? " (no reviewer on the team)" : ""}`);
 			rollUp(b);
-			return { changed: true, result: undefined };
+			return { changed: true, result: plain(i) };
 		});
-		await this.m.log(projectId, { at: Date.now(), agent: t.assignee, kind: "publish", text: `${t.id} “${clip(t.title, 70)}” merged into main (${r.files.length} file${r.files.length === 1 ? "" : "s"})` });
-		hub.publish(this.m.channel(projectId), { t: "project.repo", ws: this.m.ws.id, project: projectId, head: r.commit, files: r.files });
-		this.m.mainChanged(projectId, r.files);
+		await this.m.log(projectId, { at: Date.now(), agent: t.assignee, kind: "publish", text: `${t.id} “${clip(t.title, 70)}” merged into main (${files.length} file${files.length === 1 ? "" : "s"})` });
+		hub.publish(this.m.channel(projectId), { t: "project.repo", ws: this.m.ws.id, project: projectId, head: commit, files });
+		this.m.mainChanged(projectId, files);
 		this.kick(projectId, 50);
-		return r.commit;
 	}
 
 	// ------------------------------------------------------------------ idle agents
@@ -402,6 +558,16 @@ export class BuildScheduler {
 		await this.m.log(projectId, { at: Date.now(), kind: "user", text: `${by} ${paused ? "paused" : "resumed"} the build` });
 		if (!paused) this.kick(projectId, 50);
 	}
+}
+
+/** A check result as stored on a task (documents reject undefined fields). */
+function checkRecord(r: CheckResult, stage: "submit" | "merge", commit: string) {
+	return clean({ status: r.status, stage, commit, at: Date.now(), command: r.command, output: r.output, reason: r.reason, ms: r.ms }) as NonNullable<BacklogItem["checks"]>;
+}
+
+/** Drop undefined fields. */
+function clean<T extends object>(o: T): T {
+	return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
 /** A detached copy of a document value (copies made inside a commit must not keep its proxies). */

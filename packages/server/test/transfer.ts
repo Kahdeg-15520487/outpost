@@ -161,4 +161,19 @@ async function run() {
 	check("import keeps what partly works, with warnings", imported.gadgets.map((x: any) => x.name).sort().join() === "Fine,Odd GitHub method,Slack poster" && imported.warnings.length === 2, imported);
 	const ghImport = await bb.ok("POST", `/api/w/${wsB}/import`, undefined, JSON.stringify(withGrant.bundle));
 	check("import notes which access to grant again", ghImport.notes.some((n: string) => /needs GitHub.* access: grant it/.test(n)), ghImport.notes);
+
+	console.log("the builder's guide + feedback");
+	const { OS_GUIDE, gadgetCompat } = await import("../src/agent/extension.ts");
+	const { SERVER_FEATURES, CLIENT_FEATURES, GADGET_RUNTIME } = await import("../src/gadgets/compat.ts");
+	const undocumented = [...SERVER_FEATURES.map((f) => `ctx.${f}`), ...CLIENT_FEATURES.map((f) => `gadget.${f}`)].filter((m) => !new RegExp(`${m.replace(".", "\\.")}\\b`).test(OS_GUIDE));
+	check("the agent's gadget guide documents every runtime feature", undocumented.length === 0, undocumented);
+	check("the guide states the compatibility rules (runtime version, only these members)", OS_GUIDE.includes(`gadget runtime v${GADGET_RUNTIME}`) && /Use only these members/.test(OS_GUIDE) && /github` \(repo_info/.test(OS_GUIDE));
+	const { gadget: probe } = await a.ok("POST", `/api/w/${wsA}/gadgets`, { name: "Probe" });
+	await ws.writeGadgetFiles(probe.id, { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} n(){ return this.ctx.storage.get('n') } }" });
+	check("gadget_write feedback: fine code reports nothing", (await gadgetCompat(ws, probe.id)) === undefined);
+	await ws.writeGadgetFiles(probe.id, { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} n(){ return this.ctx.fetch('x') } }" });
+	const report2 = await gadgetCompat(ws, probe.id);
+	check("gadget_write feedback: code outside the runtime is reported with a fix", report2?.status === "blocked" && /ctx\.fetch/.test(report2.issues.join()) && /documented ctx\/gadget API/.test(report2.fix), report2);
+	await ws.writeGadgetFiles(probe.id, { "server.js": "export default class S { constructor(ctx){this.ctx=ctx} n(){ return this.ctx.gatekeepers.github.delete_repo({}) } }" });
+	check("gadget_write feedback: an unknown Gatekeeper method is a warning", (await gadgetCompat(ws, probe.id))?.status === "warn");
 }

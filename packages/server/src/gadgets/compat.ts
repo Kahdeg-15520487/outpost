@@ -97,6 +97,21 @@ export function mergeRequires(declared: Partial<Requires> | undefined, detected:
 	};
 }
 
+/**
+ * The compatibility rules for whoever builds gadgets and blueprints (the agent's guide), generated from
+ * the lists above so the guide can't drift from what the runtime and the import check accept.
+ */
+export function compatGuide(): string {
+	const gks = Object.values(GATEKEEPERS)
+		.map((g) => `\`${g.id}\` (${Object.keys(g.methods).join(", ")})`)
+		.join(", ");
+	return `Compatibility (gadget runtime v${GADGET_RUNTIME}, pi-os ${PIOS_VERSION}): gadgets and blueprints are exported and imported between pi-os instances, and an instance runs only the API it knows. Use only these members:
+- server \`ctx\`: ${SERVER_FEATURES.map((f) => `\`ctx.${f}\``).join(", ")}
+- client \`gadget\`: ${CLIENT_FEATURES.map((f) => `\`gadget.${f}\``).join(", ")}
+- Gatekeepers on this instance: ${gks || "(none)"}
+Anything else (\`ctx.fetch\`, \`ctx.setTimeout\`, \`gadget.storage\`, a Gatekeeper or method not listed) doesn't exist here: the server or page fails, and another instance's import check blocks the gadget. \`gadget_write\` and \`gadget_edit\` report a \`compat\` problem when code uses something outside this list; fix it before moving on.`;
+}
+
 /** Compare versions like 0.7.0 / 1.2 (numeric parts). */
 export function compareVersions(a: string, b: string): number {
 	const pa = a.split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);

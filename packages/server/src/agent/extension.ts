@@ -1,4 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
+import { assess, compatGuide, detectRequires } from "../gadgets/compat.ts";
 import { configure, defineExtension, defineTool, section, type Extension, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord";
 import { blueprints as blueprintDb, gadgets as gadgetDb } from "../kernel/system-db.ts";
@@ -25,19 +26,28 @@ Files:
 - \`server.js\` — optional ES module: \`export default class { constructor(ctx) {} async addItem(text) { ... } }\`. Public methods (not starting with \`_\`) are the gadget's RPC API. Arguments and results must be JSON. \`static readonly = ["list"]\` names the methods viewers may call.
 
 Client API (global \`gadget\`):
-- \`await gadget.api.someMethod(a, b)\` — call the server.
-- \`gadget.on("event", data => ...)\` — receive server broadcasts (multiplayer). \`gadget.user\` → {id, name, role}. \`gadget.onPresence(list => ...)\` → users currently viewing.
+- \`await gadget.api.someMethod(a, b)\` — call the server (\`await gadget.call("someMethod", a, b)\` is the same).
+- \`gadget.on("event", data => ...)\` — receive server broadcasts (multiplayer). \`gadget.user\` → {id, name, role}. \`gadget.onPresence(list => ...)\` → users currently viewing (\`gadget.presence\` holds the current list). \`gadget.id\` → this gadget's id.
 - The page reloads itself when files change.
 - \`gadget_call\` takes \`args\` as a positional array: \`{ method: "add", args: ["Buy milk", "ana"] }\`.
 
 Server API (global/constructor \`ctx\`):
 - \`ctx.storage.get(key)\`, \`.set(key, value)\`, \`.delete(key)\`, \`.list(prefix)\` → {key: value}. Synchronous, JSON values. All writes of one call commit atomically; a throwing call rolls back.
 - \`ctx.broadcast(event, data)\` — delivered to every connected client after the call commits. Broadcast after every mutation so collaborators see changes live (multiplayer by default).
-- \`ctx.caller\` → {kind: "user"|"agent", id, name, role}; \`ctx.presence()\`; \`console.log\` → gadget logs.
+- \`ctx.caller\` → {kind: "user"|"agent", id, name, role}; \`ctx.presence()\`; \`ctx.id()\` → a new unique id; \`ctx.now()\` → the time in ms; \`console.log\` → gadget logs.
+- \`ctx.files\` — read workspace files shared with this gadget and write new ones (see the Files guide).
 - \`await ctx.gatekeepers["<grant id or label>"].<method>(args)\` — only for Gatekeepers introduced to *this gadget* (separately from you). To get one, call \`request_access\` with \`forGadget\`; when a gadget holds a single grant of a gatekeeper you can address it by gatekeeper id, e.g. \`await ctx.gatekeepers.github.list_issues({ state: "open" })\`. Gadget writes are queued for approval just like yours.
 - No timers, no fetch, no Node APIs. Calls are serialized; keep them fast.
 
-Workflow: write \`server.js\` first, then \`index.html\`; check \`gadget_write\`'s reported server status and \`gadget_logs\`; exercise the API with \`gadget_call\`. **Then look at it**: \`gadget_screenshot\` renders the client headlessly and returns an image plus console errors and failed RPC calls. Check layout, spacing, overflow, empty and loading states, and fix what looks wrong; re-screenshot after visual changes. Use its \`actions\` (click / type / press / scroll / hover / wait, CSS selectors inside the gadget) to verify interactions, and \`width\` to check narrow layouts. Renders run against a scratch copy of the gadget's storage, so test interactions freely; real data is untouched. You can also **use** a gadget on the user's behalf through \`gadget_call\` (e.g. edit the slides, make a move in a game) — that is how you collaborate inside apps.`;
+Workflow: write \`server.js\` first, then \`index.html\`; check \`gadget_write\`'s reported server status and \`gadget_logs\`; exercise the API with \`gadget_call\`. **Then look at it**: \`gadget_screenshot\` renders the client headlessly and returns an image plus console errors and failed RPC calls. Check layout, spacing, overflow, empty and loading states, and fix what looks wrong; re-screenshot after visual changes. Use its \`actions\` (click / type / press / scroll / hover / wait, CSS selectors inside the gadget) to verify interactions, and \`width\` to check narrow layouts. Renders run against a scratch copy of the gadget's storage, so test interactions freely; real data is untouched. You can also **use** a gadget on the user's behalf through \`gadget_call\` (e.g. edit the slides, make a move in a game) — that is how you collaborate inside apps.
+
+${compatGuide()}`;
+
+/** What the import check on another pi-os would say about this gadget's code (undefined when it's fine). */
+export async function gadgetCompat(ws: Workspace, gadgetId: string) {
+	const r = assess(detectRequires(await ws.gadgetFiles(gadgetId), await ws.gadgetGrants(gadgetId)));
+	return r.status === "ok" ? undefined : { status: r.status, issues: r.issues, fix: r.status === "blocked" ? "Use only the documented ctx/gadget API (see Compatibility); this gadget won't run or import as is." : "Those Gatekeeper calls will fail here; use only the listed Gatekeepers and methods." };
+}
 
 /** Conversations created for subagents report to the chat that owns them; grants follow the chat. */
 async function chatOf(ws: Workspace, conversationId: number, context: Context): Promise<string> {
@@ -119,7 +129,8 @@ export function createOsExtension(ws: Workspace): Extension {
 				const g = requireGadget(ws, args.gadget);
 				await ws.writeGadgetFiles(g.id, { [args.path]: args.content });
 				await api.details({ openGadget: g.id }, context);
-				return text({ ok: true, path: args.path, chars: args.content.length, server: await ws.host(g.id).describe() });
+				const compat = await gadgetCompat(ws, g.id);
+				return text({ ok: true, path: args.path, chars: args.content.length, server: await ws.host(g.id).describe(), ...(compat ? { compat } : {}) });
 			},
 		}),
 		defineTool({
@@ -143,7 +154,8 @@ export function createOsExtension(ws: Workspace): Extension {
 				}
 				await ws.writeGadgetFiles(g.id, { [args.path]: content });
 				await api.details({ openGadget: g.id }, context);
-				return text({ ok: true, server: await ws.host(g.id).describe() });
+				const compat = await gadgetCompat(ws, g.id);
+				return text({ ok: true, server: await ws.host(g.id).describe(), ...(compat ? { compat } : {}) });
 			},
 		}),
 		defineTool({

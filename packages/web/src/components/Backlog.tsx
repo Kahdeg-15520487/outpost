@@ -1,5 +1,5 @@
 import "../backlog.css";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentRecord, type Backlog, type BacklogItem, type Feedback, type ItemStatus, type Question } from "../api";
 import { timeAgo } from "../store";
 import { Markdown } from "./bits";
@@ -381,6 +381,38 @@ function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; 
 	);
 }
 
+/**
+ * One line of card text. At rest it's clipped with an ellipsis; while the card is hovered, text that
+ * doesn't fit scrolls to its end and back (pausing at each end), like a ticker.
+ */
+function Marquee({ className, title, children }: { className?: string; title?: string; children: React.ReactNode }) {
+	const ref = useRef<HTMLSpanElement>(null);
+	const [overflow, setOverflow] = useState(0);
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		const measure = () => {
+			const d = el.scrollWidth - el.clientWidth;
+			setOverflow(d > 2 ? d : 0);
+		};
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [children]);
+	return (
+		<span
+			ref={ref}
+			className={`mq ${overflow ? "over" : ""} ${className ?? ""}`}
+			title={title ?? (typeof children === "string" ? children : undefined)}
+			// ~45 px/s, plus the pauses at both ends (the keyframes hold 20% of the time at each end).
+			style={overflow ? ({ "--mq-shift": `-${overflow}px`, "--mq-dur": `${(overflow / 45 / 0.6).toFixed(2)}s` } as React.CSSProperties) : undefined}
+		>
+			<span className="mq-in">{children}</span>
+		</span>
+	);
+}
+
 function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEdit: boolean; onOpen: () => void }) {
 	const f = ctx.featureOf(t);
 	const p = ctx.pbiOf(t);
@@ -398,12 +430,16 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 		>
 			<div className="kc-top">
 				<span className="kc-id mono">{t.id}</span>
-				{f && <span className="kc-feature">{f.title}</span>}
+				{f && <Marquee className="kc-feature">{f.title}</Marquee>}
 				{t.feedback && <span className="kc-fb mono" title={`From feedback ${t.feedback}`}>{t.feedback}</span>}
 				{t.estimate && <span className="kc-est mono">{t.estimate}</span>}
 			</div>
 			<div className="kc-title">{t.title}</div>
-			{p && <div className="kc-pbi">{p.id} · {p.title}</div>}
+			{p && (
+				<Marquee className="kc-pbi" title={`${p.id} · ${p.title}`}>
+					{p.id} · {p.title}
+				</Marquee>
+			)}
 			{(t.pending || p?.pending) && <div className="kc-pending">waiting for your approval</div>}
 			<div className="kc-foot">
 				{t.deps.length > 0 && (
@@ -411,7 +447,7 @@ function TaskCard({ t, ctx, canEdit, onOpen }: { t: BacklogItem; ctx: Ctx; canEd
 						⛓ {t.deps.join(" ")}
 					</span>
 				)}
-				{t.area && <span className="kc-area mono" title={t.area}>{t.area}</span>}
+				{t.area && <Marquee className="kc-area mono">{t.area}</Marquee>}
 				{t.status === "review" && t.reviewer ? <span className="kc-who review mono" title={`${t.reviewer} is reviewing it`}>⌕ @{t.reviewer}</span> : t.assignee && <span className="kc-who mono">@{t.assignee}</span>}
 				{t.status === "review" && !t.reviewer && <span className="kc-who waiting mono">waiting for review</span>}
 			</div>

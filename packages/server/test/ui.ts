@@ -202,6 +202,22 @@ async function run() {
 
 	await go(projectHash("backlog"));
 	must("Backlog: the build bar shows progress", await until("build bar", () => text(".bl-build").then((t) => /Building/.test(t) && /merged/.test(t))));
+	const spill = await page.$$eval(".kb-card", (cards) =>
+		cards.flatMap((c) => {
+			const box = c.getBoundingClientRect();
+			return [...c.querySelectorAll(".kc-pbi, .kc-area, .kc-feature")].filter((e) => e.getBoundingClientRect().right > box.right + 1).map((e) => e.className);
+		}),
+	);
+	check("long card text stays inside its card", spill.length === 0, spill);
+	const longCard = await page.$$("xpath/.//button[contains(@class,'kb-card')][.//*[contains(@class,'kc-area') and contains(@class,'over')]]");
+	must("long text is detected as overflowing", longCard.length > 0);
+	const animBefore = await longCard[0]!.$eval(".kc-area .mq-in", (e) => getComputedStyle(e).animationName);
+	await longCard[0]!.hover();
+	await sleep(1500);
+	const moved = await longCard[0]!.$eval(".kc-area .mq-in", (e) => ({ anim: getComputedStyle(e).animationName, x: new DOMMatrix(getComputedStyle(e).transform).m41 }));
+	check("hovering the card scrolls the clipped text", animBefore === "none" && moved.anim === "mq-run" && moved.x < 0, { animBefore, moved });
+	await shot("marquee");
+	await page.mouse.move(5, 5);
 	await clickText(".bl-build button", "Pause build");
 	check("pause from the build bar", await until("paused", async () => (await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.build?.paused === true && /Resume build/.test(await text(".bl-build"))));
 	await clickText(".bl-build button", "Resume build");
@@ -278,9 +294,9 @@ async function seedProject(wsId: string): Promise<string> {
 			b,
 			[
 				{ ref: "f", type: "feature", title: "Weekly board" },
-				{ ref: "p", type: "pbi", parent: "f", title: "See who's in", acceptance: ["Mon–Fri columns"] },
+				{ ref: "p", type: "pbi", parent: "f", title: "See who's in: [Must] simulation core with the state and action contract, fixed step and seeded PRNG (design §4/§6/§7)", acceptance: ["Mon–Fri columns"] },
 				{ ref: "t1", type: "task", parent: "p", title: "Serve the board page", area: "app/server" },
-				{ type: "task", parent: "p", title: "Render the week grid", deps: ["t1"], area: "app/ui" },
+				{ type: "task", parent: "p", title: "Render the week grid", deps: ["t1"], area: "app/index.html, app/styles, app/src/ui, app/src/main.js" },
 			],
 			"planner",
 		),

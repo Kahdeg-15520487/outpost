@@ -74,7 +74,7 @@ write("dev-1", "app/package.json", `{ "name": "hello", "private": true }\n`);
 write("dev-1", ".pios/project.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
 const reply1 = await pm.build.taskDone(p.id, await agent("dev-1"), "server on $PORT", false);
 check("task_done submits", /^Submitted T1/.test(reply1), reply1);
-await until("review assignment", async () => (await item("T1")).reviewBriefed);
+await until("review assignment", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewer === "reviewer");
 let r1 = await item("T1");
 check("submitted work goes to the reviewer", r1.status === "review" && r1.reviewer === "reviewer" && r1.submitted?.files.includes("app/server.js"), r1);
 check("reviewer's worktree holds the submitted commit", (await git(repo.worktree("reviewer"), ["rev-parse", "HEAD"])).trim() === r1.submitted?.commit && (await repo.isDetached("reviewer")));
@@ -86,7 +86,7 @@ check("reviewer back on its own branch", !(await repo.isDetached("reviewer")));
 
 write("dev-1", "app/server.js", `require("http").createServer((q, s) => s.end("hello v1\\n")).listen(process.env.PORT, "127.0.0.1");\n`);
 await pm.build.taskDone(p.id, await agent("dev-1"), "added the newline", false);
-await until("second review", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewRound === 2);
+await until("second review", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewRound === 2 && (await item("T1")).reviewer === "reviewer");
 const before = (await repo.files()).includes("app/server.js");
 const v2 = await pm.build.verdict(p.id, await agent("reviewer"), "T1", "approve", "", dod);
 r1 = await item("T1");
@@ -112,7 +112,7 @@ check("no_changes submit allowed when declared", /^Submitted T3/.test(reply3), r
 write("dev-1", "app/server.js", `require("http").createServer((q, s) => s.end("hello v2\\n")).listen(process.env.PORT, "127.0.0.1");\n`);
 await pm.build.taskDone(p.id, await agent("dev-1"), "v2 greeting", false);
 for (let i = 0; i < 2; i++) {
-	const t = await until("a review", async () => Object.values((await pm.backlog(p.id)).items).find((x) => x.status === "review" && x.reviewBriefed));
+	const t = await until("a review", async () => Object.values((await pm.backlog(p.id)).items).find((x) => x.status === "review" && x.reviewBriefed && x.reviewer === "reviewer"));
 	if (t) await pm.build.verdict(p.id, await agent("reviewer"), t.id, "approve", "ok", dod);
 }
 await until("all done", async () => (await pm.backlog(p.id)).build?.finishedAt);

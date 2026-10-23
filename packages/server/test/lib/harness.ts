@@ -41,7 +41,8 @@ export function must(name: string, ok: unknown, detail?: unknown): asserts ok {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function until<T>(what: string, fn: () => Promise<T | undefined | null | false> | T | undefined | null | false, ms = 20000): Promise<T | undefined> {
+/** Default wait: generous, because CI runners (Windows especially) are slow to spawn processes and browsers. */
+export async function until<T>(what: string, fn: () => Promise<T | undefined | null | false> | T | undefined | null | false, ms = 45000): Promise<T | undefined> {
 	const end = Date.now() + ms;
 	while (Date.now() < end) {
 		const v = await Promise.resolve()

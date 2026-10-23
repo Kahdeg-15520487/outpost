@@ -336,7 +336,7 @@ async function seedProject(wsId: string): Promise<string> {
 	write("app/package.json", `{ "name": "whos-in", "private": true }\n`);
 	write(".pios/project.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
 	await pm.build.taskDone(pid, await agent("dev-1"), "board page", false);
-	await until("review 1", async () => (await item("T1")).reviewBriefed);
+	await until("review 1", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewer === "reviewer");
 	await pm.build.verdict(pid, await agent("reviewer"), "T1", "changes", "Set the content type");
 	await pm.build.taskDone(pid, await agent("dev-1"), "content type set", false);
 	await until("review 2", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewRound === 2);

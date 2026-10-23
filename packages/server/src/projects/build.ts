@@ -280,6 +280,7 @@ export class BuildScheduler {
 			i.submitted = { commit: r.commit!, summary, at: Date.now(), by: dev.key, files: r.files };
 			i.checks = { status: "running", stage: "submit", commit: r.commit!, at: Date.now() };
 			delete i.reviewer;
+			i.reviewBriefed = false;
 			delete i.approvedBy;
 			delete i.dod;
 			i.nudges = 0;
@@ -354,6 +355,7 @@ export class BuildScheduler {
 				if (r.status === "failed") {
 					i.status = "doing";
 					delete i.reviewer;
+					i.reviewBriefed = false;
 					i.nudges = 0;
 					pushHistory(i, "pi-os", `Tests failed (${r.reason ?? "failed"}): \`${r.command}\``);
 					return { changed: true, result: { dev: i.assignee, title: i.title } };
@@ -488,6 +490,7 @@ export class BuildScheduler {
 			i.status = "doing";
 			delete i.reviewer;
 			delete i.approvedBy;
+			i.reviewBriefed = false;
 			i.nudges = 0;
 			i.updatedAt = Date.now();
 			pushHistory(i, "pi-os", history);

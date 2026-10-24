@@ -23,6 +23,8 @@ pi-os.config.*.json
 
 # logs & scratch
 *.log
+# release snapshots, not source
+/pi-os.zip
 npm-debug.log*
 pnpm-debug.log*
 *.tmp.*

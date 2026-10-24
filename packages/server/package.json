@@ -12,6 +12,8 @@
 		"test:ui": "tsx test/ui.ts",
 		"test:render": "tsx test/render-check.ts",
 		"test:build": "tsx test/build.ts",
+		"test:preview": "tsx test/preview.ts",
+		"test:home": "tsx test/home.ts",
 		"test:gates": "tsx test/gates.ts",
 		"test:quality": "tsx test/quality.ts",
 		"test:transfer": "tsx test/transfer.ts",

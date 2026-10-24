@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { exportGadget } from "./Transfer";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
+import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
+import { HomePage } from "./Home";
 import { GadgetWindow } from "./GadgetWindow";
 import { ApprovalsDrawer } from "./Approvals";
 import { BlueprintsPage } from "./Blueprints";
@@ -41,8 +42,9 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 
 	const wsId = "ws" in route ? route.ws : workspaces[0]?.id;
 	useEffect(() => {
-		if (route.page === "home" && workspaces[0]) navigate(chatHref(workspaces[0].id));
-	}, [route.page, workspaces]);
+		// No workspace in the URL yet (the bare landing): go to the first one's homepage.
+		if (route.page === "home" && !("ws" in route) && workspaces[0]) navigate(homeHref(workspaces[0].id));
+	}, [route, workspaces]);
 
 	const ws = workspaces.find((w) => w.id === wsId);
 
@@ -97,10 +99,12 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		<div className={`shell ${gadgetOpen ? "with-gadget" : ""} ${chatHidden ? "chat-hidden" : ""}`}>
 			<aside className="sidebar">
 				<div className="brand">
-					<div className="logo">π</div>
-					<div className="name">
+					<a className="logo" href={wsId ? homeHref(wsId) : "#"} title="Workspace home" onClick={(e) => (wsId ? undefined : e.preventDefault())}>
+						π
+					</a>
+					<a className="name" href={wsId ? homeHref(wsId) : "#"} title="Workspace home">
 						pi<em>·</em>os
-					</div>
+					</a>
 					<div className="kernel" title={online ? "Connected to the kernel" : "Reconnecting…"}>
 						<span className={`dot ${online ? "" : "off"}`} />
 						{online ? "live" : "…"}
@@ -297,7 +301,10 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} standalone onClose={() => navigate("#/")} />
 				</div>
 			)}
-			{(route.page === "home" || route.page === "link") && <div className="main" />}
+			{route.page === "home" && ws && (
+				<HomePage key={`${ws.id}:home`} ws={ws} user={user} canEdit={canEdit} onNewChat={newChat} onNewProject={() => setNewProject(true)} onApprovals={() => setDrawer(true)} />
+			)}
+			{(route.page === "home" && !ws) || route.page === "link" ? <div className="main" /> : null}
 
 			{newProject && ws && <NewProjectDialog ws={ws} models={models} picker={picker} defaultModel={defaultModel} onClose={() => setNewProject(false)} />}
 			{managingModels && (

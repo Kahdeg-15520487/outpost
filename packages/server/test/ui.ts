@@ -161,6 +161,23 @@ async function run() {
 	await shot("export");
 	await page.keyboard.press("Escape");
 
+	console.log("workspace home");
+	await go(`#/w/${ws}`);
+	must("the workspace root is its homepage", await until("home", () => page.$(".home-head")));
+	check("it greets you by name", /Welcome/.test(await text(".home-head h1")) && /Ana/.test(await text(".home-head h1")));
+	check("a workspace never opened says first time", /first time/i.test(await text(".home-eyebrow")));
+	await until("the digest", () => text(".home-away").then((t) => t.includes("Renamed chat")));
+	check("what the agent did is in the digest, under its chat", /Renamed chat/.test(await text(".home-away")));
+	check("with the run's counts", /run|message/.test(await text(".home-totals")));
+	check("the last chat is offered to pick up", /last chat/i.test(await text(".home-grid")));
+	await shot("home");
+	await clickText(".home-card", /last chat/i);
+	check("the card opens that chat", await until("back in the chat", () => page.$(".composer textarea")));
+	await page.click(".brand .logo");
+	check("the logo returns to the homepage", await until("home again", () => page.$(".home-head")));
+	await clickText(".home-actions .btn", /Start a chat/);
+	check("Start a chat opens a new chat", await until("new chat", () => page.$(".composer textarea")));
+
 	console.log("project page");
 	const pid = await seedProject(ws);
 	const projectHash = (tab: string) => `#/w/${ws}/p/${pid}?tab=${tab}`;

@@ -39,6 +39,17 @@ export type PiOsConfigFile = {
 		/** Largest single upload, in MB. Default 100. */
 		maxUploadMB?: number;
 	};
+	/**
+	 * Live previews (the App tab). The app itself always runs on loopback; these decide what browsers
+	 * connect to. Set `ports` when pi-os runs where loopback isn't reachable from the browser — a
+	 * container, or behind a port mapping: pi-os then listens on that range and forwards to the app.
+	 */
+	preview?: {
+		/** Address the public preview ports listen on. Default 127.0.0.1; use 0.0.0.0 in a container. */
+		bind?: string;
+		/** "3100-3199" (or [3100, 3199]): the ports browsers use. Default: one ephemeral loopback port per preview. */
+		ports?: string | [number, number];
+	};
 	/** Headless rendering of gadgets (agent visual feedback via gadget_screenshot). */
 	render?: {
 		/** false disables gadget_screenshot. Default true. */
@@ -99,6 +110,18 @@ const defaultModel = (() => {
 	return { provider, modelId: rest.join("/") };
 })();
 
+/** "3100-3199" or [3100, 3199] → the inclusive range; anything else is a warning and no range. */
+function parsePortRange(value: string | [number, number] | undefined): [number, number] | undefined {
+	if (value === undefined) return undefined;
+	const nums = Array.isArray(value) ? value.map(Number) : /^\s*(\d{2,5})\s*[-:]\s*(\d{2,5})\s*$/.exec(value)?.slice(1).map(Number);
+	const [start, end] = nums ?? [];
+	if (!start || !end || start > end || start < 1 || end > 65535) {
+		console.warn(`pi-os: preview.ports must be a range like "3100-3199", got ${JSON.stringify(value)} — ignoring`);
+		return undefined;
+	}
+	return [start, end];
+}
+
 /** The secret that signs frame tokens and encrypts stored credentials. PI_OS_SECRET (hex/base64, 32 bytes) wins over the generated file. */
 const secretFile = join(dataDir, "secret.key");
 const secret: Buffer = (() => {
@@ -133,6 +156,7 @@ export const config = {
 	demoModel: file.models?.demo ?? true,
 	githubToken: () => resolveSecret(file.gatekeepers?.github?.token).value,
 	render: { enabled: file.render?.enabled ?? true, chromePath: process.env.PI_OS_CHROME ?? file.render?.chromePath },
+	preview: { bind: process.env.PI_OS_PREVIEW_BIND ?? file.preview?.bind ?? "127.0.0.1", ports: parsePortRange(process.env.PI_OS_PREVIEW_PORTS ?? file.preview?.ports) },
 	maxUploadBytes: Math.round((file.files?.maxUploadMB ?? 100) * (1 << 20)),
 	secret,
 };

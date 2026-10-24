@@ -122,6 +122,8 @@ export type UserPrefs = {
 	 * isn't listed shows all its models (so newly configured providers aren't invisible).
 	 */
 	modelPicker?: Record<string, string[]>;
+	/** Workspace id → when this user last opened its homepage, which is what "while you were away" measures from. */
+	seen?: Record<string, number>;
 };
 
 export const sessions = {

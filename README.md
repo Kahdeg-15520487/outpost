@@ -83,6 +83,7 @@ New chats use `models.default`, unless the workspace sets its own, falling back 
 | `PORT`, `HOST` | `server.port`, `server.host` |
 | `PI_OS_DATA` | `dataDir`, which holds the system DB, one `workspaces/<id>.sqlite` per workspace, the secret, and stored credentials |
 | `PI_OS_SECRET` | the generated `secret.key` (32 bytes, as hex or base64) |
+| `PI_OS_PREVIEW_BIND`, `PI_OS_PREVIEW_PORTS` | `preview.bind`, `preview.ports` — where browsers reach live previews (`0.0.0.0`, `"3100-3199"` in a container) |
 
 ### Files
 
@@ -137,6 +138,77 @@ The **App** tab runs the product from `main`:
 - Agents check it with the `preview` tool.
 
 Agents run shell commands **on this machine** (Git Bash on Windows) inside their worktree. The file tools can't write outside it. The development process (stages, roles, gates, artifacts, task lifecycle, and how it compares with Waterfall, Scrum, Kanban and BMAD): [docs/methodology.md](docs/methodology.md). Design and roadmap: [docs/design/agent-teams.md](docs/design/agent-teams.md). Done: the team, tiles, transcripts, repo layout, the backlog with its approval gate, the build scheduler (M4) and the live preview (M5). Next: dedicated approve buttons for requirements and design, and iteration on feedback.
+
+## Docker
+
+One container holds the server, the built web app, git (projects are real repositories with per-agent
+worktrees) and Chromium for `gadget_screenshot`. Everything that changes at runtime lives in a volume,
+so `docker compose down && up` keeps your workspaces.
+
+```bash
+cp .env.example .env             # optional: put your provider keys here
+docker compose up -d --build
+open http://localhost:8787
+```
+
+Without compose:
+
+```bash
+docker build -t pi-os .
+docker run -d --name pi-os \
+  -p 127.0.0.1:8787:8787 -p 127.0.0.1:3100-3199:3100-3199 \
+  -v pi-os-data:/data -e ANTHROPIC_API_KEY pi-os
+```
+
+**Live previews need a published port range.** The App tab points your browser at the app's port, and
+the app listens on the container's own loopback, which a published port can't reach. So the shipped
+config sets `preview.ports`: pi-os takes a port from that range, listens on it itself and pipes each
+connection to the app, WebSockets and HMR included. Publish the same range and previews work from any
+browser. The generated app is untouched — it still binds `127.0.0.1:$PORT`. Each running preview holds
+one port; narrow the range in **both** `docker/config.json` and `docker-compose.yml` if you'd rather
+publish fewer (say `3100-3109`).
+
+**Configuration.** The image sets `PI_OS_CONFIG=/app/docker/config.json`, which puts `dataDir` in
+`/data`, binds `0.0.0.0`, points `render.chromePath` at `/usr/bin/chromium` and reads keys from `$VAR`s.
+To use your own: copy that file, edit it, and mount it over `/app/docker/config.json`.
+
+**Data.** The `/data` volume holds the system DB, one SQLite per workspace, project repos and
+worktrees, uploads, `secret.key` and the encrypted model keys. A bind mount works too, but it must be
+writable by uid 10001 (`useradd --uid 10001 pi-os` in the image).
+
+**Ports and TLS.** Only 8787 is pi-os; previews use their own range. pi-os speaks plain HTTP (and sends
+`x-frame-options: DENY` for itself), so terminate TLS in a reverse proxy in front of it. Reaching pi-os
+over HTTPS also means the previews' plain-HTTP ports are blocked as mixed content.
+
+**Git and the shell.** The image has git, bash and node plus a system git identity, so agents can open
+worktrees, commit and merge. They run shell commands inside the container, and that shell is
+[not sandboxed](#not-yet-like-cloudflare-os) — the container is the boundary.
+
+**Size.** ~1.8 GB, most of it Chromium. Skip `chromium` from the `apt-get` line and set
+`render.enabled: false` in the config if you don't need `gadget_screenshot`.
+
+## The workspace homepage
+
+`#/w/<workspace>` — the bare workspace URL, or the **π** logo in the sidebar — is the workspace's
+homepage, not a chat. Chats live at `#/w/<ws>/c/<id>`. The page answers two questions:
+
+- **Where was I?** The last chat, projects with questions waiting on you, approvals to decide — one
+  click each — plus quick actions to start a chat or give a team a goal.
+- **What happened while I was away?** What the agents did since you last opened the workspace: runs per
+  chat (messages, which tools, a snippet of what it said), projects that moved, gadgets edited,
+  approvals decided, files added.
+
+"While you were away" measures from the last time *you* opened the homepage, stored per user; a
+workspace you have never opened looks back a week.
+
+Chat transcripts carry no wall-clock time of their own — a durable entry is an ordered record, not a
+timestamped one — so every finished agent run is written down as it ends, from the run's own event
+stream, whether or not anyone has the chat open. That record is deliberately small: counts, tool names
+and the agent's last words, capped at the newest 300 runs.
+
+The digest itself is facts only and costs nothing. **Summarise these chats** asks the model for one
+line per chat, caches it until that chat has newer runs, and is skipped on the demo model. What is sent
+to the model is the run snippets and tool names, never the transcript.
 
 ## How it maps onto pi-durable
 
@@ -195,12 +267,14 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 |---|---|
 | `teams` | backlog edits, refs and validation, the `docs/backlog.md` snapshot, approval, project/agent model controls, agents can't write outside their worktree |
 | `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation, version and capability checks) |
+| `home` | the workspace homepage: runs recorded while nobody watches, the per-user "seen" boundary, a second visit reporting only what is new, summaries skipped on the demo model, non-members refused |
 | `quality` | M2 document gates, story-style briefs, tests before review and before merge (incl. merge results when main moved), definition of done, retrospective, restart resume |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
+| `preview` | `preview.ports` (the container case): the browser port comes from the range, the app stays on loopback, two projects run side by side, stopping frees the port |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |
 | `render` | `gadget_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
-| `ui` | the web app in a headless browser: chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
+| `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
 
 Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 

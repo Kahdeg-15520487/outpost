@@ -33,7 +33,9 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 	const pinned = useRef(true);
 	const p = preview;
 	const running = p.status === "running" && p.port;
-	const url = running ? `http://${p.host ?? "127.0.0.1"}:${p.port}/` : "";
+	// The preview is its own server on its own port, so use the host pi-os was reached on (localhost, a
+	// LAN address, a container's published address) rather than the address it bound to.
+	const url = running ? `http://${location.hostname || "127.0.0.1"}:${p.port}/` : "";
 	const showLogs = logsOpen || !running;
 
 	// Open the tab → start it (unless someone stopped it on purpose).

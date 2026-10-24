@@ -31,6 +31,7 @@ import {
 	type Holder,
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
+import { watchRuns, watchRunning } from "./home.ts";
 import { ProjectManager } from "../projects/manager.ts";
 import { agentEnv } from "../projects/env.ts";
 import { blueprints, gadgets, HttpError, newId, users, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
@@ -134,6 +135,7 @@ export class Workspace {
 			}
 		});
 		harness.resume(); // pick up runs a previous process left unfinished
+		void watchRunning(ws); // …and record what those resumed runs do
 		return self;
 	}
 
@@ -207,6 +209,9 @@ export class Workspace {
 
 	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = [], gadgetId?: string) {
 		const c = await this.conversation(chatId);
+		// Follow the run from the start — and before submitting, so a fast run can't end unrecorded. It may
+		// well finish while nobody has the chat open; that is exactly what the homepage reports on.
+		await watchRuns(this, chatId).catch(() => {});
 		const attached: FileMeta[] = [];
 		for (const id of fileIds) attached.push(await this.files.get(id));
 		for (const f of attached) if (!f.chatId) await this.files.update(f.id, (m) => void (m.chatId = chatId));

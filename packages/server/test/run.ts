@@ -12,12 +12,14 @@ import { dirname, join } from "node:path";
 const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "teams", file: "teams.ts", what: "backlog, approval, model controls, agent sandbox" },
 	{ name: "build", file: "build.ts", what: "M4 scheduler + M5 preview" },
+	{ name: "preview", file: "preview.ts", what: "preview.ports: the published range that reaches an app on loopback" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
 	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
 	{ name: "transfer", file: "transfer.ts", what: "export/import of blueprints and gadgets between two instances" },
+	{ name: "home", file: "home.ts", what: "workspace homepage: away digest, seen boundary, summaries" },
 	{ name: "smoke", file: "smoke.ts", what: "HTTP/WS end to end: chat, gadgets, sharing, gatekeepers, files, blueprints" },
 	{ name: "render", file: "render-check.ts", what: "gadget_screenshot (browser)" },
-	{ name: "ui", file: "ui.ts", what: "web app in a browser: chat, menus, picker, project page" },
+	{ name: "ui", file: "ui.ts", what: "web app in a browser: home page, chat, menus, picker, project page" },
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

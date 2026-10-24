@@ -155,3 +155,38 @@ export const MailboxDoc = defineDoc<{ sent: Mail[] }>({
 	initial: () => ({ sent: [] }),
 	...latest,
 });
+
+// ---------------------------------------------------------------- the workspace homepage
+
+/**
+ * One finished agent run in a chat. Transcript entries carry no wall-clock time, so "what happened
+ * while I was away" can't be read back out of them: the run is recorded when it ends instead.
+ */
+export type RunRecord = {
+	id: string;
+	chatId: string;
+	title: string;
+	/** When the run started and when it settled (the field the homepage filters on). */
+	at: number;
+	endedAt: number;
+	/** Assistant messages produced by the run, and how many calls it made of each tool. */
+	messages: number;
+	tools: Record<string, number>;
+	/** The run's last assistant text, clipped: shown as-is, and what summaries are written from. */
+	snippet?: string;
+	/** Set when the run ended badly (tool task faulted, retries exhausted). */
+	failed?: string;
+};
+
+/** A model-written line about what happened in a chat, cached until newer runs appear. */
+export type ChatSummary = { upTo: number; text: string; at: number; model: string };
+
+/** Newest last, bounded. `summaries` is keyed by chat id. */
+export const ActivityDoc = defineDoc<{ runs: RunRecord[]; summaries: Record<string, ChatSummary> }>({
+	kind: "os.activity",
+	version: 1,
+	scope: "session",
+	initial: () => ({ runs: [], summaries: {} }),
+	...every(40),
+});
+export const ACTIVITY_RUNS = 300;

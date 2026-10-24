@@ -6,6 +6,7 @@ import { socket } from "./socket";
 
 export type Route =
 	| { page: "home" }
+	| { page: "home"; ws: string }
 	| { page: "chat"; ws: string; chat?: string; gadget?: string; /** gadget shown full width, chat hidden */ focus?: boolean }
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
@@ -23,7 +24,11 @@ function parse(): Route {
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
 		if (parts[2] === "files") return { page: "files", ws: parts[1] };
 		if (parts[2] === "p" && parts[3]) return { page: "project", ws: parts[1], project: parts[3], tab: q.get("tab") ?? undefined };
-		return { page: "chat", ws: parts[1], chat: parts[2] === "c" ? parts[3] : undefined, gadget: q.get("g") ?? undefined, focus: !!q.get("g") && q.get("focus") === "1" };
+		// A gadget with no chat beside it (opened from the sidebar): show it in an empty chat.
+		if (parts[2] === "g" && parts[3]) return { page: "chat", ws: parts[1], gadget: parts[3], focus: q.get("focus") === "1" };
+		if (parts[2] === "c") return { page: "chat", ws: parts[1], chat: parts[3], gadget: q.get("g") ?? undefined, focus: !!q.get("g") && q.get("focus") === "1" };
+		// The workspace itself: its homepage.
+		return { page: "home", ws: parts[1] };
 	}
 	if (parts[0] === "g" && parts[1]) return { page: "gadget", gadget: parts[1] };
 	if (parts[0] === "link" && parts[1]) return { page: "link", token: parts[1] };
@@ -45,7 +50,10 @@ export const navigate = (hash: string) => {
 	if (location.hash !== hash) location.hash = hash;
 };
 /** `focus`: show the gadget full width with the chat hidden (opening it yourself); the agent opening one keeps the chat visible. */
-export const chatHref = (ws: string, chat?: string, gadget?: string, focus?: boolean) => `#/w/${ws}${chat ? `/c/${chat}` : ""}${gadget ? `?g=${gadget}${focus ? "&focus=1" : ""}` : ""}`;
+export const chatHref = (ws: string, chat?: string, gadget?: string, focus?: boolean) =>
+	chat ? `#/w/${ws}/c/${chat}${gadget ? `?g=${gadget}${focus ? "&focus=1" : ""}` : ""}` : gadget ? `#/w/${ws}/g/${gadget}${focus ? "?focus=1" : ""}` : homeHref(ws);
+/** The workspace homepage: what you were doing last time and what happened while you were away. */
+export const homeHref = (ws: string) => `#/w/${ws}`;
 
 // ------------------------------------------------------------------ workspace docs
 

@@ -5,6 +5,7 @@ import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
 import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../gadgets/bundle.ts";
 import { capabilities } from "../gadgets/compat.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
+import { home, markSeen, summarize } from "../kernel/home.ts";
 import { oauthLogins } from "../kernel/oauth.ts";
 import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
@@ -132,6 +133,24 @@ export function createApi(): Router {
 		if (!target) throw new HttpError(404, `No user "${username}"`);
 		workspaces.setMember(req.params.ws!, target.id, role === null ? null : asRole(role));
 		return { members: workspaces.members(req.params.ws!) };
+	});
+
+	// ------------------------------------------------------------ homepage
+	/** What you were doing, and what happened while you were away. No model calls: the page loads instantly. */
+	r.get("/api/w/:ws/home", async (req) => {
+		const { user, ws } = await member(req);
+		return await home(ws, user);
+	});
+	/** Mark the homepage as read; the next visit measures from this moment. */
+	r.post("/api/w/:ws/home/seen", async (req) => {
+		const { user, ws } = await member(req);
+		return { since: markSeen(ws, user) };
+	});
+	/** One model-written line per chat, cached until that chat has newer runs. */
+	r.post("/api/w/:ws/home/summaries", async (req) => {
+		const { user, ws } = await member(req);
+		const { chats } = await req.body();
+		return await summarize(ws, user, Array.isArray(chats) ? chats.map(String) : []);
 	});
 
 	// ------------------------------------------------------------ chats

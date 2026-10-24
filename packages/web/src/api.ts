@@ -139,7 +139,44 @@ export type TaskCheck = { status: "running" | "passed" | "failed" | "skipped"; s
 export type GateName = "requirements" | "design";
 export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
 export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
-export type PreviewInfo = { status: PreviewStatus; port?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
+export type PreviewInfo = { status: PreviewStatus; port?: number; appPort?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
 export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "pi-os" };
 export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
 export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState; pendingRequest?: { summary: string; requestedBy: string; requestedAt: number } };
+
+// ---------------------------------------------------------------- workspace homepage
+
+export type HomeChatActivity = {
+	chatId: string;
+	title: string;
+	runs: number;
+	messages: number;
+	tools: { name: string; count: number }[];
+	firstAt: number;
+	lastAt: number;
+	snippet?: string;
+	failed?: boolean;
+	/** A model-written line about it, when one was asked for and is still current. */
+	summary?: string;
+};
+export type HomeProject = { id: string; name: string; stage: string; open: number; changes: number; lastAt?: number };
+export type HomePayload = {
+	since: number;
+	now: number;
+	firstVisit: boolean;
+	away: {
+		chats: HomeChatActivity[];
+		gadgets: { id: string; name: string; icon: string; at: number }[];
+		projects: HomeProject[];
+		approvals: { pending: number; decided: number };
+		files: number;
+		audit: number;
+		totals: { runs: number; messages: number; tools: number };
+	};
+	pickup: {
+		lastChat?: { id: string; title: string; at: number };
+		approvals: { id: string; summary: string; gatekeeper: string; at: number; requestedBy: string }[];
+		questions: { projectId: string; project: string; agent: string; text: string; at: number }[];
+	};
+	projects: HomeProject[];
+};

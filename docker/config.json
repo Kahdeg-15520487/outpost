@@ -1,0 +1,20 @@
+{
+  "server": { "host": "0.0.0.0", "port": 8787 },
+  "dataDir": "/data",
+  "preview": { "bind": "0.0.0.0", "ports": "3100-3199" },
+  "render": { "chromePath": "/usr/bin/chromium", "enabled": true },
+  "models": {
+    "providers": {
+      "anthropic": { "apiKey": "$ANTHROPIC_API_KEY" },
+      "openai": { "apiKey": "$OPENAI_API_KEY" },
+      "google": { "apiKey": "$GEMINI_API_KEY" },
+      "openrouter": { "apiKey": "$OPENROUTER_API_KEY" }
+    },
+    "ambientEnv": true,
+    "demo": true
+  },
+  "gatekeepers": {
+    "github": { "token": "$GITHUB_TOKEN" }
+  },
+  "files": { "maxUploadMB": 100 }
+}

@@ -1,9 +1,10 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { createServer, connect, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { hub } from "../collab/hub.ts";
+import { config } from "../config.ts";
 import type { ProjectManager } from "./manager.ts";
 
 /**
@@ -18,10 +19,29 @@ import type { ProjectManager } from "./manager.ts";
  * - `dev` gets a free port in $PORT (also substituted into the command) and HOST=127.0.0.1; it counts
  *   as running once it answers HTTP on readyPath. If the app ignores $PORT, the port it prints
  *   (http://localhost:NNNN) is used instead.
+ * - Where the browser reaches it: by default the app's own loopback port. With `preview.ports` set
+ *   (a container, or any deployment where loopback isn't the browser's loopback) pi-os takes a port
+ *   from that range, listens on `preview.bind` itself and pipes bytes to the app — one published
+ *   range covers every project, and WebSockets (HMR) pass through because it's a raw TCP pipe.
  * - Merges that touch app/ or .pios/ restart it (debounced). Logs are kept in memory (last lines).
  */
 export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
-export type PreviewInfo = { status: PreviewStatus; port?: number; /** Address that answered: 127.0.0.1, or localhost when the app listens on IPv6 only. */ host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
+export type PreviewInfo = {
+	status: PreviewStatus;
+	/** The port a browser connects to (the public one when preview.ports is set). */
+	port?: number;
+	/** The port the dev server itself listens on (loopback); differs from `port` when forwarding. */
+	appPort?: number;
+	/** Address that answered: 127.0.0.1, or localhost when the app listens on IPv6 only. */
+	host?: string;
+	head?: string;
+	error?: string;
+	command?: string;
+	startedAt?: number;
+	readyAt?: number;
+	logSeq: number;
+	stoppedByUser?: boolean;
+};
 export type RunConfig = { install?: string; test?: string; dev?: { command: string; readyPath?: string } | string };
 
 const LOG_LIMIT = 1500;
@@ -32,10 +52,65 @@ class Preview {
 	logs: { seq: number; at: number; text: string; stream: "out" | "err" | "pi-os" }[] = [];
 	proc?: ChildProcess;
 	install?: ChildProcess;
+	/** Public port → the dev server's loopback port, when preview.ports is set. */
+	fwd?: Forwarder;
 	/** Incremented on every start/stop; stale async steps check it and give up. */
 	generation = 0;
 	/** The dev server's whole process tree once it's up (Windows): killed one by one on stop. */
 	tracked: Tracked[] = [];
+}
+
+/**
+ * A raw TCP pipe from a public port to the dev server's loopback port. HTTP and WebSocket both pass
+ * through untouched, so HMR keeps working; it exists so a published port reaches an app that only
+ * listens on 127.0.0.1 (the container case).
+ */
+class Forwarder {
+	readonly port: number;
+	readonly bind: string;
+	/** The dev server's port. Reassigned when the app turns out to ignore $PORT. */
+	target: number;
+	#server?: Server;
+	readonly #sockets = new Set<Socket>();
+
+	constructor(port: number, bind: string, target: number) {
+		this.port = port;
+		this.bind = bind;
+		this.target = target;
+	}
+
+	/** Resolves once it's listening; rejects when the port is taken (the caller tries the next one). */
+	listen(): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const server = createServer((down) => {
+				const up = connect({ port: this.target, host: "127.0.0.1" });
+				this.#sockets.add(down).add(up);
+				const drop = () => {
+					this.#sockets.delete(down);
+					this.#sockets.delete(up);
+					down.destroy();
+					up.destroy();
+				};
+				down.on("error", drop).on("close", drop);
+				up.on("error", drop).on("close", drop);
+				down.pipe(up).pipe(down);
+			});
+			server.once("error", reject);
+			server.listen(this.port, this.bind, () => {
+				server.removeListener("error", reject);
+				server.on("error", (e) => console.error(`preview port ${this.port}:`, e.message));
+				this.#server = server;
+				resolve();
+			});
+		});
+	}
+
+	close() {
+		for (const s of this.#sockets) s.destroy();
+		this.#sockets.clear();
+		this.#server?.close();
+		this.#server = undefined;
+	}
 }
 
 /** A process we started, identified by pid + creation time so a reused pid is never killed. */
@@ -130,6 +205,25 @@ function freePort(): Promise<number> {
 			srv.close(() => resolve(port));
 		});
 	});
+}
+
+/**
+ * The browser-facing port for a preview: the first port in `preview.ports` this pi-os can listen on,
+ * forwarding to the dev server's loopback port. Listening is the reservation, so two previews can't
+ * pick the same port. Undefined when the range is full.
+ */
+async function publicPort(appPort: number): Promise<Forwarder | undefined> {
+	const [start, end] = config.preview.ports!;
+	for (let port = start; port <= end; port++) {
+		const fwd = new Forwarder(port, config.preview.bind, appPort);
+		try {
+			await fwd.listen();
+			return fwd;
+		} catch {
+			fwd.close();
+		}
+	}
+	return undefined;
 }
 
 /** Kill a process and everything it started (dev servers spawn children). */
@@ -246,13 +340,15 @@ export class PreviewManager {
 		killTree(p.proc);
 		killTracked(p.tracked);
 		p.tracked = [];
+		p.fwd?.close();
+		p.fwd = undefined;
 		rmSync(this.#pidFile(projectId), { force: true });
 		p.install = p.proc = undefined;
 		if (byUser) {
 			this.#log(projectId, "Stopped");
 			rmSync(this.#wantFile(projectId), { force: true });
 		}
-		this.#set(projectId, { status: "off", port: undefined, host: undefined, error: undefined, readyAt: undefined, stoppedByUser: byUser || undefined });
+		this.#set(projectId, { status: "off", port: undefined, appPort: undefined, host: undefined, error: undefined, readyAt: undefined, stoppedByUser: byUser || undefined });
 	}
 
 	stopAll() {
@@ -263,6 +359,7 @@ export class PreviewManager {
 			killTree(p.install);
 			killTree(p.proc);
 			killTracked(p.tracked);
+			p.fwd?.close();
 			rmSync(this.#pidFile(id), { force: true });
 			this.#previews.delete(id);
 		}
@@ -355,11 +452,18 @@ export class PreviewManager {
 			}
 
 			// dev server
-			const port = await freePort();
-			const command = dev.command.replace(/\$\{PORT\}|\$PORT\b|%PORT%/g, String(port));
-			this.#set(projectId, { status: "starting", head, port, command, startedAt: Date.now(), error: undefined, readyAt: undefined, stoppedByUser: undefined });
+			const appPort = await freePort();
+			const fwd = config.preview.ports ? await publicPort(appPort) : undefined;
+			if (config.preview.ports && !fwd) {
+				this.#set(projectId, { status: "failed", error: `No free port in preview.ports (${config.preview.ports.join("-")}). Stop another preview, or widen the range and publish it.` });
+				return p.info;
+			}
+			p.fwd = fwd;
+			const port = fwd?.port ?? appPort;
+			const command = dev.command.replace(/\$\{PORT\}|\$PORT\b|%PORT%/g, String(appPort));
+			this.#set(projectId, { status: "starting", head, port, appPort, command, startedAt: Date.now(), error: undefined, readyAt: undefined, stoppedByUser: undefined });
 			this.#log(projectId, `$ ${command}`);
-			const env = { ...process.env, PORT: String(port), HOST: "127.0.0.1", BROWSER: "none", FORCE_COLOR: "0", NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development") };
+			const env = { ...process.env, PORT: String(appPort), HOST: "127.0.0.1", BROWSER: "none", FORCE_COLOR: "0", NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development") };
 			const proc = this.#spawn(sh, command, cwd, env);
 			p.proc = proc;
 			let printedPort: number | undefined;
@@ -385,14 +489,18 @@ export class PreviewManager {
 			const deadline = Date.now() + 120_000;
 			while (Date.now() < deadline) {
 				if (stale() || exited !== undefined) return p.info;
-				for (const candidate of [port, ...(printedPort && printedPort !== port ? [printedPort] : [])]) {
+				for (const candidate of [appPort, ...(printedPort && printedPort !== appPort ? [printedPort] : [])]) {
 					const host = await answers(candidate, readyPath);
 					if (host) {
 						if (stale()) return p.info;
-						if (candidate !== port) this.#log(projectId, `The app ignored $PORT and listens on ${candidate}; using that.`);
-						this.#set(projectId, { status: "running", port: candidate, host, readyAt: Date.now() });
+						if (candidate !== appPort) {
+							this.#log(projectId, `The app ignored $PORT and listens on ${candidate}; using that.`);
+							if (fwd) fwd.target = candidate;
+						}
+						this.#set(projectId, { status: "running", port, appPort: candidate, host, readyAt: Date.now() });
 						writeFileSync(this.#wantFile(projectId), String(Date.now()));
 						this.#log(projectId, `ready on http://${host}:${candidate}${readyPath}`);
+						if (fwd) this.#log(projectId, `public preview on http://${config.preview.bind}:${port} → 127.0.0.1:${candidate}`);
 						// Remember the whole tree (Windows can't always kill it through npm/bash wrappers).
 						if (process.platform === "win32" && proc.pid) {
 							const [table, listener] = await Promise.all([processTable(), listenerPid(candidate)]);
@@ -408,7 +516,7 @@ export class PreviewManager {
 				}
 				await new Promise((r) => setTimeout(r, 700));
 			}
-			if (!stale()) this.#set(projectId, { status: "failed", error: `The dev server didn't answer on port ${port}${readyPath} within 2 minutes. Does the command use $PORT?` });
+			if (!stale()) this.#set(projectId, { status: "failed", error: `The dev server didn't answer on port ${appPort}${readyPath} within 2 minutes. Does the command use $PORT?` });
 			return p.info;
 		});
 	}

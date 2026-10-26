@@ -54,6 +54,10 @@ const fails = async (p: Promise<unknown>) => {
 	}
 };
 
+// ------------------------------------------------------------------ auth
+const { applyAuth } = await import("../src/gatekeepers/connectors/types.ts");
+check("basic auth with an empty username (personal access tokens)", applyAuth({ kind: "basic" }, { password: "pat123" }).headers.authorization === `Basic ${Buffer.from(":pat123").toString("base64")}`);
+
 // ------------------------------------------------------------------ address guard
 console.log("address guard");
 check("private, loopback, link-local and metadata addresses are private", ["127.0.0.1", "10.1.2.3", "192.168.1.1", "169.254.169.254", "::1", "::ffff:127.0.0.1", "fd00::1", "100.64.0.1"].every(isPrivateAddress));
@@ -123,6 +127,14 @@ const relabeled = await ws.connections.update(inv.id, { reads: ["createItem"] })
 check("the owner can mark a write as a read", relabeled.methods.find((m) => m.name === "createItem")?.effect === "read" && relabeled.methods.find((m) => m.name === "createItem")?.classifiedBy === "owner");
 const pastedSpec = await ws.connections.create({ kind: "openapi", label: "pasted", specText: SPEC, baseUrl: `${apiOrigin}/api`, auth: { kind: "header", name: "x-api-key" }, secrets: { value: API_KEY } }, "owner");
 check("a pasted document works too (with a base URL)", pastedSpec.status === "ok" && pastedSpec.spec === "inline" && pastedSpec.methods.length === 4, pastedSpec.error);
+const pinned = await ws.connections.create({ kind: "openapi", label: "pinned", spec: `${apiOrigin}/openapi.yaml`, params: { q: "anv", id: "a1" }, auth: { kind: "header", name: "x-api-key" }, secrets: { value: API_KEY } }, "owner");
+const pinnedList = pinned.methods.find((m) => m.name === "listItems")!;
+check("fixed parameters are hidden from agents", !("q" in ((pinnedList.inputSchema as any).properties ?? {})) && !("id" in ((pinned.methods.find((m) => m.name === "getItem")!.inputSchema as any).properties ?? {})));
+await ws.grant({ connection: "pinned", holder, by: "owner" });
+const pinnedRes = (await call("pinned", "listItems", { q: "something else" })) as any;
+check("…and always sent, whatever the agent passes", apiHits.at(-1) === "GET /api/items?q=anv" && pinnedRes.body?.[0]?.name === "Anvil", apiHits.at(-1));
+const pinnedGet = (await call("pinned", "getItem", {})) as any;
+check("a fixed path parameter fills its place (like an Azure DevOps organization)", pinnedGet.status === 200 && pinnedGet.body?.id === "a1" && apiHits.at(-1) === "GET /api/items/a1");
 check("labels are unique and can't shadow built-ins", /already called/.test(await fails(ws.connections.create({ kind: "openapi", label: "items", specText: SPEC }, "o"))) && /built-in/.test(await fails(ws.connections.create({ kind: "openapi", label: "github", specText: SPEC }, "o"))));
 
 // ------------------------------------------------------------------ admin-declared (vetted)
@@ -198,7 +210,10 @@ const accepted = await ws.acceptProposal(prop!.id, { secrets: { value: API_KEY }
 check("the owner adds the key and connects it", accepted.label === "stock" && accepted.status === "ok" && accepted.methods.length === 4 && accepted.trust === "byo", accepted.error);
 check("the proposal records the connection it became", (await ws.connections.proposals()).find((p) => p.id === prop!.id)?.connection === accepted.id);
 check("…and can't be accepted twice", /isn't waiting/.test(await fails(ws.acceptProposal(prop!.id, {}, "owner"))));
-const second = await propose({ kind: "mcp", label: "maybe", url: "https://mcp.example.com/mcp", auth: { kind: "bearer" }, reason: "might help" });
+check("a made-up document URL goes back to the agent", /no OpenAPI document at that address/.test(await fails(propose({ kind: "openapi", label: "ghost", spec: `${apiOrigin}/specs/gone.json`, auth: { kind: "none" }, reason: "x" }))));
+check("…so does an MCP URL with nothing behind it", /no MCP server at that address/.test(await fails(propose({ kind: "mcp", label: "ghost", url: `${apiOrigin}/nothing/mcp`, auth: { kind: "none" }, reason: "x" }))));
+check("an MCP server that wants a key (401) is fine to propose", !(await fails(propose({ kind: "mcp", label: "notes2", url: mcpUrl, auth: { kind: "bearer" }, reason: "x" }))));
+const second = await propose({ kind: "mcp", label: "maybe", url: mcpUrl, auth: { kind: "bearer" }, reason: "might help" });
 await ws.declineProposal(second.proposed, "owner");
 check("an owner can decline one", (await ws.connections.proposals()).find((p) => p.id === second.proposed)?.status === "declined");
 await ws.removeConnection(accepted.id);

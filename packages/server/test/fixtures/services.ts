@@ -118,6 +118,10 @@ const api = createServer(async (req, res) => {
 		res.writeHead(200, { "content-type": "application/yaml" }).end(SPEC);
 		return;
 	}
+	if (!url.pathname.startsWith("/api")) {
+		res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not found" }));
+		return;
+	}
 	if (req.headers["x-api-key"] !== API_KEY) {
 		res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad key" }));
 		return;

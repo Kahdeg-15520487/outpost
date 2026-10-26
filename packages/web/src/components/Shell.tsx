@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConnectionsPage } from "./Connections";
 import { exportGadget } from "./Transfer";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections } from "../store";
+import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
 import { HomePage } from "./Home";
@@ -64,6 +64,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	}, [wsId]);
 	const { docs, gadgets, projects } = useWorkspace(ws?.id);
 	const proposed = useConnections(ws?.id).proposals.filter((p) => p.status === "pending").length;
+	const updated = useAppUpdated();
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
 	const pending = Object.values(docs.approvals.actions).filter((a) => a.status === "pending").length + Object.values(docs.grants.requests).filter((r) => r.status === "pending").length;
 
@@ -302,6 +303,14 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
 			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} models={models} picker={picker} grants={docs.grants} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
+			{updated && (
+				<div className="update-banner" role="status">
+					pi-os was updated while this tab was open.
+					<button className="btn small primary" onClick={() => location.reload()}>
+						Reload
+					</button>
+				</div>
+			)}
 			{route.page === "connections" && ws && <ConnectionsPage ws={ws} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
 			{route.page === "gadget" && (

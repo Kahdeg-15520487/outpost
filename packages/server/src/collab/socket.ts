@@ -5,6 +5,10 @@ import { hub, type HubClient } from "./hub.ts";
 import { sessions, workspaces, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { parseCookies } from "../http/util.ts";
+import { config } from "../config.ts";
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * One WebSocket per browser tab. Subscriptions:
@@ -28,6 +32,29 @@ export function attachSockets(server: import("node:http").Server) {
 }
 
 let nextClient = 0;
+const sockets = new Set<WebSocket>();
+
+/**
+ * Which web app this server serves: a hash of the built index.html (asset names change with every
+ * build). Sent on connect, so a tab left open across an update sees it reconnected to a newer app.
+ */
+let built: { mtime: number; id?: string } | undefined;
+export function webBuild(): string | undefined {
+	if (process.env.PI_OS_BUILD_ID) return process.env.PI_OS_BUILD_ID;
+	const file = join(config.webDist, "index.html");
+	try {
+		const mtime = statSync(file).mtimeMs;
+		if (built?.mtime !== mtime) built = { mtime, id: createHash("sha1").update(readFileSync(file)).digest("hex").slice(0, 12) };
+		return built.id;
+	} catch {
+		return undefined; // dev server (vite) or not built
+	}
+}
+
+/** Close every socket (clients reconnect). */
+export function dropSockets() {
+	for (const s of sockets) s.terminate();
+}
 const presenceWatchers = new Map<string, () => void>();
 
 function connection(socket: WebSocket, user: User, _req: IncomingMessage) {
@@ -37,6 +64,9 @@ function connection(socket: WebSocket, user: User, _req: IncomingMessage) {
 		send: (m) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(m)),
 	};
 	const streams = new Map<string, AgentEventStream>();
+	sockets.add(socket);
+	socket.on("close", () => sockets.delete(socket));
+	client.send({ t: "hello", build: webBuild() });
 	hub.join(`user:${user.id}`, client);
 	hub.join("blueprints", client);
 	const fail = (m: any, error: unknown) => client.send({ t: "error", ref: m, error: error instanceof Error ? error.message : String(error) });

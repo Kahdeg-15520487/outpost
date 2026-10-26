@@ -434,3 +434,6 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .home-side-row:hover { background: rgba(255, 255, 255, .55); }
 .home-side-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-side-row .ico { font-size: 13px; color: var(--muted); }
+
+/* A newer web app is being served than this tab runs. */
+.update-banner { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 16px; border-radius: 12px; background: var(--ink); color: var(--ink-text); font-size: 13.5px; box-shadow: var(--shadow); }

@@ -26,6 +26,7 @@ export type ConnectionProposal = {
 	transport?: "http" | "sse";
 	spec?: string;
 	baseUrl?: string;
+	params?: Record<string, string>;
 	auth: ConnectionAuth;
 	reason: string;
 	setup?: string;
@@ -50,6 +51,7 @@ export type ConnectionInfo = {
 	spec?: string;
 	baseUrl?: string;
 	apiBase?: string;
+	params?: Record<string, string>;
 	auth: ConnectionAuth;
 	reads?: string[];
 	methods: ConnectionMethod[];

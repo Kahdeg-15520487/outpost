@@ -76,7 +76,8 @@ export const PROPOSE_CONNECTION = {
 		url: Type.Optional(Type.String({ description: "mcp: the server's endpoint URL" })),
 		transport: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("sse")], { description: "mcp: omit to try streamable HTTP, then SSE" })),
 		spec: Type.Optional(Type.String({ description: "openapi: URL of the OpenAPI/Swagger document" })),
-		baseUrl: Type.Optional(Type.String({ description: "openapi: the API's base URL, if the document doesn't name it" })),
+		baseUrl: Type.Optional(Type.String({ description: "openapi: the API's base URL, only if the document doesn't name a server; don't put path parameters (like an organization) here, use params" })),
+		params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "openapi: parameter values to fix for every call, e.g. {\"organization\": \"contoso\"}; agents won't be able to change them" })),
 		auth: Type.Object(
 			{
 				kind: Type.Union([Type.Literal("none"), Type.Literal("bearer"), Type.Literal("header"), Type.Literal("basic"), Type.Literal("query")]),

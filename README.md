@@ -262,9 +262,9 @@ To add a built-in one, put a definition in `server/src/gatekeepers/catalog.ts`. 
 A **connection** turns a third-party service into a Gatekeeper with no service-specific code (`server/src/gatekeepers/connectors/`, built on the official MCP SDK and `@apidevtools/swagger-parser`):
 
 - **MCP server** (streamable HTTP, falling back to SSE): its tools become methods. Tools the server marks `readOnlyHint: true` are reads; everything else is a write; `destructiveHint: true` always asks.
-- **REST API** with an OpenAPI 3 or Swagger 2 document (by URL, or pasted): its operations become methods. GET/HEAD are reads; POST/PUT/PATCH are writes; DELETE always asks.
+- **REST API** with an OpenAPI 3 or Swagger 2 document (by URL, or pasted): its operations become methods. GET/HEAD are reads; POST/PUT/PATCH are writes; DELETE always asks. **Fixed parameters** (`organization=contoso`) are sent with every call and hidden from agents, so a connection can be pinned to one organization or project.
 
-A connection is the workspace's account on the service (a shared service account): workspace owners add them on the **Connections** page (auth: bearer token, API key in a header or the URL, or basic). Secrets are encrypted with the instance secret (`data/connections.enc.json`) and never sent back to the browser or shown to agents. A connection gives nobody access by itself: you introduce it to a chat, gadget or project (🔑 Resources), choosing the methods and, per write, ask / auto / refuse. An owner can mark a write as a read ("treat as read").
+A connection is the workspace's account on the service (a shared service account): workspace owners add them on the **Connections** page (auth: bearer token, API key in a header or the URL, or basic; basic's username may be empty, as for Azure DevOps personal access tokens). Secrets are encrypted with the instance secret (`data/connections.enc.json`) and never sent back to the browser or shown to agents. A connection gives nobody access by itself: you introduce it to a chat, gadget or project (🔑 Resources), choosing the methods and, per write, ask / auto / refuse. An owner can mark a write as a read ("treat as read").
 
 Trust:
 

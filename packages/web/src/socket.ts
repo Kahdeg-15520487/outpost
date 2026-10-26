@@ -13,6 +13,9 @@ class Socket {
 	#queue: string[] = [];
 	#retry = 0;
 	connected = false;
+	/** The server now serves a newer web app than this tab runs: reload to get it. */
+	updated = false;
+	#build: string | null | undefined;
 	#statusListeners = new Set<(c: boolean) => void>();
 
 	connect() {
@@ -28,6 +31,15 @@ class Socket {
 		};
 		ws.onmessage = (e) => {
 			const m = JSON.parse(e.data);
+			if (m.t === "hello") {
+				// The first server we talk to served this page; a different build later means an update.
+				if (this.#build === undefined) this.#build = m.build ?? null;
+				else if (m.build && this.#build && m.build !== this.#build && !this.updated) {
+					this.updated = true;
+					for (const l of this.#statusListeners) l(this.connected);
+				}
+				return;
+			}
 			if (m.t === "call.result") {
 				const p = this.#calls.get(m.id);
 				if (p) {

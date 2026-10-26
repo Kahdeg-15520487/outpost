@@ -6,10 +6,10 @@ import { config, resolveSecret, type ConnectorConfig } from "../../config.ts";
 import { ConnectionsDoc } from "../../kernel/docs.ts";
 import { HttpError, newId } from "../../kernel/system-db.ts";
 import { GATEKEEPERS, type Gatekeeper, type GatekeeperMethod } from "../catalog.ts";
-import { assertPublicUrl } from "../net.ts";
+import { assertPublicUrl, guardedFetch } from "../net.ts";
 import { McpPool } from "./mcp.ts";
 import { baseUrlOf, invoke, loadSpecText, operationsOf, parseSpec } from "./openapi.ts";
-import { CONNECTOR_INFO, type Connection, type ConnectionAuth, type ConnectionProposal, type ConnectionSecrets, type ConnMethod, connectionSecrets, paramHints, redact, secretNames } from "./types.ts";
+import { CONNECTOR_INFO, type Connection, type ConnectionAuth, type ConnectionProposal, type ConnectionSecrets, type ConnMethod, connectionSecrets, paramHints, redact, requiredSecretNames, secretNames } from "./types.ts";
 
 export * from "./types.ts";
 
@@ -94,6 +94,8 @@ export type ConnectionInput = {
 	/** …or the document itself, pasted. */
 	specText?: string;
 	baseUrl?: string;
+	/** openapi: fixed parameter values (name → value). */
+	params?: Record<string, string>;
 	auth?: ConnectionAuth;
 	/** Values per secret name; "" deletes one. Never returned by the API. */
 	secrets?: ConnectionSecrets;
@@ -162,7 +164,7 @@ export class Connections {
 		return {
 			...conn,
 			secretsSet: names.filter((n) => !!secrets[n]),
-			secretsNeeded: secretNames(conn.auth),
+			secretsNeeded: requiredSecretNames(conn.auth),
 			methods: conn.methods.map((m) => ({ name: m.name, description: m.description, effect: m.effect, alwaysAsk: !!m.alwaysAsk, classifiedBy: m.classifiedBy, params: paramHints(m.inputSchema) })),
 		};
 	}
@@ -200,6 +202,7 @@ export class Connections {
 			transport: kind === "mcp" ? (input.transport === "sse" ? "sse" : input.transport === "http" ? "http" : undefined) : undefined,
 			spec: kind === "openapi" ? (input.specText?.trim() ? "inline" : input.spec?.trim()) : undefined,
 			baseUrl: input.baseUrl?.trim() || undefined,
+			params: kind === "openapi" ? normalizeParams(input.params) : undefined,
 			auth: normalizeAuth(input.auth),
 			reads: input.reads?.length ? [...new Set(input.reads)] : undefined,
 			methods: [],
@@ -235,6 +238,7 @@ export class Connections {
 			...(current.kind === "mcp" && input.transport !== undefined ? { transport: input.transport === "sse" || input.transport === "http" ? input.transport : undefined } : {}),
 			...(current.kind === "openapi" && input.specText?.trim() ? { spec: "inline" } : current.kind === "openapi" && input.spec !== undefined ? { spec: input.spec.trim() } : {}),
 			...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl.trim() || undefined } : {}),
+			...(current.kind === "openapi" && input.params !== undefined ? { params: normalizeParams(input.params) } : {}),
 			...(input.auth ? { auth: normalizeAuth(input.auth) } : {}),
 			...(input.reads !== undefined ? { reads: input.reads.length ? [...new Set(input.reads)] : undefined } : {}),
 		});
@@ -392,6 +396,7 @@ export class Connections {
 		} catch (e) {
 			throw new Error((e as Error).message);
 		}
+		await this.#probe(kind, url, spec);
 		const proposal: ConnectionProposal = plain({
 			id: newId("cp"),
 			kind,
@@ -401,6 +406,7 @@ export class Connections {
 			transport: kind === "mcp" && (input.transport === "http" || input.transport === "sse") ? input.transport : undefined,
 			spec,
 			baseUrl: http(input.baseUrl, "baseUrl"),
+			params: kind === "openapi" ? normalizeParams(input.params) : undefined,
 			auth,
 			reason: (input.reason ?? "").trim().slice(0, 1000) || "(no reason given)",
 			setup: input.setup?.trim().slice(0, 1000) || undefined,
@@ -415,6 +421,36 @@ export class Connections {
 		}, ctx);
 		this.onChange();
 		return proposal;
+	}
+
+	/**
+	 * Check a proposed address before an owner sees it, so made-up or outdated URLs go back to the
+	 * agent: an OpenAPI document must load and parse (or ask for credentials); an MCP endpoint must
+	 * answer (any status but 404: without the key, servers reply 401, 405, 406…).
+	 */
+	async #probe(kind: Connection["kind"], url: string | undefined, spec: string | undefined) {
+		const target = (kind === "mcp" ? url : spec)!;
+		let res: Awaited<ReturnType<typeof guardedFetch>>;
+		try {
+			res = await guardedFetch(target, {
+				method: kind === "mcp" ? "POST" : "GET",
+				headers: kind === "mcp" ? { "content-type": "application/json", accept: "application/json, text/event-stream" } : { accept: "application/json, application/yaml, */*" },
+				body: kind === "mcp" ? JSON.stringify({ jsonrpc: "2.0", id: 0, method: "ping" }) : undefined,
+				timeoutMs: 15_000,
+				maxBytes: kind === "mcp" ? 64 << 10 : 20 << 20,
+			});
+		} catch (error) {
+			throw new Error(`Couldn't reach ${target}: ${(error as Error).message}. Check the address (the vendor's documentation) and propose again.`);
+		}
+		if (res.status === 404 || res.status === 410) throw new Error(`${target} answered HTTP ${res.status}: there's no ${kind === "mcp" ? "MCP server" : "OpenAPI document"} at that address. Find the current one in the vendor's documentation and propose again.`);
+		if (kind === "mcp") return;
+		if (res.status === 401 || res.status === 403) return; // the document itself needs the key
+		if (res.status >= 400) throw new Error(`Fetching the OpenAPI document at ${target} failed: HTTP ${res.status}.`);
+		try {
+			await parseSpec(res.text);
+		} catch (error) {
+			throw new Error(`${target} isn't a usable OpenAPI document: ${(error as Error).message}`);
+		}
 	}
 
 	/** An owner connects a proposal: its fields, overridden by what the owner changed, plus the secret. */
@@ -446,6 +482,22 @@ export class Connections {
 function summarizeArgs(a: unknown) {
 	const json = JSON.stringify(a ?? {});
 	return json === "{}" ? "()" : ` ${json.length > 160 ? `${json.slice(0, 160)}…` : json}`;
+}
+
+/** Fixed parameters: string values, sane names, at most 20. */
+function normalizeParams(p: unknown): Record<string, string> | undefined {
+	if (p === undefined || p === null) return undefined;
+	if (typeof p !== "object" || Array.isArray(p)) throw new HttpError(400, "params: an object of name → value");
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+		const name = k.trim();
+		if (!name) continue;
+		if (!/^[A-Za-z0-9_.$-]{1,80}$/.test(name)) throw new HttpError(400, `params: "${name}" isn't a parameter name`);
+		if (typeof v !== "string" && typeof v !== "number") throw new HttpError(400, `params: ${name} needs a text value`);
+		out[name] = String(v).trim();
+	}
+	if (Object.keys(out).length > 20) throw new HttpError(400, "params: at most 20");
+	return Object.keys(out).length ? out : undefined;
 }
 
 function normalizeAuth(a: ConnectionAuth | undefined): ConnectionAuth {

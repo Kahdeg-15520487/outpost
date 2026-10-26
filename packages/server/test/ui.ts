@@ -360,9 +360,14 @@ async function run() {
 
 		const w = await Workspace.get(ws);
 		const firstChat = Object.keys((await w.snapshot()).chats.chats)[0]!;
-		await w.connections.propose({ kind: "openapi", label: "stock", title: "Stock API", spec: `${services.apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, reason: "Check stock levels for the weekly report", setup: "Inventory admin → API keys" }, { kind: "conversation", id: firstChat, name: "Agent" });
 		await go(`#/w/${ws}/connections`);
-		check("a proposal shows on the Connections page, with a badge in the sidebar", await until("proposal", async () => /Proposed by agents/i.test(await text(".conn-proposals")) && /Stock API/.test(await text(".conn-proposals")) && /1/.test(await text(".side-item.on .badge"))));
+		await page.waitForSelector(".conn");
+		// The agent proposes while the page is open: it must appear live, without a reload.
+		const { createOsExtension } = await import("../src/agent/extension.ts");
+		const { BACKGROUND_CONTEXT: tctx } = await import("@earendil-works/chord/context");
+		const proposeTool = createOsExtension(w).tools!.find((t: any) => t.name === "propose_connection") as any;
+		await proposeTool.execute({ kind: "openapi", label: "stock", title: "Stock API", spec: `${services.apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, reason: "Check stock levels for the weekly report", setup: "Inventory admin → API keys" }, { conversationId: Number(firstChat), taskId: 77001 }, tctx);
+		check("a proposal shows on the Connections page live, with a badge in the sidebar", await until("proposal", async () => /Proposed by agents/i.test(await text(".conn-proposals")) && /Stock API/.test(await text(".conn-proposals")) && /1/.test(await text(".side-item.on .badge"))));
 		await shot("proposal");
 		await clickText(".conn-proposal button", "Review and connect");
 		must("review: the form is filled in from the proposal", await until("prefilled", () => page.$eval(".conn-form input[pattern]", (i) => (i as HTMLInputElement).value === "stock").catch(() => false)));
@@ -386,6 +391,14 @@ async function run() {
 	} finally {
 		services.close();
 	}
+
+	console.log("updates");
+	check("no update banner while the server serves the same app", !(await page.$(".update-banner")));
+	const { dropSockets } = await import("../src/collab/socket.ts");
+	process.env.PI_OS_BUILD_ID = "a-newer-build";
+	dropSockets();
+	check("a tab left open across an update offers to reload", await until("banner", () => text(".update-banner").then((t) => /updated while this tab was open/.test(t))));
+	delete process.env.PI_OS_BUILD_ID;
 
 	check("no errors in the page", errors.length === 0, errors);
 }

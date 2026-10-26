@@ -93,7 +93,10 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 	const reads = conn.methods.filter((m) => m.effect === "read").length;
 	const writes = conn.methods.length - reads;
 	const asks = conn.methods.filter((m) => m.alwaysAsk).length;
-	const where = conn.kind === "mcp" ? (conn.transport === "stdio" ? `$ ${conn.command}` : conn.url) : conn.spec === "inline" ? `pasted document → ${conn.apiBase ?? conn.baseUrl ?? "?"}` : (conn.apiBase ?? conn.spec);
+	const fixed = Object.entries(conn.params ?? {})
+		.map(([k, v]) => `${k}=${v}`)
+		.join(" ");
+	const where = (conn.kind === "mcp" ? (conn.transport === "stdio" ? `$ ${conn.command}` : conn.url) : conn.spec === "inline" ? `pasted document → ${conn.apiBase ?? conn.baseUrl ?? "?"}` : (conn.apiBase ?? conn.spec)) + (fixed ? `  ·  ${fixed}` : "");
 
 	const run = async (fn: () => Promise<unknown>) => {
 		setBusy(true);
@@ -200,6 +203,16 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 	);
 }
 
+/** One `name=value` per line → { name: value }. */
+const parseParams = (text: string) =>
+	Object.fromEntries(
+		text
+			.split("\n")
+			.map((l) => l.trim())
+			.filter((l) => l.includes("="))
+			.map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
+	);
+
 const classified = (m: ConnectionMethod) =>
 	({ server: "the server's annotation says so", spec: "from the HTTP method", owner: "marked by a workspace owner", default: "not annotated: treated as a write" })[m.classifiedBy];
 
@@ -265,6 +278,11 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 	const [spec, setSpec] = useState(from?.spec && from.spec !== "inline" ? from.spec : "");
 	const [specText, setSpecText] = useState("");
 	const [baseUrl, setBaseUrl] = useState(from?.baseUrl ?? "");
+	const [params, setParams] = useState(
+		Object.entries(from?.params ?? {})
+			.map(([k, v]) => `${k}=${v}`)
+			.join("\n"),
+	);
 	const [authKind, setAuthKind] = useState<ConnectionAuth["kind"]>(from?.auth.kind ?? "none");
 	const [authName, setAuthName] = useState(from && "name" in from.auth ? from.auth.name : "");
 	const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -285,6 +303,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 			baseUrl,
 			secrets: Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v && secretFields.includes(k))),
 			...(kind === "mcp" ? { url, transport: transport || undefined } : specMode === "paste" ? (specText.trim() ? { specText } : {}) : { spec }),
+			...(kind === "openapi" ? { params: parseParams(params) } : {}),
 		};
 		try {
 			const r = conn
@@ -371,6 +390,11 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 							<input className="input mono" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="(optional) https://api.example.com/v2" type="url" />
 							<div className="hint">Leave empty to use the document's server.</div>
 						</div>
+						<label className="label">Fixed parameters</label>
+						<div>
+							<textarea className="input mono" rows={2} value={params} onChange={(e) => setParams(e.target.value)} placeholder={"organization=contoso"} />
+							<div className="hint">One name=value per line. Sent with every call; agents don't see them and can't change them.</div>
+						</div>
 					</>
 				)}
 				<label className="label">Authentication</label>
@@ -405,10 +429,20 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 }
 
 function SecretField({ name, isSet, value, onChange }: { name: string; isSet: boolean; value: string; onChange: (v: string) => void }) {
+	// Basic auth: the username may be empty (Azure DevOps personal access tokens go in the password).
+	const optional = name === "username";
 	return (
 		<>
 			<label className="label">{SECRET_LABEL[name] ?? name}</label>
-			<input className="input mono" type={name === "username" ? "text" : "password"} autoComplete="off" value={value} onChange={(e) => onChange(e.target.value)} placeholder={isSet ? "set ✓ — leave empty to keep it" : ""} required={!isSet} />
+			<input
+				className="input mono"
+				type={name === "username" ? "text" : "password"}
+				autoComplete="off"
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				placeholder={isSet ? "set ✓ — leave empty to keep it" : optional ? "optional (empty for a personal access token)" : ""}
+				required={!isSet && !optional}
+			/>
 		</>
 	);
 }

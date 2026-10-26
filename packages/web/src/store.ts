@@ -318,6 +318,14 @@ export function useSocketStatus() {
 	);
 }
 
+/** True once the server serves a newer web app than this tab runs (it was updated while the tab stayed open). */
+export function useAppUpdated() {
+	return useSyncExternalStore(
+		(l) => socket.onStatus(l),
+		() => socket.updated,
+	);
+}
+
 export const timeAgo = (t: number) => {
 	const s = (Date.now() - t) / 1000;
 	if (s < 45) return "just now";

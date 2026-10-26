@@ -72,6 +72,8 @@ export type Connection = {
 	baseUrl?: string;
 	/** openapi: the base URL in use (the override, or the document's server), set on discovery. */
 	apiBase?: string;
+	/** openapi: parameter values pi-os always sends (e.g. organization=rosen-nxt); hidden from agents, who can't change them. */
+	params?: Record<string, string>;
 	auth: ConnectionAuth;
 	/** Methods the owner marks as reads (no approval), overriding the server or the verb. */
 	reads?: string[];
@@ -87,6 +89,11 @@ export const CONNECTOR_INFO: Record<ConnectorKind, { title: string; icon: string
 	mcp: { title: "MCP server", icon: "🔌", description: "Any Model Context Protocol server. Its tools become methods; tools the server marks read-only run, the rest queue for approval." },
 	openapi: { title: "REST API (OpenAPI)", icon: "🧾", description: "Any HTTP API with an OpenAPI 3 or Swagger 2 document. GET operations run; everything else queues for approval." },
 };
+
+/** Which secrets an auth kind must have (basic: the username may be empty, e.g. Azure DevOps personal access tokens). */
+export function requiredSecretNames(auth: ConnectionAuth): string[] {
+	return auth.kind === "basic" ? ["password"] : secretNames(auth);
+}
 
 /** Which secret names an auth kind uses. */
 export function secretNames(auth: ConnectionAuth): string[] {
@@ -116,7 +123,7 @@ export function applyAuth(auth: ConnectionAuth, secrets: ConnectionSecrets): { h
 		case "header":
 			return { headers: { [auth.name]: need("value") }, query: {} };
 		case "basic":
-			return { headers: { authorization: `Basic ${Buffer.from(`${need("username")}:${need("password")}`).toString("base64")}` }, query: {} };
+			return { headers: { authorization: `Basic ${Buffer.from(`${secrets.username ?? ""}:${need("password")}`).toString("base64")}` }, query: {} };
 		case "query":
 			return { headers: {}, query: { [auth.name]: need("value") } };
 		default:
@@ -202,6 +209,7 @@ export type ConnectionProposal = {
 	transport?: "http" | "sse";
 	spec?: string;
 	baseUrl?: string;
+	params?: Record<string, string>;
 	auth: ConnectionAuth;
 	/** Why the agent wants it. */
 	reason: string;

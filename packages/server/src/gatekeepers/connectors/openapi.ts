@@ -74,6 +74,7 @@ export function operationsOf(doc: any, conn: Connection): ConnMethod[] {
 	const out: ConnMethod[] = [];
 	const used = new Set<string>();
 	const reads = new Set(conn.reads ?? []);
+	const fixed = new Set(Object.keys(conn.params ?? {}));
 	for (const [path, item] of Object.entries((doc.paths ?? {}) as Record<string, any>)) {
 		if (!item || typeof item !== "object") continue;
 		for (const verb of VERBS) {
@@ -96,10 +97,12 @@ export function operationsOf(doc: any, conn: Connection): ConnMethod[] {
 					continue;
 				}
 				if (!["path", "query", "header"].includes(p.in)) continue;
-				if (properties[p.name]) continue;
+				if (httpParams.some((x) => x.name === p.name)) continue;
+				httpParams.push({ name: p.name, in: p.in, required: !!(p.required || p.in === "path") });
+				// Fixed by the connection: sent by pi-os, not shown to agents.
+				if (fixed.has(p.name)) continue;
 				properties[p.name] = { ...(p.schema ?? { type: p.type ?? "string", ...(p.enum ? { enum: p.enum } : {}) }), ...(p.description ? { description: p.description } : {}) };
 				if (p.required || p.in === "path") required.push(p.name);
-				httpParams.push({ name: p.name, in: p.in, required: !!(p.required || p.in === "path") });
 			}
 			const content = op.requestBody?.content as Record<string, any> | undefined;
 			if (content) {
@@ -125,8 +128,11 @@ export function operationsOf(doc: any, conn: Connection): ConnMethod[] {
 }
 
 /** Send one operation. Path parameters are encoded into their segment, so they can't escape the base URL. */
-export async function invoke(conn: Connection, baseUrl: string, m: ConnMethod, args: Record<string, any>, secrets: ConnectionSecrets): Promise<unknown> {
+export async function invoke(conn: Connection, baseUrl: string, m: ConnMethod, input: Record<string, any>, secrets: ConnectionSecrets): Promise<unknown> {
 	const op = m.http!;
+	// Fixed parameters win over anything the caller passed.
+	const args: Record<string, any> = { ...input };
+	for (const [k, v] of Object.entries(conn.params ?? {})) if (op.params.some((p) => p.name === k)) args[k] = v;
 	let path = op.path;
 	for (const p of op.params.filter((p) => p.in === "path")) {
 		const v = args[p.name];

@@ -53,7 +53,14 @@ for (const s of run) {
 		child.stderr.on("data", pipe(process.stderr));
 		child.on("close", (code) => (clearTimeout(timer), resolve({ code, last, dir })));
 	});
-	if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+	// Best effort: on Windows a process the suite started can still hold a file for a moment; a leftover temp dir is harmless.
+	if (dir) {
+		try {
+			rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+		} catch (e) {
+			console.warn(`  (couldn't remove ${dir}: ${(e as Error).message.split("\n")[0]})`);
+		}
+	}
 	results.push({ name: s.name, ok: code === 0, ms: Date.now() - t, summary: last || (code === 0 ? "ok" : `exit ${code}`) });
 }
 

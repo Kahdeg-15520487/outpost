@@ -74,6 +74,7 @@
     <span class="sp"></span>
     <select id="theme" title="Theme"></select>
     <button id="follow" title="Follow the presenter">Follow</button>
+    <button id="pptx" title="Download as PowerPoint (.pptx): editable slides, speaker notes included">⬇ PPTX</button>
     <button class="primary" id="present">▶ Present</button>
   </div>
   <div class="wrap">
@@ -92,6 +93,8 @@
     </div>
   </div>
   <div class="hint">← → to navigate · Esc to exit</div>
+<script src="pptxgen.bundle.js"></script>
+<script src="pptx-export.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const canEdit = gadget.user.role !== "viewer";
@@ -180,6 +183,19 @@
     if (canEdit) await gadget.api.present(false).catch(() => {});
     render();
   }
+  $("pptx").onclick = async () => {
+    const b = $("pptx");
+    b.disabled = true;
+    b.textContent = "Exporting…";
+    try {
+      await exportDeckPptx(deck, {});
+    } catch (e) {
+      alert("PowerPoint export failed: " + (e && e.message || e));
+    } finally {
+      b.disabled = false;
+      b.textContent = "⬇ PPTX";
+    }
+  };
   $("follow").onclick = () => { following = !following; if (following) at = deck.current; render(); };
   addEventListener("keydown", (e) => {
     if (e.target.closest && e.target.closest("[contenteditable=true],[contenteditable=plaintext-only],textarea")) return;

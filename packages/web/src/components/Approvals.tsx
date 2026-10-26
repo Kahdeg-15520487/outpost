@@ -31,7 +31,8 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 		}
 	};
 	const approveAll = async () => {
-		for (const a of pending) await decide(a, true);
+		// Oldest first: a later action may use what an earlier one creates (a comment on a new work item).
+		for (const a of [...pending].sort((x, y) => x.createdAt - y.createdAt)) await decide(a, true);
 	};
 
 	return (

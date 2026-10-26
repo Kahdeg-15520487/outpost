@@ -13,7 +13,7 @@ import { EncryptedFileStore } from "../../kernel/credentials.ts";
  * admins declare them in pi-os.config.json ("vetted": may reach private hosts, run local commands,
  * and have writes auto-approved).
  */
-export type ConnectorKind = "mcp" | "openapi";
+export type ConnectorKind = "mcp" | "openapi" | "azure-devops";
 
 export type ConnectionAuth =
 	| { kind: "none" }
@@ -47,7 +47,7 @@ export type ConnMethod = {
 	/** Never auto-approved, whatever the capability's policy says. */
 	alwaysAsk?: boolean;
 	/** Who decided it's a read or a write: the server's annotation, the HTTP verb, the owner, or the default (write). */
-	classifiedBy: "server" | "spec" | "owner" | "default";
+	classifiedBy: "server" | "spec" | "owner" | "default" | "connector";
 	http?: HttpOperation;
 };
 
@@ -72,8 +72,10 @@ export type Connection = {
 	baseUrl?: string;
 	/** openapi: the base URL in use (the override, or the document's server), set on discovery. */
 	apiBase?: string;
-	/** openapi: parameter values pi-os always sends (e.g. organization=rosen-nxt); hidden from agents, who can't change them. */
+	/** openapi: parameter values pi-os always sends (e.g. organization=rosen-nxt); hidden from agents, who can't change them. azure-devops: organization, and optionally project. */
 	params?: Record<string, string>;
+	/** Who the service says the connection acts as (azure-devops), set on discovery. */
+	account?: string;
 	auth: ConnectionAuth;
 	/** Methods the owner marks as reads (no approval), overriding the server or the verb. */
 	reads?: string[];
@@ -88,6 +90,7 @@ export type Connection = {
 export const CONNECTOR_INFO: Record<ConnectorKind, { title: string; icon: string; description: string }> = {
 	mcp: { title: "MCP server", icon: "🔌", description: "Any Model Context Protocol server. Its tools become methods; tools the server marks read-only run, the rest queue for approval." },
 	openapi: { title: "REST API (OpenAPI)", icon: "🧾", description: "Any HTTP API with an OpenAPI 3 or Swagger 2 document. GET operations run; everything else queues for approval." },
+	"azure-devops": { title: "Azure DevOps", icon: "🔷", description: "Boards, repos, pull requests, pipelines and wiki of one organization (optionally one project), with a personal access token." },
 };
 
 /** Which secrets an auth kind must have (basic: the username may be empty, e.g. Azure DevOps personal access tokens). */

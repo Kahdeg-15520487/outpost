@@ -358,6 +358,18 @@ async function run() {
 		check("…stored with the policy", g?.policy?.createItem === "deny" && g?.gatekeeper === "openapi", g);
 		await shot("capability");
 
+		await go(`#/w/${ws}/connections`);
+		await page.waitForSelector(".conn");
+		await clickText(".page button", "+ Add connection");
+		await page.waitForSelector(".conn-form");
+		await clickText(".conn-form .gk", /Azure DevOps/);
+		check("Azure DevOps: organization, project and a personal access token, no auth picker", await until("ado form", async () => {
+			const t = await text(".conn-form");
+			return /Organization/i.test(t) && /Project/i.test(t) && /Personal access token/i.test(t) && !/Authentication/i.test(t);
+		}), await text(".conn-form"));
+		await shot("azure-devops-form");
+		await clickText(".conn-form button", "Cancel");
+
 		const w = await Workspace.get(ws);
 		const firstChat = Object.keys((await w.snapshot()).chats.chats)[0]!;
 		await go(`#/w/${ws}/connections`);

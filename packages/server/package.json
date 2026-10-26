@@ -16,6 +16,7 @@
 		"test:home": "tsx test/home.ts",
 		"test:conflicts": "tsx test/conflicts.ts",
 		"test:connectors": "tsx test/connectors.ts",
+		"test:azure-devops": "tsx test/azure-devops.ts",
 		"test:gates": "tsx test/gates.ts",
 		"test:quality": "tsx test/quality.ts",
 		"test:transfer": "tsx test/transfer.ts",

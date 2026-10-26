@@ -122,7 +122,7 @@ await ws.decide(created.queuedForApproval, true, "owner");
 check("approved: the POST is sent with the JSON body", items.some((i) => i.name === "Bellows") && (await ws.actionResult(holder, created.queuedForApproval)).status === "approved");
 const traversal = await fails(call("items", "getItem", { id: "../../openapi.yaml" }));
 check("path parameters can't escape their segment", /HTTP 404/.test(traversal) && apiHits.at(-1) === "GET /api/items/..%2F..%2Fopenapi.yaml", [traversal, apiHits.at(-1)]);
-check("missing path parameters are refused", /Missing path parameter "id"/.test(await fails(call("items", "getItem", {}))));
+check("missing path parameters are refused", /getItem needs id|Missing path parameter "id"/.test(await fails(call("items", "getItem", {}))));
 const relabeled = await ws.connections.update(inv.id, { reads: ["createItem"] });
 check("the owner can mark a write as a read", relabeled.methods.find((m) => m.name === "createItem")?.effect === "read" && relabeled.methods.find((m) => m.name === "createItem")?.classifiedBy === "owner");
 const pastedSpec = await ws.connections.create({ kind: "openapi", label: "pasted", specText: SPEC, baseUrl: `${apiOrigin}/api`, auth: { kind: "header", name: "x-api-key" }, secrets: { value: API_KEY } }, "owner");

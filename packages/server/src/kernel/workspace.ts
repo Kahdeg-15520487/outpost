@@ -606,6 +606,8 @@ export class Workspace {
 			const names = Object.keys(gk.methods);
 			throw new Error(`${gk.title} has no method ${method}. Methods: ${names.slice(0, 60).join(", ")}${names.length > 60 ? ` … (${names.length}; use gatekeeper_tools to search)` : ""}`);
 		}
+		const missing = ((m.inputSchema?.required as string[] | undefined) ?? []).filter((k) => args?.[k] === undefined || args?.[k] === null || args?.[k] === "");
+		if (missing.length) throw new Error(`${method} needs ${missing.join(", ")}. Arguments: ${JSON.stringify(m.inputSchema?.properties ? Object.keys(m.inputSchema.properties as object) : Object.keys(m.params))}`);
 		const io = { harness: this.harness };
 		const base = { at: Date.now(), grantId: grant.id, gatekeeper: gk.id, method, by: requester.name };
 		const runNow = async (detail?: string) => {
@@ -662,17 +664,31 @@ export class Workspace {
 	}
 
 	async decide(actionId: string, approve: boolean, by: string) {
-		const action = (await this.harness.snapshot(ApprovalsDoc, ctx))?.actions[actionId];
+		const all = (await this.harness.snapshot(ApprovalsDoc, ctx))?.actions ?? {};
+		const action = all[actionId];
 		if (!action || action.status !== "pending") throw new HttpError(409, "Action is not pending");
+		// Arguments may refer to what an earlier queued action will create ("pending:<actionId>").
+		let args: any = action.args;
+		let blocked: string | undefined;
+		if (approve) {
+			const r = resolvePending(action.args, all);
+			if (r.waitingOn) {
+				const dep = all[r.waitingOn]!;
+				throw new HttpError(409, `This uses what “${dep.summary}” creates: approve that one first.`);
+			}
+			args = r.value;
+			blocked = r.failedOn;
+		}
 		const grant = (await this.harness.snapshot(GrantsDoc, ctx))?.grants[action.grantId];
 		const gk = grant && (await this.gatekeeperFor(grant));
 		let patch: Partial<ApprovalAction>;
 		if (!approve) patch = { status: "rejected" };
 		else if (!grant) patch = { status: "failed", error: "grant was revoked" };
 		else if (!gk?.methods[action.method]) patch = { status: "failed", error: gk ? `${gk.title} no longer has ${action.method}` : "the connection was removed" };
+		else if (blocked) patch = { status: "failed", error: `it depends on “${all[blocked]!.summary}”, which was ${all[blocked]!.status}` };
 		else {
 			try {
-				patch = { status: "approved", result: JSON.parse(JSON.stringify((await gk.methods[action.method]!.run(action.resource, action.args, { harness: this.harness })) ?? null)) };
+				patch = { status: "approved", result: JSON.parse(JSON.stringify((await gk.methods[action.method]!.run(action.resource, args, { harness: this.harness })) ?? null)) };
 			} catch (error) {
 				patch = { status: "failed", error: error instanceof Error ? error.message : String(error) };
 			}
@@ -744,4 +760,33 @@ function checkPolicy(gk: Gatekeeper, policy: Record<string, string> | undefined,
 		out[name] = value;
 	}
 	return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Replace "pending:<actionId>" values (ids a simulated result handed out) with the real id from that
+ * action's result once it ran. waitingOn: it hasn't been approved yet; failedOn: it was rejected or failed.
+ */
+export function resolvePending(value: unknown, actions: Record<string, ApprovalAction>): { value: unknown; waitingOn?: string; failedOn?: string } {
+	let waitingOn: string | undefined;
+	let failedOn: string | undefined;
+	const walk = (v: unknown): unknown => {
+		if (typeof v === "string") {
+			const m = /^pending:(ap_[A-Za-z0-9]+)$/.exec(v.trim());
+			const dep = m && actions[m[1]!];
+			if (!dep) return v;
+			if (dep.status === "pending") waitingOn ??= dep.id;
+			else if (dep.status !== "approved") failedOn ??= dep.id;
+			else {
+				const r: any = dep.result;
+				const real = r?.id ?? r?.pullRequestId ?? r?.number ?? r?.thread;
+				if (real !== undefined && !String(real).startsWith("pending:")) return real;
+			}
+			return v;
+		}
+		if (Array.isArray(v)) return v.map(walk);
+		if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+		return v;
+	};
+	const out = walk(value);
+	return { value: out, waitingOn, failedOn };
 }

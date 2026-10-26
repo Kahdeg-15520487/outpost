@@ -19,7 +19,7 @@ export type ConnectionMethod = { name: string; description: string; effect: "rea
 /** A connection an agent drafted (no secret) for an owner to review, add the key and connect. */
 export type ConnectionProposal = {
 	id: string;
-	kind: "mcp" | "openapi";
+	kind: "mcp" | "openapi" | "azure-devops";
 	label: string;
 	title?: string;
 	url?: string;
@@ -39,7 +39,7 @@ export type ConnectionProposal = {
 /** A workspace connection (generic connector: MCP server or OpenAPI REST API), as the API shows it: no secret values. */
 export type ConnectionInfo = {
 	id: string;
-	kind: "mcp" | "openapi";
+	kind: "mcp" | "openapi" | "azure-devops";
 	label: string;
 	title: string;
 	icon: string;
@@ -52,6 +52,7 @@ export type ConnectionInfo = {
 	baseUrl?: string;
 	apiBase?: string;
 	params?: Record<string, string>;
+	account?: string;
 	auth: ConnectionAuth;
 	reads?: string[];
 	methods: ConnectionMethod[];

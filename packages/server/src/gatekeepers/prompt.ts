@@ -70,14 +70,14 @@ export const PROPOSE_CONNECTION = {
 	description:
 		"Propose a new workspace connection to a third-party service (an MCP server, or a REST API with an OpenAPI document) for a workspace owner to review and connect. You never handle credentials: name the auth scheme only, and say in `setup` how the owner gets the key. Never ask the user to paste keys or tokens into the chat, and never put one in a URL. Find the real endpoint first (documentation, the vendor's MCP page). Returns immediately; you're told when an owner connects or declines it, then ask for access with request_access.",
 	parameters: Type.Object({
-		kind: Type.Union([Type.Literal("mcp"), Type.Literal("openapi")]),
+		kind: Type.Union([Type.Literal("mcp"), Type.Literal("openapi"), Type.Literal("azure-devops")], { description: "azure-devops: pi-os's own Azure DevOps connector (boards, repos, PRs, pipelines, wiki) with a personal access token: set params.organization (and params.project to pin one); no url or spec" }),
 		label: Type.String({ description: "short name agents and gadgets will use, e.g. linear (a letter, then letters, digits, - or _)" }),
 		title: Type.Optional(Type.String({ description: "display name, e.g. Linear" })),
 		url: Type.Optional(Type.String({ description: "mcp: the server's endpoint URL" })),
 		transport: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("sse")], { description: "mcp: omit to try streamable HTTP, then SSE" })),
 		spec: Type.Optional(Type.String({ description: "openapi: URL of the OpenAPI/Swagger document" })),
 		baseUrl: Type.Optional(Type.String({ description: "openapi: the API's base URL, only if the document doesn't name a server; don't put path parameters (like an organization) here, use params" })),
-		params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "openapi: parameter values to fix for every call, e.g. {\"organization\": \"contoso\"}; agents won't be able to change them" })),
+		params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "openapi: parameter values to fix for every call, e.g. {\"organization\": \"contoso\"}; agents won't be able to change them. azure-devops: {\"organization\": \"contoso\", \"project\": \"optional\"}" })),
 		auth: Type.Object(
 			{
 				kind: Type.Union([Type.Literal("none"), Type.Literal("bearer"), Type.Literal("header"), Type.Literal("basic"), Type.Literal("query")]),

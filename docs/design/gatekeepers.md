@@ -17,6 +17,7 @@ The generic route, on public libraries (`@modelcontextprotocol/sdk`, `@apidevtoo
 - **Approvals**: writes on connections queue with `{status: "pending", actionId}`; `action_result` reads the outcome; revoking a grant or removing a connection rejects its queued actions.
 - **Agents**: `<resources>` lists methods and how each runs (bounded to 40, then `gatekeeper_tools`); `request_access` takes a connection label and the methods needed. Project agents get the same tools and a live `resources` section.
 - **Proposals**: agents draft connections with `propose_connection` (no credential fields); owners review a pre-filled form, add the key and connect, or decline (`ConnectionsDoc.proposals`). The proposer is notified.
+- **Azure DevOps** is the first native connector (`connectors/azure-devops.ts`): curated methods with JSON Schemas, trimmed results, simulations with provisional ids, and overlays. Queued actions can depend on each other: `pending:<actionId>` in arguments resolves to the real id when approved, and approving one before the action it depends on is refused.
 - Tests: `test/connectors.ts` against a local MCP server (HTTP and stdio) and a local OpenAPI service; `test/ui.ts` covers the pages.
 
 ## Today (before connectors)

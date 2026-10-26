@@ -10,7 +10,8 @@ const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
 	basic: "Username and password",
 	query: "API key in the URL",
 };
-const SECRET_LABEL: Record<string, string> = { token: "Token", value: "Key", username: "Username", password: "Password" };
+const KIND_LABEL: Record<string, string> = { mcp: "MCP server", openapi: "REST API", "azure-devops": "Azure DevOps" };
+const SECRET_LABEL: Record<string, string> = { token: "Token", value: "Key", username: "Username", password: "Password", pat: "Personal access token" };
 
 /** Workspace connections: third-party services (MCP servers, REST APIs) agents and gadgets can be granted. */
 export function ConnectionsPage({ ws }: { ws: Workspace }) {
@@ -96,7 +97,10 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 	const fixed = Object.entries(conn.params ?? {})
 		.map(([k, v]) => `${k}=${v}`)
 		.join(" ");
-	const where = (conn.kind === "mcp" ? (conn.transport === "stdio" ? `$ ${conn.command}` : conn.url) : conn.spec === "inline" ? `pasted document → ${conn.apiBase ?? conn.baseUrl ?? "?"}` : (conn.apiBase ?? conn.spec)) + (fixed ? `  ·  ${fixed}` : "");
+	const where =
+		conn.kind === "azure-devops"
+			? `${conn.apiBase ?? `https://dev.azure.com/${conn.params?.organization ?? "?"}${conn.params?.project ? `/${conn.params.project}` : ""}`}${conn.account ? `  ·  as ${conn.account}` : ""}`
+			: (conn.kind === "mcp" ? (conn.transport === "stdio" ? `$ ${conn.command}` : conn.url) : conn.spec === "inline" ? `pasted document → ${conn.apiBase ?? conn.baseUrl ?? "?"}` : (conn.apiBase ?? conn.spec)) + (fixed ? `  ·  ${fixed}` : "");
 
 	const run = async (fn: () => Promise<unknown>) => {
 		setBusy(true);
@@ -125,7 +129,7 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 					<div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
 						<b>{conn.title}</b>
 						<code className="mono conn-label">{conn.label}</code>
-						<span className="pill">{conn.kind === "mcp" ? "MCP server" : "REST API"}</span>
+						<span className="pill">{KIND_LABEL[conn.kind]}</span>
 						{conn.source === "config" ? (
 							<span className="pill ok" title="Declared by an admin in pi-os.config.json: may reach private hosts, and its writes may be auto-approved">
 								admin · vetted
@@ -227,15 +231,15 @@ function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; 
 	return (
 		<div className="card conn conn-proposal">
 			<div className="row conn-head">
-				<span className="conn-icon">{p.kind === "mcp" ? "🔌" : "🧾"}</span>
+				<span className="conn-icon">{p.kind === "mcp" ? "🔌" : p.kind === "azure-devops" ? "🔷" : "🧾"}</span>
 				<div className="grow conn-name">
 					<div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
 						<b>{p.title ?? p.label}</b>
 						<code className="mono conn-label">{p.label}</code>
-						<span className="pill">{p.kind === "mcp" ? "MCP server" : "REST API"}</span>
+						<span className="pill">{KIND_LABEL[p.kind]}</span>
 						<span className="pill signal">proposed</span>
 					</div>
-					<div className="mono muted conn-where">{p.url ?? p.spec}</div>
+					<div className="mono muted conn-where">{p.kind === "azure-devops" ? `https://dev.azure.com/${p.params?.organization ?? "?"}${p.params?.project ? `/${p.params.project}` : ""}` : (p.url ?? p.spec)}</div>
 				</div>
 				<span className="muted conn-auth">{timeAgo(p.createdAt)}</span>
 			</div>
@@ -269,7 +273,9 @@ function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; 
 
 function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?: ConnectionInfo; proposal?: ConnectionProposal; onDone: () => void }) {
 	const from = conn ?? proposal;
-	const [kind, setKind] = useState<"mcp" | "openapi">(from?.kind ?? "mcp");
+	const [kind, setKind] = useState<"mcp" | "openapi" | "azure-devops">(from?.kind ?? "mcp");
+	const [org, setOrg] = useState(from?.params?.organization ?? "");
+	const [project, setProject] = useState(from?.params?.project ?? "");
 	const [label, setLabel] = useState(from?.label ?? "");
 	const [title, setTitle] = useState(from?.title ?? "");
 	const [url, setUrl] = useState(from?.url ?? "");
@@ -288,13 +294,13 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 	const [secrets, setSecrets] = useState<Record<string, string>>({});
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
-	const secretFields = authKind === "bearer" ? ["token"] : authKind === "basic" ? ["username", "password"] : authKind === "header" || authKind === "query" ? ["value"] : [];
+	const secretFields = kind === "azure-devops" ? ["password"] : authKind === "bearer" ? ["token"] : authKind === "basic" ? ["username", "password"] : authKind === "header" || authKind === "query" ? ["value"] : [];
 
 	const submit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		setErr("");
 		setBusy(true);
-		const auth = authKind === "header" || authKind === "query" ? { kind: authKind, name: authName } : { kind: authKind };
+		const auth = kind === "azure-devops" ? { kind: "basic" } : authKind === "header" || authKind === "query" ? { kind: authKind, name: authName } : { kind: authKind };
 		const body: Record<string, unknown> = {
 			kind,
 			label,
@@ -304,6 +310,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 			secrets: Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v && secretFields.includes(k))),
 			...(kind === "mcp" ? { url, transport: transport || undefined } : specMode === "paste" ? (specText.trim() ? { specText } : {}) : { spec }),
 			...(kind === "openapi" ? { params: parseParams(params) } : {}),
+			...(kind === "azure-devops" ? { params: { organization: org.trim(), ...(project.trim() ? { project: project.trim() } : {}) } } : {}),
 		};
 		try {
 			const r = conn
@@ -346,17 +353,35 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 						<div className="n">REST API</div>
 						<div className="d">Any HTTP API with an OpenAPI 3 or Swagger 2 document. GET operations run; everything else waits for approval.</div>
 					</button>
+					<button type="button" className={`gk ${kind === "azure-devops" ? "on" : ""}`} onClick={() => setKind("azure-devops")}>
+						<div className="i">🔷</div>
+						<div className="n">Azure DevOps</div>
+						<div className="d">Boards, repos and pull requests, pipelines and wiki of one organization, with a personal access token.</div>
+					</button>
 				</div>
 			)}
 			<div className="conn-fields">
 				<label className="label">Label</label>
 				<div>
-					<input className="input mono" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="linear" required pattern="[A-Za-z][A-Za-z0-9_\-]{0,39}" />
+					<input className="input mono" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={kind === "azure-devops" ? "ado" : kind === "openapi" ? "inventory" : "linear"} required pattern="[A-Za-z][A-Za-z0-9_\-]{0,39}" />
 					<div className="hint">What agents and gadgets call it: ctx.gatekeepers["{label || "label"}"]</div>
 				</div>
 				<label className="label">Name</label>
-				<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === "mcp" ? "Linear" : "Inventory API"} />
-				{kind === "mcp" ? (
+				<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === "mcp" ? "Linear" : kind === "azure-devops" ? "Azure DevOps" : "Inventory API"} />
+				{kind === "azure-devops" ? (
+					<>
+						<label className="label">Organization</label>
+						<div>
+							<input className="input mono" value={org} onChange={(e) => setOrg(e.target.value)} placeholder="contoso" required pattern="[A-Za-z0-9][A-Za-z0-9\-]{0,49}" />
+							<div className="hint">dev.azure.com/&lt;organization&gt;</div>
+						</div>
+						<label className="label">Project</label>
+						<div>
+							<input className="input" value={project} onChange={(e) => setProject(e.target.value)} placeholder="(optional) pins it to one project" />
+							<div className="hint">Empty: agents name the project in each call.</div>
+						</div>
+					</>
+				) : kind === "mcp" ? (
 					<>
 						<label className="label">Server URL</label>
 						<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mcp.example.com/mcp" required type="url" />
@@ -397,8 +422,8 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 						</div>
 					</>
 				)}
-				<label className="label">Authentication</label>
-				<div className="row" style={{ gap: 8 }}>
+				{kind !== "azure-devops" && <label className="label">Authentication</label>}
+				<div className="row" style={{ gap: 8, display: kind === "azure-devops" ? "none" : undefined }}>
 					<select className="input grow" value={authKind} onChange={(e) => setAuthKind(e.target.value as any)}>
 						{Object.entries(AUTH_LABEL).map(([k, v]) => (
 							<option key={k} value={k}>
@@ -409,7 +434,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 					{(authKind === "header" || authKind === "query") && <input className="input mono grow" value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder={authKind === "header" ? "x-api-key" : "api_key"} required />}
 				</div>
 				{secretFields.map((k) => (
-					<SecretField key={k} name={k} isSet={!!conn?.secretsSet.includes(k) && conn.auth.kind === authKind} value={secrets[k] ?? ""} onChange={(v) => setSecrets((s) => ({ ...s, [k]: v }))} />
+					<SecretField key={k} name={kind === "azure-devops" ? "pat" : k} isSet={!!conn?.secretsSet.includes(k) && (kind === "azure-devops" || conn.auth.kind === authKind)} value={secrets[k] ?? ""} onChange={(v) => setSecrets((s) => ({ ...s, [k]: v }))} />
 				))}
 			</div>
 			<div className="muted conn-note">

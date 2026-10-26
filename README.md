@@ -12,7 +12,8 @@ An AI workspace in the spirit of [Cloudflare OS](https://github.com/cloudflare/c
  ─────────────  ───────────────────────────────────────────  ─────────────────────────────
  kernel         pi-durable Harness, one SQLite per workspace  server/src/kernel/workspace.ts
  processes      gadgets: QuickJS server + sandboxed iframe    server/src/gadgets/
- drivers        gatekeepers: web, github, mailbox             server/src/gatekeepers/
+ drivers        gatekeepers: web, github, mailbox,           server/src/gatekeepers/
+                + connections: any MCP server or OpenAPI API
  executables    blueprints                                    server/blueprints/
  shell          React app                                     web/
  users / ACLs   system SQLite: users, members, shares, links  server/src/kernel/system-db.ts
@@ -243,9 +244,9 @@ to the model is the run snippets and tool names, never the transcript.
 
 Every Gatekeeper exposes a typed API scoped to one resource. Each method is either `read` or `write`.
 
-- Grants are held by a **chat** or a **gadget** (`holder`). Nothing is ambient: a gadget can't use its chat's grants, and vice versa.
+- Grants are held by a **chat**, a **gadget**, or a **project team** (optionally only some roles, e.g. its developers). Nothing is ambient: a gadget can't use its chat's grants, and vice versa.
 - **Reads** run right away. Pending writes are **overlaid** on later reads, so a queued "create issue" appears in `list_issues`.
-- **Writes** return a simulated result immediately and add an action to the approval queue. Approving runs the real call. The outcome is reported back to the chat that asked. Grants can opt into auto-approve.
+- **Writes** return a simulated result immediately and add an action to the approval queue. Approving runs the real call. The outcome is reported back to the chat that asked, and `action_result` reads it. Grants can opt into auto-approve, or set it per method: ask, auto, or refuse.
 - Every call is written to the audit log.
 
 Built in:
@@ -254,7 +255,31 @@ Built in:
 - `github`: one repository: issues, files, comments.
 - `mailbox`: a local outbox for trying approvals with no external account.
 
-To add one, put a definition in `server/src/gatekeepers/catalog.ts`.
+To add a built-in one, put a definition in `server/src/gatekeepers/catalog.ts`. Most services don't need one: add them as connections.
+
+### Connections: any MCP server or REST API
+
+A **connection** turns a third-party service into a Gatekeeper with no service-specific code (`server/src/gatekeepers/connectors/`, built on the official MCP SDK and `@apidevtools/swagger-parser`):
+
+- **MCP server** (streamable HTTP, falling back to SSE): its tools become methods. Tools the server marks `readOnlyHint: true` are reads; everything else is a write; `destructiveHint: true` always asks.
+- **REST API** with an OpenAPI 3 or Swagger 2 document (by URL, or pasted): its operations become methods. GET/HEAD are reads; POST/PUT/PATCH are writes; DELETE always asks.
+
+A connection is the workspace's account on the service (a shared service account): workspace owners add them on the **Connections** page (auth: bearer token, API key in a header or the URL, or basic). Secrets are encrypted with the instance secret (`data/connections.enc.json`) and never sent back to the browser or shown to agents. A connection gives nobody access by itself: you introduce it to a chat, gadget or project (🔑 Resources), choosing the methods and, per write, ask / auto / refuse. An owner can mark a write as a read ("treat as read").
+
+Trust:
+
+- **Added in the UI** ("byo"): public hosts only (private, loopback, link-local and metadata addresses are refused, redirects can't leave the host), and writes are never auto-approved.
+- **Declared by an admin** in `pi-os.config.json` (`connectors`): vetted. May reach private hosts, may run a local MCP command (stdio), and writes may be auto-approved (except always-ask ones). They appear in every workspace, or only those listed.
+
+```json
+"connectors": [
+  { "id": "linear", "kind": "mcp", "url": "https://mcp.linear.app/mcp", "auth": { "kind": "bearer", "token": "$LINEAR_TOKEN" } },
+  { "id": "files", "kind": "mcp", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/shared"] },
+  { "id": "inventory", "kind": "openapi", "spec": "https://inventory.internal/openapi.json", "auth": { "kind": "header", "name": "x-api-key", "value": "$INVENTORY_KEY" }, "reads": ["searchItems"] }
+]
+```
+
+Agents see their capabilities in `<resources>` (methods, and whether each reads, asks, runs or is refused), look methods up with `gatekeeper_tools`, call them with `gatekeeper_call`, and ask for a connection by its label with `request_access`. A write on a connection queues and returns `{status: "pending", actionId}`: a generic connector can't fake what the service would return. Gadgets call connections the same way: `ctx.gatekeepers["<label>"].<method>(args)`.
 
 ## Test
 
@@ -272,12 +297,13 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | `home` | the workspace homepage: runs recorded while nobody watches, the per-user "seen" boundary, a second visit reporting only what is new, summaries skipped on the demo model, non-members refused |
 | `quality` | M2 document gates, story-style briefs, tests before review and before merge (incl. merge results when main moved), definition of done, retrospective, restart resume |
 | `conflicts` | generated files never conflict, LF line endings and repo identity (new and older repos), real conflicts still reported, overlapping areas not run in parallel |
+| `connectors` | MCP servers (HTTP and stdio) and OpenAPI REST APIs as Gatekeepers against local fixtures: discovery and read/write classification, secrets never leaving the server, the private-address guard, method subsets and per-method policy, byo never auto-approved, the approval queue and `action_result`, project grants by role, revoke and remove |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
 | `preview` | `preview.ports` (the container case): the browser port comes from the range, the app stays on loopback, two projects run side by side, stopping frees the port |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → gadget, gadget RPC and rollback, frame CSP, sharing, roles, presence, live sync, Gatekeepers and approvals, files, blueprints |
 | `render` | `gadget_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
-| `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval). `SHOTS=<dir>` saves screenshots |
+| `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the project page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval), Connections (add a REST API, its methods) and granting a connection to a chat and to a project's developers. `SHOTS=<dir>` saves screenshots |
 
 Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 

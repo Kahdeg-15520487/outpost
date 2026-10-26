@@ -17,6 +17,12 @@ export type GatekeeperMethod = {
 	run(resource: string, args: any, io: GatekeeperIo): Promise<unknown>;
 	simulate?(resource: string, args: any, actionId: string): unknown;
 	summarize?(args: any): string;
+	/** Never auto-approved, whatever the grant says (deletes, destructive tools). */
+	alwaysAsk?: boolean;
+	/** JSON Schema of the arguments (generic connectors), shown by gatekeeper_tools. */
+	inputSchema?: Record<string, unknown>;
+	/** Who classified a read as a read: the connector, the server's annotation, the HTTP verb, the owner. */
+	classifiedBy?: string;
 };
 export type Gatekeeper = {
 	id: string;
@@ -28,6 +34,10 @@ export type Gatekeeper = {
 	normalizeResource(input: string): string;
 	methods: Record<string, GatekeeperMethod>;
 	overlay?(method: string, args: any, result: any, pending: ApprovalAction[]): any;
+	/** byo: added by a workspace owner, so its writes are never auto-approved. Built-ins and admin-declared connections are trusted. */
+	trust?: "vetted" | "byo";
+	/** The workspace connection behind it (generic connectors). */
+	connection?: string;
 };
 
 const truncate = (s: string, n = 60_000) => (s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s);

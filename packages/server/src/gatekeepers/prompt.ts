@@ -1,0 +1,65 @@
+import type { Grant, Holder } from "../kernel/docs.ts";
+import type { Gatekeeper } from "./catalog.ts";
+
+/**
+ * What agents are told about their Gatekeeper access, shared by chats and project agents: the
+ * resources a holder can use (methods, how each runs), and how to look methods up.
+ */
+type WorkspaceLike = {
+	gatekeeperFor(grant: { gatekeeper: string; connection?: string }): Promise<Gatekeeper | undefined>;
+	connections: { list(): Promise<{ id: string; label: string; title: string; kind: string; methods: unknown[] }[]> };
+};
+
+export const MAX_LISTED_METHODS = 40;
+
+/** Does a grant held by `grantHolder` apply to `caller`? Project grants may be limited to some roles. */
+export function holds(grantHolder: Holder, caller: Holder): boolean {
+	if (grantHolder.kind !== caller.kind || grantHolder.id !== caller.id) return false;
+	if (grantHolder.kind !== "project" || !grantHolder.roles?.length) return true;
+	return !!caller.roles?.some((r) => grantHolder.roles!.includes(r));
+}
+
+/** How a call to `method` on this grant runs: read, needs approval, auto-approved, or not allowed. */
+export function howItRuns(g: { autoApprove: boolean; policy?: Record<string, string> }, gk: Gatekeeper, method: string): string {
+	const m = gk.methods[method];
+	if (!m || m.effect === "read") return "read";
+	const policy = g.policy?.[method] ?? (g.autoApprove ? "auto" : "ask");
+	if (policy === "deny") return "write, not allowed";
+	if (policy === "auto" && !m.alwaysAsk && gk.trust !== "byo") return "write, auto-approved";
+	return "write, needs approval";
+}
+
+/** The <resources> prompt section for a holder's grants, plus the connections it could ask for. */
+export async function resourcesSection(ws: WorkspaceLike, mine: Grant[]): Promise<string> {
+	const conns = await ws.connections.list();
+	const ungranted = conns.filter((c) => !mine.some((g) => g.connection === c.id));
+	const available = ungranted.length
+		? `\n\nWorkspace connections you can ask for (request_access with the label): ${ungranted.map((c) => `"${c.label}" (${c.title}, ${c.kind === "mcp" ? "MCP server" : "REST API"}, ${c.methods.length} methods)`).join("; ")}.`
+		: "";
+	if (!mine.length) return `No resources introduced yet. Use request_access if you need one.${available}`;
+	const lines = await Promise.all(
+		mine.map(async (g) => {
+			const gk = await ws.gatekeeperFor(g);
+			if (!gk) return `- grant "${g.id}" (label "${g.label}"): its connection was removed`;
+			const entries = Object.entries(gk.methods).filter(([name]) => !g.methods || g.methods.includes(name));
+			const shown = entries.slice(0, MAX_LISTED_METHODS);
+			const methods = shown
+				.map(([name, m]) => `  - ${name}(${Object.entries(m.params).map(([k, v]) => `${k}: ${v.slice(0, 140)}`).join(", ")}) [${howItRuns(g, gk, name)}] — ${m.description.replace(/\s+/g, " ").slice(0, 300)}`)
+				.join("\n");
+			const more = entries.length > shown.length ? `\n  … ${entries.length - shown.length} more: use gatekeeper_tools to search them.` : "";
+			return `- grant "${g.id}" (label "${g.label}"): ${gk.title} → ${g.resource}\n${methods}${more}`;
+		}),
+	);
+	return lines.join("\n") + available;
+}
+
+/** gatekeeper_tools: a granted resource's methods with full argument schemas, by name or search words. */
+export function findMethods(grant: Grant, gk: Gatekeeper, opts: { search?: string; method?: string }) {
+	const words = (opts.search ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+	return Object.entries(gk.methods)
+		.filter(([name]) => !grant.methods || grant.methods.includes(name))
+		.filter(([name]) => !opts.method || name === opts.method)
+		.filter(([name, m]) => words.every((w) => `${name} ${m.description}`.toLowerCase().includes(w)))
+		.slice(0, 20)
+		.map(([name, m]) => ({ name, effect: m.effect, runs: howItRuns(grant, gk, name), description: m.description, arguments: m.inputSchema ?? m.params }));
+}

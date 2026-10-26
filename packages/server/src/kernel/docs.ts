@@ -1,4 +1,5 @@
 import { defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
+import type { Connection } from "../gatekeepers/connectors/types.ts";
 
 /**
  * Workspace state lives in pi-durable documents inside the workspace's Harness, so every change is
@@ -51,15 +52,22 @@ export const GadgetLogsDoc = defineDocFamily<{ lines: LogLine[] }, null>({
 
 // ---------------------------------------------------------------- gatekeepers
 
-export type Holder = { kind: "conversation" | "gadget"; id: string };
+/** Who holds a grant: a chat, a gadget, or a project team (optionally only some roles: lead, worker, …). */
+export type Holder = { kind: "conversation" | "gadget" | "project"; id: string; roles?: string[] };
 export type Grant = {
 	id: string;
 	gatekeeper: string;
 	resource: string;
 	label: string;
 	holder: Holder;
-	/** Side-effecting calls run immediately instead of queuing for approval. */
+	/** Side-effecting calls run immediately instead of queuing for approval (unless `policy` says otherwise for a method). */
 	autoApprove: boolean;
+	/** A capability on a workspace connection (MCP server, REST API): its id. `gatekeeper` is then the connector kind. */
+	connection?: string;
+	/** Only these methods; absent = all of them. */
+	methods?: string[];
+	/** Per write method: ask (queue for approval), auto (run), deny (refuse). Absent methods follow `autoApprove`. */
+	policy?: Record<string, "ask" | "auto" | "deny">;
 	createdBy: string;
 	createdAt: number;
 };
@@ -69,6 +77,10 @@ export type AccessRequest = {
 	resource: string;
 	reason: string;
 	holder: Holder;
+	/** A request for a workspace connection. */
+	connection?: string;
+	/** The methods the requester says it needs. */
+	methods?: string[];
 	status: "pending" | "granted" | "denied";
 	createdAt: number;
 };
@@ -103,6 +115,15 @@ export const ApprovalsDoc = defineDoc<{ actions: Record<string, ApprovalAction> 
 	scope: "session",
 	initial: () => ({ actions: {} }),
 	...every(50),
+});
+
+/** Third-party services added to this workspace (generic connectors: MCP servers, OpenAPI REST APIs). Secrets are stored apart, encrypted. */
+export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection> }>({
+	kind: "os.connections",
+	version: 1,
+	scope: "session",
+	initial: () => ({ connections: {} }),
+	...every(20),
 });
 
 export type AuditLine = { at: number; grantId: string; gatekeeper: string; method: string; by: string; outcome: "ok" | "error" | "queued" | "simulated"; detail?: string };

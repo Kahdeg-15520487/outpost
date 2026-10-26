@@ -14,12 +14,12 @@ import { config, resolveSecret, type ProviderConfig } from "../config.ts";
 type Sealed = { v: 1; iv: string; tag: string; data: string };
 
 /** One JSON object of credentials, encrypted as a whole with the instance secret. */
-class EncryptedFileStore {
+export class EncryptedFileStore<T = Credential> {
 	constructor(
 		readonly path: string,
 		readonly key: Buffer,
 	) {}
-	load(): Record<string, Credential> {
+	load(): Record<string, T> {
 		if (!existsSync(this.path)) return {};
 		const sealed: Sealed = JSON.parse(readFileSync(this.path, "utf8"));
 		const decipher = createDecipheriv("aes-256-gcm", this.key, Buffer.from(sealed.iv, "base64"));
@@ -30,7 +30,7 @@ class EncryptedFileStore {
 			throw new Error(`Cannot decrypt ${this.path}: the instance secret (data/secret.key or PI_OS_SECRET) changed`);
 		}
 	}
-	save(all: Record<string, Credential>) {
+	save(all: Record<string, T>) {
 		const iv = randomBytes(12);
 		const cipher = createCipheriv("aes-256-gcm", this.key, iv);
 		const data = Buffer.concat([cipher.update(JSON.stringify(all), "utf8"), cipher.final()]);

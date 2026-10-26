@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
+import { CONNECTOR_INFO } from "../gatekeepers/connectors/types.ts";
 
 /**
  * Version and capability checks for moving blueprints and gadgets between pi-os instances.
@@ -108,7 +109,7 @@ export function compatGuide(): string {
 	return `Compatibility (gadget runtime v${GADGET_RUNTIME}, pi-os ${PIOS_VERSION}): gadgets and blueprints are exported and imported between pi-os instances, and an instance runs only the API it knows. Use only these members:
 - server \`ctx\`: ${SERVER_FEATURES.map((f) => `\`ctx.${f}\``).join(", ")}
 - client \`gadget\`: ${CLIENT_FEATURES.map((f) => `\`gadget.${f}\``).join(", ")}
-- Gatekeepers on this instance: ${gks || "(none)"}
+- Gatekeepers on this instance: ${gks || "(none)"}, plus the workspace's connections (MCP servers, REST APIs) granted to the gadget, called the same way: \`await ctx.gatekeepers["<label>"].<method>(args)\`. A write on a connection resolves to \`{status: "pending", actionId}\` until someone approves it.
 Anything else (\`ctx.fetch\`, \`ctx.setTimeout\`, \`gadget.storage\`, a Gatekeeper or method not listed) doesn't exist here: the server or page fails, and another instance's import check blocks the gadget. \`gadget_write\` and \`gadget_edit\` report a \`compat\` problem when code uses something outside this list; fix it before moving on.`;
 }
 
@@ -133,6 +134,12 @@ export function assess(req: Requires, from?: Producer): Assessment {
 	const client = req.client.filter((f) => !CLIENT_FEATURES.includes(f));
 	if (client.length) block(`its page uses ${client.map((f) => `gadget.${f}`).join(", ")}, which this pi-os doesn't provide`);
 	for (const g of req.gatekeepers) {
+		const connector = CONNECTOR_INFO[g.id as keyof typeof CONNECTOR_INFO];
+		if (connector) {
+			// Generic connectors: the methods depend on the service connected, so only the grant can tell.
+			notes.push(`calls a workspace connection (${connector.title}${g.methods.length ? `: ${g.methods.join(", ")}` : ""}): add the service under Connections and grant it after importing`);
+			continue;
+		}
 		const local = GATEKEEPERS[g.id];
 		if (!local) {
 			warn(`it calls the “${g.id}” Gatekeeper, which this pi-os doesn't have; those calls will fail`);

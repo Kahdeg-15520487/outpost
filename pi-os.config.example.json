@@ -29,6 +29,10 @@
     "ambientEnv": true,
     "demo": true
   },
+  "connectors": [
+    { "id": "linear", "kind": "mcp", "url": "https://mcp.linear.app/mcp", "auth": { "kind": "bearer", "token": "$LINEAR_TOKEN" } },
+    { "id": "inventory", "kind": "openapi", "spec": "https://inventory.example.internal/openapi.json", "auth": { "kind": "header", "name": "x-api-key", "value": "$INVENTORY_KEY" } }
+  ],
   "gatekeepers": {
     "github": {
       "token": "$GITHUB_TOKEN"

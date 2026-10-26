@@ -308,9 +308,70 @@ async function run() {
 	await clickText(".gate-bar button", /^Approve requirements/);
 	check("approve from the tab", await until("approved", async () => (await api("GET", `/api/w/${ws}/projects/${pid}`)).state.gates?.requirements?.status === "approved" && /approved/.test(await text(".gate-bar"))));
 	await go(projectHash("design"));
-	check("Design tab: not submitted yet", /not submitted for your approval yet/.test(await text(".gate-bar.idle")));
+	check("Design tab: not submitted yet", await until("design gate", () => text(".gate-bar.idle").then((t) => /not submitted for your approval yet/.test(t))));
 	await go(projectHash("backlog"));
 	check("the backlog says which documents still need approval", /Approve the design first/.test(await text(".bl")) || (await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.approval.status === "approved");
+
+	console.log("connections");
+	process.env.PI_OS_ALLOW_PRIVATE_HOSTS = "1";
+	const { startServices, API_KEY } = await import("./fixtures/services.ts");
+	const services = await startServices();
+	try {
+		await go(`#/w/${ws}/connections`);
+		must("Connections page from the sidebar", await until("page", () => text(".page h1").then((t) => t === "Connections")) && /Connections/.test(await text(".side-item.on")));
+		await clickText(".page button", "+ Add connection");
+		await page.waitForSelector(".conn-form");
+		await clickText(".conn-form .gk", /REST API/);
+		await page.waitForSelector('.conn-form input[placeholder="https://api.example.com/openapi.json"]');
+		await page.type(".conn-form input[pattern]", "inventory");
+		await page.type('.conn-form input[placeholder="https://api.example.com/openapi.json"]', `${services.apiOrigin}/openapi.yaml`);
+		await page.select(".conn-form select", "header");
+		await page.waitForSelector('.conn-form input[placeholder="x-api-key"]');
+		await page.type('.conn-form input[placeholder="x-api-key"]', "x-api-key");
+		await page.type(".conn-form input[type=password]", API_KEY);
+		await clickText(".conn-form button", "Connect");
+		check("add a REST API from its OpenAPI document", await until("connected", () => text(".conn").then((t) => /connected/.test(t) && /4 methods/.test(t) && /set ✓/.test(t))), await text(".conn, .conn-form .err"));
+		await clickText(".conn .conn-foot button", /4 methods/);
+		check("its operations, with reads, writes and always-ask", await until("methods", async () => (await count(".conn-method")) === 4 && /always asks/.test(await text(".conn-methods"))));
+		const listed = await api("GET", `/api/w/${ws}/connections`);
+		check("the API never sends the key back", !JSON.stringify(listed).includes(API_KEY));
+		await shot("connections");
+
+		await clickText(".side-item .t", "Renamed chat");
+		must("back in the chat", await until("resources button", () => clickText(".chat-head button, button", /Resources/)));
+		await page.waitForSelector(".gk-grid");
+		check("the connection is offered next to the built-in Gatekeepers", await clickText(".gk", /inventory/));
+		must("its methods, to choose from", await until("cap rows", () => count(".cap-row").then((n) => n === 4)));
+		check("added in the UI: writes can't be set to auto", !(await page.$$eval(".cap-row select option", (os) => os.some((o) => (o as HTMLOptionElement).value === "auto"))));
+		await page.$$eval(".cap-row", (rows) => {
+			const row = rows.find((r) => r.textContent?.includes("createItem"));
+			const sel = row?.querySelector("select") as HTMLSelectElement | null;
+			if (!sel) return;
+			sel.value = "deny";
+			sel.dispatchEvent(new Event("change", { bubbles: true }));
+		});
+		await clickText(".dialog button, .panel button", "Introduce");
+		check("introduced: the grant shows its capability", await until("grant card", () => text(".panel").then((t) => /4 of 4 methods/.test(t) && /1 refused/.test(t) && /writes need approval/.test(t))), await text(".panel .err"));
+		const { GrantsDoc } = await import("../src/kernel/docs.ts");
+		const { BACKGROUND_CONTEXT: bg } = await import("@earendil-works/chord/context");
+		const g = Object.values((await (await Workspace.get(ws)).harness.snapshot(GrantsDoc, bg))?.grants ?? {}).find((x) => x.connection);
+		check("…stored with the policy", g?.policy?.createItem === "deny" && g?.gatekeeper === "openapi", g);
+		await shot("capability");
+
+		await go(projectHash("overview"));
+		must("project header: Resources", await until("project resources", () => clickText(".ph-btn", /Resources/)));
+		await page.waitForSelector(".gk-grid");
+		await clickText(".gk", /inventory/);
+		must("project grants can be for some roles", await until("role chips", () => count(".cap-roles .chip").then((n) => n >= 3)));
+		await clickText(".cap-roles .chip", "Developer");
+		await clickText(".dialog button, .panel button", "Introduce");
+		check("granted to the project's developers only", await until("project grant", () => text(".panel").then((t) => /for Developer/.test(t))), await text(".panel .err"));
+		const pg = Object.values((await (await Workspace.get(ws)).harness.snapshot(GrantsDoc, bg))?.grants ?? {}).find((x) => x.holder.kind === "project");
+		check("…stored with the role", pg?.holder.id === pid && pg.holder.roles?.join() === "worker", pg?.holder);
+		await shot("project-resources");
+	} finally {
+		services.close();
+	}
 
 	check("no errors in the page", errors.length === 0, errors);
 }

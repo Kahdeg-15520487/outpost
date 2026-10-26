@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ConnectionsPage } from "./Connections";
 import { exportGadget } from "./Transfer";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
 import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
@@ -143,6 +144,10 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									<span className="ico">▤</span>
 									<span className="t">Files</span>
 									<span className="ago">{Object.values(docs.files.files).filter((f) => !f.parent).length || ""}</span>
+								</a>
+								<a className={`side-item ${route.page === "connections" ? "on" : ""}`} href={`#/w/${ws.id}/connections`}>
+									<span className="ico">⇄</span>
+									<span className="t">Connections</span>
 								</a>
 								<a className={`side-item ${route.page === "settings" ? "on" : ""}`} href={`#/w/${ws.id}/settings`}>
 									<span className="ico">⚙</span>
@@ -293,8 +298,9 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
-			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} models={models} picker={picker} />}
+			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} models={models} picker={picker} grants={docs.grants} />}
 			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
+			{route.page === "connections" && ws && <ConnectionsPage ws={ws} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
 			{route.page === "gadget" && (
 				<div className="main" style={{ display: "flex" }}>

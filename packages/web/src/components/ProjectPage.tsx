@@ -1,10 +1,11 @@
 import "../project.css";
+import { ResourcesDialog } from "./Resources";
 import "../project-layout.css";
 import "../project-repo.css";
 import "../project-build.css";
 import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateName, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace } from "../api";
+import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateName, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type ProjectMeta, type ProjectStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
 import { navigate, projectHref, timeAgo, useChat, useProject } from "../store";
 import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
@@ -62,11 +63,13 @@ const TABS: { id: Tab; label: string }[] = [
 	{ id: "repo", label: "Repo" },
 ];
 
-export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Workspace; projectId: string; tab?: string; models: ModelInfo[]; picker: ModelPicker }) {
+export function ProjectPage({ ws, projectId, tab, models, picker, grants }: { ws: Workspace; projectId: string; tab?: string; models: ModelInfo[]; picker: ModelPicker; grants: WorkspaceDocs["grants"] }) {
 	const live = useProject(ws.id, projectId);
 	const { project, state, summaries } = live;
 	const [open, setOpen] = useState<string>();
 	const [modelMenu, setModelMenu] = useState(false);
+	const [resources, setResources] = useState(false);
+	const teamGrants = Object.values(grants.grants).filter((g) => g.holder.kind === "project" && g.holder.id === projectId).length;
 	// Layout: "side" = tiles around the viewer; "team" = all tiles on top, viewer below (resizable split).
 	const [layout, setLayout] = useState<"side" | "team">(() => (localStorage.getItem("pios.project.layout") === "team" ? "team" : "side"));
 	const [split, setSplit] = useState(() => Math.min(0.8, Math.max(0.2, Number(localStorage.getItem("pios.project.split")) || 0.5)));
@@ -198,6 +201,15 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 						</button>
 					</div>
 					{modelMenu && <ProjectModelMenu ws={ws} project={project} agents={agents} models={models} picker={picker} onClose={() => setModelMenu(false)} />}
+					{resources && (
+						<ResourcesDialog
+							ws={ws}
+							holder={{ kind: "project", id: projectId }}
+							grants={grants}
+							roles={[...new Set(agents.map((x) => x.role))].map((r) => ({ id: r, title: roleTitle(r) }))}
+							onClose={() => setResources(false)}
+						/>
+					)}
 					<h1 title={project.goal}>{project.name}</h1>
 				</div>
 				<ol className="ph-stages" aria-label="Stage">
@@ -234,6 +246,11 @@ export function ProjectPage({ ws, projectId, tab, models, picker }: { ws: Worksp
 						Team
 					</button>
 				</div>
+				{canEdit && (
+					<button className="btn small ph-btn" onClick={() => setResources(true)} title="External services the team (or some roles) may use: Gatekeepers and workspace connections">
+						🔑 Resources{teamGrants ? ` · ${teamGrants}` : ""}
+					</button>
+				)}
 				{canEdit && (
 					<div className="ph-actions">
 						<button className="btn small ph-btn" disabled={!working} onClick={() => confirm("Stop every agent's current work?") && api.post(`/api/w/${ws.id}/projects/${projectId}/stop`, {})}>

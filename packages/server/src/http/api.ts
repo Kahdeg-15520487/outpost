@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { config } from "../config.ts";
 import { describeGatekeeper, GATEKEEPERS } from "../gatekeepers/catalog.ts";
+import { CONNECTOR_INFO } from "../gatekeepers/connectors/types.ts";
 import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
 import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../gadgets/bundle.ts";
 import { capabilities } from "../gadgets/compat.ts";
@@ -617,18 +618,48 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/grants", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { gatekeeper, resource, label, holder, autoApprove, requestId } = await req.body();
-		if (!holder || !["conversation", "gadget"].includes(holder.kind)) throw new HttpError(400, "holder must be {kind: conversation|gadget, id}");
-		return { grant: await ws.grant({ gatekeeper, resource: String(resource ?? ""), label, holder, autoApprove, by: user.displayName, requestId }) };
+		const { gatekeeper, connection, resource, label, holder, autoApprove, methods, policy, requestId } = await req.body();
+		if (!holder || !["conversation", "gadget", "project"].includes(holder.kind) || typeof holder.id !== "string") throw new HttpError(400, "holder must be {kind: conversation|gadget|project, id, roles?}");
+		if (holder.roles !== undefined && !(holder.kind === "project" && Array.isArray(holder.roles) && holder.roles.every((r: unknown) => typeof r === "string"))) throw new HttpError(400, "roles: a list of role ids, for project holders only");
+		if (holder.kind === "project" && !(await ws.projects.list()).some((p) => p.id === holder.id)) throw new HttpError(404, "No such project");
+		if (methods !== undefined && !(Array.isArray(methods) && methods.every((m: unknown) => typeof m === "string"))) throw new HttpError(400, "methods must be a list of names");
+		return { grant: await ws.grant({ gatekeeper, connection, resource: String(resource ?? ""), label, holder, autoApprove, methods, policy, by: user.displayName, requestId }) };
 	});
 	r.patch("/api/w/:ws/grants/:id", async (req) => {
 		const { ws } = await member(req, "editor");
-		const { autoApprove } = await req.body();
-		await ws.harness.commit(async (tx) => {
-			const { GrantsDoc } = await import("../kernel/docs.ts");
-			const g = (await tx.doc(GrantsDoc)).grants[req.params.id!];
-			if (g) g.autoApprove = !!autoApprove;
-		}, ctx);
+		const { autoApprove, methods, policy } = await req.body();
+		await ws.updateGrant(req.params.id!, { autoApprove: autoApprove === undefined ? undefined : !!autoApprove, methods, policy });
+		return { ok: true };
+	});
+
+	// ------------------------------------------------------------ connections (generic connectors)
+	r.get("/api/connectors", (req) => {
+		req.need();
+		return { connectors: Object.entries(CONNECTOR_INFO).map(([id, c]) => ({ id, ...c })) };
+	});
+	r.get("/api/w/:ws/connections", async (req) => {
+		const { ws } = await member(req);
+		return { connections: (await ws.connections.list()).map((c) => ws.connections.describe(c)) };
+	});
+	r.get("/api/w/:ws/connections/:id", async (req) => {
+		const { ws } = await member(req);
+		return { connection: ws.connections.describe(await ws.connections.require(req.params.id!)) };
+	});
+	r.post("/api/w/:ws/connections", async (req) => {
+		const { user, ws } = await member(req, "owner");
+		return { connection: ws.connections.describe(await ws.connections.create(await req.body(), user.displayName)) };
+	});
+	r.patch("/api/w/:ws/connections/:id", async (req) => {
+		const { ws } = await member(req, "owner");
+		return { connection: ws.connections.describe(await ws.connections.update(req.params.id!, await req.body())) };
+	});
+	r.post("/api/w/:ws/connections/:id/refresh", async (req) => {
+		const { ws } = await member(req, "owner");
+		return { connection: ws.connections.describe(await ws.connections.refresh(req.params.id!)) };
+	});
+	r.delete("/api/w/:ws/connections/:id", async (req) => {
+		const { ws } = await member(req, "owner");
+		await ws.removeConnection(req.params.id!);
 		return { ok: true };
 	});
 	r.delete("/api/w/:ws/grants/:id", async (req) => {

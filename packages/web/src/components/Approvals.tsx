@@ -11,9 +11,13 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 	const pending = actions.filter((a) => a.status === "pending");
 	const decided = actions.filter((a) => a.status !== "pending");
 	const requests = Object.values(docs.grants.requests).filter((r) => r.status === "pending");
-	const icon = (id: string) => gks.find((g) => g.id === id)?.icon ?? "◆";
-	const holderName = (h: { kind: string; id: string }) =>
-		h.kind === "conversation" ? `chat “${docs.chats.chats[h.id]?.title ?? h.id}”` : `gadget “${gadgets.find((g) => g.id === h.id)?.name ?? h.id}”`;
+	const icon = (id: string) => gks.find((g) => g.id === id)?.icon ?? ({ mcp: "🔌", openapi: "🧾" } as Record<string, string>)[id] ?? "◆";
+	const holderName = (h: { kind: string; id: string; roles?: string[] }) =>
+		h.kind === "conversation"
+			? `chat “${docs.chats.chats[h.id]?.title ?? h.id}”`
+			: h.kind === "project"
+				? `project team${h.roles?.length ? ` (${h.roles.join(", ")})` : ""}`
+				: `gadget “${gadgets.find((g) => g.id === h.id)?.name ?? h.id}”`;
 
 	const decide = async (a: ApprovalAction, approve: boolean) => {
 		setBusy(a.id);
@@ -71,8 +75,9 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 										{r.gatekeeper} · requested by {holderName(r.holder)} · {timeAgo(r.createdAt)}
 									</div>
 									<pre>{r.reason}</pre>
+									{r.methods?.length ? <div className="mono muted" style={{ fontSize: 11.5 }}>asks for: {r.methods.join(", ")}</div> : null}
 									<div className="row">
-										<button className="btn primary small" onClick={() => api.post(`/api/w/${ws.id}/grants`, { gatekeeper: r.gatekeeper, resource: r.resource, holder: r.holder, requestId: r.id })}>
+										<button className="btn primary small" onClick={() => api.post(`/api/w/${ws.id}/grants`, r.connection ? { connection: r.connection, methods: r.methods, holder: r.holder, requestId: r.id } : { gatekeeper: r.gatekeeper, resource: r.resource, holder: r.holder, requestId: r.id })}>
 											Introduce
 										</button>
 										<button className="btn small" onClick={() => api.post(`/api/w/${ws.id}/requests/${r.id}/deny`)}>

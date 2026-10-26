@@ -9,7 +9,9 @@ import { config } from "../config.ts";
 import { hub } from "../collab/hub.ts";
 import { createOsExtension } from "../agent/extension.ts";
 import { GadgetHost, type Caller } from "../gadgets/host.ts";
-import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
+import { GATEKEEPERS, type Gatekeeper } from "../gatekeepers/catalog.ts";
+import { Connections } from "../gatekeepers/connectors/index.ts";
+import { holds } from "../gatekeepers/prompt.ts";
 import { FileStore, formatBytes, imageProcessor, looksLikeText } from "../files/store.ts";
 import { buildFrame } from "../gadgets/frame.ts";
 import { renderGadget, type RenderAction } from "../gadgets/render.ts";
@@ -24,6 +26,7 @@ import {
 	GadgetStateDoc,
 	GrantsDoc,
 	MailboxDoc,
+	type AccessRequest,
 	type ApprovalAction,
 	type AuditLine,
 	type FileMeta,
@@ -50,6 +53,8 @@ export class Workspace {
 	readonly files: FileStore;
 	/** Agent teams (projects) in this workspace. */
 	projects!: ProjectManager;
+	/** Third-party services (MCP servers, REST APIs) this workspace can grant access to. */
+	connections!: Connections;
 	private constructor(
 		readonly id: string,
 		readonly harness: Harness,
@@ -79,6 +84,7 @@ export class Workspace {
 		open.delete(id);
 		const ws = await p?.catch(() => undefined);
 		ws?.projects?.stop();
+		await ws?.connections?.close().catch(() => {});
 		await ws?.harness.close(ctx).catch(() => {});
 	}
 
@@ -86,6 +92,7 @@ export class Workspace {
 		for (const p of open.values()) {
 			const ws = await p.catch(() => undefined);
 			ws?.projects?.stop();
+			await ws?.connections?.close().catch(() => {});
 			await ws?.harness.close(ctx).catch(() => {});
 		}
 	}
@@ -118,6 +125,7 @@ export class Workspace {
 			ctx,
 		);
 		const ws = (self = new Workspace(id, harness));
+		ws.connections = new Connections(id, harness, () => hub.publish(ws.channel, { t: "ws.connections", ws: id }));
 		const osExtension = createOsExtension(ws);
 		const codemode = createCodemodeExtension({ sandbox: codemodeSandbox, models: false });
 		registry.install(osExtension);
@@ -418,39 +426,121 @@ export class Workspace {
 
 	// ------------------------------------------------------------------ gatekeepers
 
-	async grant(opts: { gatekeeper: string; resource: string; label?: string; holder: Holder; autoApprove?: boolean; by: string; requestId?: string }): Promise<Grant> {
-		const gk = GATEKEEPERS[opts.gatekeeper];
-		if (!gk) throw new HttpError(400, `Unknown gatekeeper ${opts.gatekeeper}`);
-		const resource = gk.normalizeResource(opts.resource);
-		const grant: Grant = {
-			id: newId("gr"),
-			gatekeeper: gk.id,
-			resource,
-			label: (opts.label?.trim() || `${gk.id}:${resource}`).slice(0, 80),
-			holder: opts.holder,
-			autoApprove: !!opts.autoApprove,
-			createdBy: opts.by,
-			createdAt: Date.now(),
-		};
+	/** The Gatekeeper behind a grant: a built-in one, or the workspace connection it points at. */
+	async gatekeeperFor(grant: { gatekeeper: string; connection?: string }): Promise<Gatekeeper | undefined> {
+		if (!grant.connection) return GATEKEEPERS[grant.gatekeeper];
+		const conn = await this.connections.get(grant.connection);
+		return conn && this.connections.gatekeeper(conn);
+	}
+
+	async grant(opts: {
+		gatekeeper?: string;
+		connection?: string;
+		resource?: string;
+		label?: string;
+		holder: Holder;
+		autoApprove?: boolean;
+		methods?: string[];
+		policy?: Record<string, "ask" | "auto" | "deny">;
+		by: string;
+		requestId?: string;
+	}): Promise<Grant> {
+		let gk: Gatekeeper | undefined;
+		let resource: string;
+		if (opts.connection) {
+			const conn = await this.connections.get(opts.connection);
+			if (!conn) throw new HttpError(400, `No connection "${opts.connection}"`);
+			gk = this.connections.gatekeeper(conn);
+			resource = conn.label;
+		} else {
+			gk = GATEKEEPERS[opts.gatekeeper ?? ""];
+			if (!gk) throw new HttpError(400, `Unknown gatekeeper ${opts.gatekeeper}`);
+			resource = gk.normalizeResource(opts.resource ?? "");
+		}
+		const methods = opts.methods?.length ? [...new Set(opts.methods)] : undefined;
+		const unknown = (methods ?? []).filter((m) => !gk!.methods[m]);
+		if (unknown.length && Object.keys(gk.methods).length) throw new HttpError(400, `${gk.title} has no ${unknown.join(", ")}`);
+		const policy = checkPolicy(gk, opts.policy, !!opts.autoApprove);
+		const grant: Grant = JSON.parse(
+			JSON.stringify({
+				id: newId("gr"),
+				gatekeeper: gk.id,
+				resource,
+				label: (opts.label?.trim() || (opts.connection ? resource : `${gk.id}:${resource}`)).slice(0, 80),
+				holder: opts.holder,
+				autoApprove: !!opts.autoApprove && gk.trust !== "byo",
+				connection: gk.connection,
+				methods,
+				policy,
+				createdBy: opts.by,
+				createdAt: Date.now(),
+			}),
+		);
 		await this.harness.commit(async (tx) => {
 			const doc = await tx.doc(GrantsDoc);
 			doc.grants[grant.id] = grant;
 			if (opts.requestId && doc.requests[opts.requestId]) doc.requests[opts.requestId]!.status = "granted";
 		}, ctx);
-		if (opts.holder.kind === "conversation") await this.#notify(opts.holder.id, `${opts.by} introduced you to ${gk.title} "${resource}" (grant ${grant.id}, label "${grant.label}").`);
+		if (opts.holder.kind === "conversation") await this.#notify(opts.holder.id, `${opts.by} introduced you to ${gk.title} "${resource}" (grant ${grant.id}, label "${grant.label}")${methods ? `, methods: ${methods.join(", ")}` : ""}.`);
 		return grant;
+	}
+
+	/** Change a grant's approval settings or method subset. */
+	async updateGrant(grantId: string, patch: { autoApprove?: boolean; methods?: string[] | null; policy?: Record<string, "ask" | "auto" | "deny"> | null }) {
+		const current = (await this.harness.snapshot(GrantsDoc, ctx))?.grants[grantId];
+		if (!current) throw new HttpError(404, "No such grant");
+		const gk = await this.gatekeeperFor(current);
+		if (!gk) throw new HttpError(409, "The Gatekeeper or connection behind this grant is gone");
+		const autoApprove = patch.autoApprove ?? current.autoApprove;
+		if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in pi-os.config.json to vet it.");
+		const policy = patch.policy === null ? undefined : patch.policy ? checkPolicy(gk, patch.policy, autoApprove) : current.policy;
+		await this.harness.commit(async (tx) => {
+			const g = (await tx.doc(GrantsDoc)).grants[grantId];
+			if (!g) return;
+			g.autoApprove = autoApprove;
+			if (patch.methods === null || (patch.methods && !patch.methods.length)) delete g.methods;
+			else if (patch.methods) g.methods = [...new Set(patch.methods)];
+			if (policy) g.policy = JSON.parse(JSON.stringify(policy));
+			else delete g.policy;
+		}, ctx);
 	}
 
 	async revoke(grantId: string) {
 		await this.harness.commit(async (tx) => {
 			delete (await tx.doc(GrantsDoc)).grants[grantId];
+			// Its queued actions can't run any more.
+			for (const a of Object.values((await tx.doc(ApprovalsDoc)).actions)) if (a.grantId === grantId && a.status === "pending") Object.assign(a, { status: "rejected", error: "grant was revoked", decidedAt: Date.now(), decidedBy: "pi-os" });
 		}, ctx);
 	}
 
-	async requestAccess(holder: Holder, gatekeeper: string, resource: string, reason: string) {
-		const gk = GATEKEEPERS[gatekeeper];
-		if (!gk) throw new Error(`Unknown gatekeeper "${gatekeeper}". Available: ${Object.keys(GATEKEEPERS).join(", ")}`);
-		const req = { id: newId("rq"), gatekeeper, resource: gk.normalizeResource(resource), reason, holder, status: "pending" as const, createdAt: Date.now() };
+	/** Remove a connection and everything granted on it. */
+	async removeConnection(id: string) {
+		const conn = await this.connections.require(id);
+		const grants = Object.values((await this.harness.snapshot(GrantsDoc, ctx))?.grants ?? {}).filter((g) => g.connection === conn.id);
+		for (const g of grants) await this.revoke(g.id);
+		await this.connections.remove(conn.id);
+	}
+
+	async requestAccess(holder: Holder, gatekeeper: string, resource: string, reason: string, methods?: string[]) {
+		const conn = GATEKEEPERS[gatekeeper] ? undefined : await this.connections.get(gatekeeper);
+		const gk = GATEKEEPERS[gatekeeper] ?? (conn && this.connections.gatekeeper(conn));
+		if (!gk) {
+			const available = [...Object.keys(GATEKEEPERS), ...(await this.connections.list()).map((c) => c.label)];
+			throw new Error(`Unknown gatekeeper or connection "${gatekeeper}". Available: ${available.join(", ")}`);
+		}
+		const req: AccessRequest = JSON.parse(
+			JSON.stringify({
+				id: newId("rq"),
+				gatekeeper: gk.id,
+				resource: conn ? conn.label : gk.normalizeResource(resource),
+				reason,
+				holder,
+				connection: conn?.id,
+				methods: methods?.length ? methods.filter((m) => gk.methods[m]) : undefined,
+				status: "pending",
+				createdAt: Date.now(),
+			}),
+		);
 		await this.harness.commit(async (tx) => {
 			(await tx.doc(GrantsDoc)).requests[req.id] = req;
 		}, ctx);
@@ -477,58 +567,72 @@ export class Workspace {
 		}, ctx);
 	}
 
-	/**
-	 * The capability check and the deferred-approval engine. Reads run (with pending writes overlaid);
-	 * writes either run (auto-approve grants) or are simulated and queued for a human.
-	 */
-	async gatekeeperCall(holder: Holder, grantRef: string, method: string, args: any, requester: Holder & { name: string }) {
+	/** The grant a holder means by `grantRef` (id, label, or a Gatekeeper id it holds exactly one grant of). */
+	async grantFor(holder: Holder, grantRef: string): Promise<Grant> {
 		const doc = await this.harness.snapshot(GrantsDoc, ctx);
-		const held = Object.values(doc?.grants ?? {}).filter((g) => g.holder.kind === holder.kind && g.holder.id === holder.id);
+		const held = Object.values(doc?.grants ?? {}).filter((g) => holds(g.holder, holder));
 		const byGatekeeper = held.filter((g) => g.gatekeeper === grantRef);
 		const grant = held.find((g) => g.id === grantRef || g.label === grantRef) ?? (byGatekeeper.length === 1 ? byGatekeeper[0] : undefined);
 		if (!grant) throw new Error(`No grant "${grantRef}" for this ${holder.kind}. Ask the user to introduce the resource (request_access).`);
-		const gk = GATEKEEPERS[grant.gatekeeper]!;
+		return JSON.parse(JSON.stringify(grant));
+	}
+
+	/**
+	 * The capability check and the deferred-approval engine. Reads run (with pending writes overlaid);
+	 * writes run when the grant's policy auto-approves them (never for byo connections or alwaysAsk
+	 * methods), are refused when it denies them, and otherwise are simulated and queued for a human.
+	 */
+	async gatekeeperCall(holder: Holder, grantRef: string, method: string, args: any, requester: Holder & { name: string }) {
+		const grant = await this.grantFor(holder, grantRef);
+		const gk = await this.gatekeeperFor(grant);
+		if (!gk) throw new Error(`The connection behind grant "${grant.label}" was removed.`);
+		if (grant.methods && !grant.methods.includes(method)) throw new Error(`Grant "${grant.label}" doesn't include ${method}. It allows: ${grant.methods.join(", ")}. Ask the user (request_access) if you need more.`);
 		const m = gk.methods[method];
-		if (!m) throw new Error(`${gk.id} has no method ${method}. Methods: ${Object.keys(gk.methods).join(", ")}`);
+		if (!m) {
+			const names = Object.keys(gk.methods);
+			throw new Error(`${gk.title} has no method ${method}. Methods: ${names.slice(0, 60).join(", ")}${names.length > 60 ? ` … (${names.length}; use gatekeeper_tools to search)` : ""}`);
+		}
 		const io = { harness: this.harness };
 		const base = { at: Date.now(), grantId: grant.id, gatekeeper: gk.id, method, by: requester.name };
-		if (m.effect === "read") {
-			try {
-				let result = await m.run(grant.resource, args, io);
-				const pending = Object.values((await this.harness.snapshot(ApprovalsDoc, ctx))?.actions ?? {}).filter((a) => a.grantId === grant.id && a.status === "pending");
-				if (pending.length && gk.overlay) result = gk.overlay(method, args, result, pending);
-				await this.#audit({ ...base, outcome: "ok" });
-				return result;
-			} catch (error) {
-				await this.#audit({ ...base, outcome: "error", detail: String(error).slice(0, 300) });
-				throw error;
-			}
-		}
-		if (grant.autoApprove) {
+		const runNow = async (detail?: string) => {
 			try {
 				const result = await m.run(grant.resource, args, io);
-				await this.#audit({ ...base, outcome: "ok", detail: m.summarize?.(args) });
+				await this.#audit({ ...base, outcome: "ok", ...(detail ? { detail } : {}) });
 				return result;
 			} catch (error) {
 				await this.#audit({ ...base, outcome: "error", detail: String(error).slice(0, 300) });
 				throw error;
 			}
+		};
+		if (m.effect === "read") {
+			let result = await runNow(gk.connection ? `${grant.label}: read (classified by ${m.classifiedBy ?? "connector"})` : undefined);
+			const pending = Object.values((await this.harness.snapshot(ApprovalsDoc, ctx))?.actions ?? {}).filter((a) => a.grantId === grant.id && a.status === "pending");
+			if (pending.length && gk.overlay) result = gk.overlay(method, args, result, pending);
+			return result;
 		}
+		const policy = grant.policy?.[method] ?? (grant.autoApprove ? "auto" : "ask");
+		if (policy === "deny") {
+			await this.#audit({ ...base, outcome: "error", detail: `denied by grant policy: ${m.summarize?.(args) ?? method}` });
+			throw new Error(`Grant "${grant.label}" doesn't allow ${method}.`);
+		}
+		if (policy === "auto" && !m.alwaysAsk && gk.trust !== "byo") return runNow(m.summarize?.(args));
 		const id = newId("ap");
 		const simulated = m.simulate ? m.simulate(grant.resource, args, id) : { ok: true, simulated: true };
-		const action: ApprovalAction = {
-			id,
-			grantId: grant.id,
-			gatekeeper: gk.id,
-			resource: grant.resource,
-			method,
-			args,
-			summary: m.summarize?.(args) ?? `${gk.id}.${method}`,
-			status: "pending",
-			simulated,
-			requestedBy: requester,
-			createdAt: Date.now(),
-		};
+		const action: ApprovalAction = JSON.parse(
+			JSON.stringify({
+				id,
+				grantId: grant.id,
+				gatekeeper: gk.id,
+				resource: grant.resource,
+				method,
+				args: args ?? {},
+				summary: m.summarize?.(args) ?? `${gk.id}.${method}`,
+				status: "pending",
+				simulated: simulated ?? null,
+				requestedBy: requester,
+				createdAt: Date.now(),
+			}),
+		);
 		await this.harness.commit(async (tx) => {
 			(await tx.doc(ApprovalsDoc)).actions[id] = action;
 		}, ctx);
@@ -536,16 +640,25 @@ export class Workspace {
 		return { queuedForApproval: id, note: "Simulated result. The action runs when the user approves it.", result: simulated };
 	}
 
+	/** A queued action's state, for whoever asked for it (a chat, a gadget, a project agent's conversation). */
+	async actionResult(requester: { kind: string; id: string }, actionId: string) {
+		const action = (await this.harness.snapshot(ApprovalsDoc, ctx))?.actions[actionId];
+		if (!action || action.requestedBy.kind !== requester.kind || action.requestedBy.id !== requester.id) throw new Error(`No action ${actionId} of yours`);
+		return { actionId, summary: action.summary, status: action.status, ...(action.result !== undefined ? { result: action.result } : {}), ...(action.error ? { error: action.error } : {}), ...(action.decidedBy ? { decidedBy: action.decidedBy } : {}) };
+	}
+
 	async decide(actionId: string, approve: boolean, by: string) {
 		const action = (await this.harness.snapshot(ApprovalsDoc, ctx))?.actions[actionId];
 		if (!action || action.status !== "pending") throw new HttpError(409, "Action is not pending");
 		const grant = (await this.harness.snapshot(GrantsDoc, ctx))?.grants[action.grantId];
+		const gk = grant && (await this.gatekeeperFor(grant));
 		let patch: Partial<ApprovalAction>;
 		if (!approve) patch = { status: "rejected" };
 		else if (!grant) patch = { status: "failed", error: "grant was revoked" };
+		else if (!gk?.methods[action.method]) patch = { status: "failed", error: gk ? `${gk.title} no longer has ${action.method}` : "the connection was removed" };
 		else {
 			try {
-				patch = { status: "approved", result: (await GATEKEEPERS[action.gatekeeper]!.methods[action.method]!.run(action.resource, action.args, { harness: this.harness })) ?? null };
+				patch = { status: "approved", result: JSON.parse(JSON.stringify((await gk.methods[action.method]!.run(action.resource, action.args, { harness: this.harness })) ?? null)) };
 			} catch (error) {
 				patch = { status: "failed", error: error instanceof Error ? error.message : String(error) };
 			}
@@ -556,7 +669,7 @@ export class Workspace {
 		}, ctx);
 		await this.#audit({ at: Date.now(), grantId: action.grantId, gatekeeper: action.gatekeeper, method: action.method, by, outcome: patch.status === "approved" ? "ok" : "error", detail: `${patch.status}: ${action.summary}` });
 		if (action.requestedBy.kind === "conversation") {
-			const outcome = patch.status === "approved" ? `was approved and executed` : patch.status === "rejected" ? `was rejected by ${by}` : `failed: ${patch.error}`;
+			const outcome = patch.status === "approved" ? `was approved and executed${patch.result !== null && patch.result !== undefined ? `; result: ${JSON.stringify(patch.result).slice(0, 1500)}` : ""}` : patch.status === "rejected" ? `was rejected by ${by}` : `failed: ${patch.error}`;
 			await this.#notify(action.requestedBy.id, `Queued action ${actionId} (${action.summary}) ${outcome}.`, true);
 		}
 		return patch;
@@ -598,3 +711,23 @@ const STARTER_HTML = (name: string) => `<!doctype html>
 </style></head>
 <body><div class="card"><h1>${name.replace(/[<>&]/g, "")}</h1><p>An empty gadget. Ask the agent to build it.</p></div></body>
 </html>`;
+
+/**
+ * A grant's per-method policy, checked: only write methods, "auto" only where it can apply (never for
+ * byo connections or alwaysAsk methods).
+ */
+function checkPolicy(gk: Gatekeeper, policy: Record<string, string> | undefined, autoApprove: boolean): Record<string, "ask" | "auto" | "deny"> | undefined {
+	if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in pi-os.config.json to vet it.");
+	if (!policy || !Object.keys(policy).length) return undefined;
+	const out: Record<string, "ask" | "auto" | "deny"> = {};
+	for (const [name, value] of Object.entries(policy)) {
+		const m = gk.methods[name];
+		if (!m) throw new HttpError(400, `${gk.title} has no ${name}`);
+		if (m.effect !== "write") continue;
+		if (value !== "ask" && value !== "auto" && value !== "deny") throw new HttpError(400, `Policy for ${name} must be ask, auto or deny`);
+		if (value === "auto" && gk.trust === "byo") throw new HttpError(400, `Writes on connections added in the UI can't be auto-approved (${name})`);
+		if (value === "auto" && m.alwaysAsk) throw new HttpError(400, `${name} always asks: it can't be auto-approved`);
+		out[name] = value;
+	}
+	return Object.keys(out).length ? out : undefined;
+}

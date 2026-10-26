@@ -14,6 +14,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "build", file: "build.ts", what: "M4 scheduler + M5 preview" },
 	{ name: "preview", file: "preview.ts", what: "preview.ports: the published range that reaches an app on loopback" },
 	{ name: "conflicts", file: "conflicts.ts", what: "generated files, line endings, repo identity, overlapping areas" },
+	{ name: "connectors", file: "connectors.ts", what: "MCP servers and OpenAPI REST APIs as Gatekeepers: discovery, secrets, capabilities, approvals" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
 	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
 	{ name: "transfer", file: "transfer.ts", what: "export/import of blueprints and gadgets between two instances" },
@@ -57,7 +58,8 @@ for (const s of run) {
 }
 
 console.log("\n━━ summary");
-for (const r of results) console.log(`  ${r.ok ? "✓" : "✗"} ${r.name.padEnd(8)} ${(r.ms / 1000).toFixed(1).padStart(6)}s  ${r.summary}`);
+const width = Math.max(...results.map((r) => r.name.length));
+for (const r of results) console.log(`  ${r.ok ? "✓" : "✗"} ${r.name.padEnd(width)} ${(r.ms / 1000).toFixed(1).padStart(6)}s  ${r.summary}`);
 const bad = results.filter((r) => !r.ok);
 console.log(bad.length ? `\n${bad.length} suite(s) failed: ${bad.map((r) => r.name).join(", ")}` : "\nAll suites passed.");
 process.exit(bad.length ? 1 : 0);

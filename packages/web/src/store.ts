@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
-import { api, type AgentSummary, type Backlog, type Gadget, type PreviewInfo, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
+import { api, type AgentSummary, type ConnectionInfo, type Backlog, type Gadget, type PreviewInfo, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -10,6 +10,7 @@ export type Route =
 	| { page: "chat"; ws: string; chat?: string; gadget?: string; /** gadget shown full width, chat hidden */ focus?: boolean }
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
+	| { page: "connections"; ws: string }
 	| { page: "files"; ws: string }
 	| { page: "project"; ws: string; project: string; tab?: string }
 	| { page: "gadget"; gadget: string }
@@ -22,6 +23,7 @@ function parse(): Route {
 	if (parts[0] === "w" && parts[1]) {
 		if (parts[2] === "blueprints") return { page: "blueprints", ws: parts[1] };
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
+		if (parts[2] === "connections") return { page: "connections", ws: parts[1] };
 		if (parts[2] === "files") return { page: "files", ws: parts[1] };
 		if (parts[2] === "p" && parts[3]) return { page: "project", ws: parts[1], project: parts[3], tab: q.get("tab") ?? undefined };
 		// A gadget with no chat beside it (opened from the sidebar): show it in an empty chat.
@@ -323,3 +325,27 @@ export const timeAgo = (t: number) => {
 	if (s < 86400) return `${Math.round(s / 3600)}h`;
 	return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
+
+/** The workspace's connections (MCP servers, REST APIs), refetched when the server says they changed. */
+export function useConnections(ws: string | undefined) {
+	const [list, setList] = useState<ConnectionInfo[]>([]);
+	const [tick, setTick] = useState(0);
+	useEffect(() => {
+		if (!ws) return;
+		return socket.on((m) => {
+			if (m.ws === ws && m.t === "ws.connections") setTick((t) => t + 1);
+		});
+	}, [ws]);
+	useEffect(() => {
+		if (!ws) return;
+		let live = true;
+		api.get(`/api/w/${ws}/connections`).then(
+			(r) => live && setList(r.connections),
+			() => {},
+		);
+		return () => {
+			live = false;
+		};
+	}, [ws, tick]);
+	return { connections: list, reload: () => setTick((t) => t + 1) };
+}

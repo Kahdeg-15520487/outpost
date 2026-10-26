@@ -18,6 +18,29 @@ export type ProviderConfig = {
 	/** false hides the provider entirely. */
 	enabled?: boolean;
 };
+export type ConnectorConfig = {
+	/** Stable id; also the default label agents use. */
+	id: string;
+	kind: "mcp" | "openapi";
+	label?: string;
+	title?: string;
+	icon?: string;
+	/** mcp: endpoint URL (http/sse). */
+	url?: string;
+	transport?: "http" | "sse" | "stdio";
+	/** mcp over stdio: the command to run, its args, and env (values may be $VAR). */
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	/** openapi: URL of the document, and optionally the API's base URL. */
+	spec?: string;
+	baseUrl?: string;
+	auth?: { kind: "none" } | { kind: "bearer"; token: string } | { kind: "header"; name: string; value: string } | { kind: "basic"; username: string; password: string } | { kind: "query"; name: string; value: string };
+	/** Methods to treat as reads (no approval). */
+	reads?: string[];
+	/** Offer it only in these workspace ids. Default: every workspace. */
+	workspaces?: string[];
+};
 export type PiOsConfigFile = {
 	server?: { host?: string; port?: number };
 	/** Relative paths resolve against the config file's directory. */
@@ -35,6 +58,12 @@ export type PiOsConfigFile = {
 	gatekeepers?: {
 		github?: { token?: string };
 	};
+	/**
+	 * Third-party services an admin vets for every workspace (or the listed ones): MCP servers (HTTP,
+	 * SSE, or a local command) and OpenAPI REST APIs. They may reach private hosts and their writes may
+	 * be auto-approved; secrets may be "$ENV_VAR" references.
+	 */
+	connectors?: ConnectorConfig[];
 	files?: {
 		/** Largest single upload, in MB. Default 100. */
 		maxUploadMB?: number;

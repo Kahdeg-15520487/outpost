@@ -1,5 +1,5 @@
 import { defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
-import type { Connection } from "../gatekeepers/connectors/types.ts";
+import type { Connection, ConnectionProposal } from "../gatekeepers/connectors/types.ts";
 
 /**
  * Workspace state lives in pi-durable documents inside the workspace's Harness, so every change is
@@ -118,7 +118,7 @@ export const ApprovalsDoc = defineDoc<{ actions: Record<string, ApprovalAction> 
 });
 
 /** Third-party services added to this workspace (generic connectors: MCP servers, OpenAPI REST APIs). Secrets are stored apart, encrypted. */
-export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection> }>({
+export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection>; proposals?: Record<string, ConnectionProposal> }>({
 	kind: "os.connections",
 	version: 1,
 	scope: "session",

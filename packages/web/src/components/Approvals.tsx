@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type ApprovalAction, type Gadget, type Workspace, type WorkspaceDocs } from "../api";
-import { chatHref, timeAgo } from "../store";
+import { chatHref, timeAgo, useConnections } from "../store";
 import { useGatekeepers } from "./Resources";
 
 export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace; docs: WorkspaceDocs; gadgets: Gadget[]; onClose: () => void }) {
@@ -11,6 +11,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 	const pending = actions.filter((a) => a.status === "pending");
 	const decided = actions.filter((a) => a.status !== "pending");
 	const requests = Object.values(docs.grants.requests).filter((r) => r.status === "pending");
+	const proposals = useConnections(ws.id).proposals.filter((p) => p.status === "pending");
 	const icon = (id: string) => gks.find((g) => g.id === id)?.icon ?? ({ mcp: "🔌", openapi: "🧾" } as Record<string, string>)[id] ?? "◆";
 	const holderName = (h: { kind: string; id: string; roles?: string[] }) =>
 		h.kind === "conversation"
@@ -47,7 +48,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 					<div className="tabs" style={{ display: "inline-flex" }}>
 						{(
 							[
-								["queue", `Queue${pending.length + requests.length ? ` · ${pending.length + requests.length}` : ""}`],
+								["queue", `Queue${pending.length + requests.length + proposals.length ? ` · ${pending.length + requests.length + proposals.length}` : ""}`],
 								["history", "History"],
 								["audit", "Audit log"],
 								["outbox", "Outbox"],
@@ -65,6 +66,23 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 							<div className="muted" style={{ fontSize: 13.5 }}>
 								Agents and gadgets don't wait for you: side effects are <b>simulated</b> and queued here, so work continues. Review them when it suits you.
 							</div>
+							{proposals.map((p) => (
+								<div key={p.id} className="action">
+									<span className="stamp pending">connect?</span>
+									<div className="sum">
+										{p.kind === "mcp" ? "🔌" : "🧾"} {p.title ?? p.label} <span className="mono muted">({p.label})</span>
+									</div>
+									<div className="meta">
+										new {p.kind === "mcp" ? "MCP server" : "REST API"} · proposed by {holderName(p.proposedBy)} · {timeAgo(p.createdAt)}
+									</div>
+									<pre>{p.reason}</pre>
+									<div className="row">
+										<a className="btn primary small" href={`#/w/${ws.id}/connections`} onClick={onClose}>
+											{ws.role === "owner" ? "Review and connect" : "See it (an owner connects it)"}
+										</a>
+									</div>
+								</div>
+							))}
 							{requests.map((r) => (
 								<div key={r.id} className="action">
 									<span className="stamp pending">access?</span>
@@ -97,7 +115,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 							{pending.map((a) => (
 								<ActionCard key={a.id} a={a} icon={icon(a.gatekeeper)} who={a.requestedBy.name} busy={busy === a.id} onDecide={(ok) => decide(a, ok)} />
 							))}
-							{pending.length === 0 && requests.length === 0 && <div className="empty-state">Nothing waiting on you. ✓</div>}
+							{pending.length === 0 && requests.length === 0 && proposals.length === 0 && <div className="empty-state">Nothing waiting on you. ✓</div>}
 						</>
 					)}
 					{tab === "history" && (decided.length ? decided.map((a) => <ActionCard key={a.id} a={a} icon={icon(a.gatekeeper)} who={a.requestedBy.name} />) : <div className="empty-state">No decisions yet.</div>)}

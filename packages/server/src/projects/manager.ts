@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, section, type Extension, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { GrantsDoc } from "../kernel/docs.ts";
 import { GATEKEEPERS } from "../gatekeepers/catalog.ts";
-import { findMethods, holds, resourcesSection } from "../gatekeepers/prompt.ts";
+import { findMethods, holds, PROPOSE_CONNECTION, resourcesSection } from "../gatekeepers/prompt.ts";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import { hub } from "../collab/hub.ts";
 import { HttpError, newId, type User } from "../kernel/system-db.ts";
@@ -761,6 +761,17 @@ export class ProjectManager {
 				execute: async (args, api) => {
 					const { requester } = await this.#gkCaller(api);
 					return text(await this.ws.actionResult(requester, args.actionId));
+				},
+			}),
+			defineTool({
+				name: "propose_connection",
+				...PROPOSE_CONNECTION,
+				replay: "safe",
+				execute: async (args, api) => {
+					const { me, holder, requester } = await this.#gkCaller(api);
+					const p = await this.ws.connections.propose(args, requester);
+					await this.log(holder.id, { at: Date.now(), agent: me.key, kind: "message", text: `${me.name} proposes connecting ${p.title ?? p.label}: ${clip(p.reason, 140)}` }).catch(() => {});
+					return text({ proposed: p.id, label: p.label, status: "pending: a workspace owner reviews it under Connections and adds the credential. You'll be told; then use request_access." });
 				},
 			}),
 			defineTool({

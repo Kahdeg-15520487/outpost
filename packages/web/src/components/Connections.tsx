@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { api, type ConnectionAuth, type ConnectionInfo, type ConnectionMethod, type Workspace } from "../api";
-import { timeAgo, useConnections } from "../store";
+import { api, type ConnectionAuth, type ConnectionInfo, type ConnectionMethod, type ConnectionProposal, type Workspace } from "../api";
+import { chatHref, timeAgo, useConnections } from "../store";
 import "../connections.css";
 
 const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
@@ -14,8 +14,10 @@ const SECRET_LABEL: Record<string, string> = { token: "Token", value: "Key", use
 
 /** Workspace connections: third-party services (MCP servers, REST APIs) agents and gadgets can be granted. */
 export function ConnectionsPage({ ws }: { ws: Workspace }) {
-	const { connections, reload } = useConnections(ws.id);
+	const { connections, proposals, reload } = useConnections(ws.id);
 	const [editing, setEditing] = useState<ConnectionInfo | "new">();
+	const [reviewing, setReviewing] = useState<ConnectionProposal>();
+	const waiting = proposals.filter((p) => p.status === "pending");
 	const isOwner = ws.role === "owner";
 	return (
 		<div className="main">
@@ -23,7 +25,7 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 				<div className="page-inner">
 					<div className="row conn-title">
 						<h1 className="grow">Connections</h1>
-						{isOwner && !editing && (
+						{isOwner && !editing && !reviewing && (
 							<button className="btn primary" onClick={() => setEditing("new")}>
 								+ Add connection
 							</button>
@@ -42,7 +44,25 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 							}}
 						/>
 					)}
-					{connections.length === 0 && !editing && (
+					{reviewing && (
+						<ConnectionForm
+							wsId={ws.id}
+							proposal={reviewing}
+							onDone={() => {
+								setReviewing(undefined);
+								reload();
+							}}
+						/>
+					)}
+					{waiting.length > 0 && !reviewing && (
+						<div className="conn-proposals">
+							<div className="label">Proposed by agents</div>
+							{waiting.map((p) => (
+								<ProposalCard key={p.id} ws={ws} p={p} isOwner={isOwner} onReview={() => (setEditing(undefined), setReviewing(p))} onChanged={reload} />
+							))}
+						</div>
+					)}
+					{connections.length === 0 && !editing && !reviewing && (
 						<div className="empty-state conn-empty">
 							No connections yet.{" "}
 							{isOwner ? (
@@ -189,18 +209,64 @@ function StatusPill({ conn }: { conn: ConnectionInfo }) {
 	return <span className="pill bad">failing</span>;
 }
 
-function ConnectionForm({ wsId, conn, onDone }: { wsId: string; conn?: ConnectionInfo; onDone: () => void }) {
-	const [kind, setKind] = useState<"mcp" | "openapi">(conn?.kind ?? "mcp");
-	const [label, setLabel] = useState(conn?.label ?? "");
-	const [title, setTitle] = useState(conn?.title ?? "");
-	const [url, setUrl] = useState(conn?.url ?? "");
-	const [transport, setTransport] = useState(conn?.transport ?? "");
+function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; p: ConnectionProposal; isOwner: boolean; onReview: () => void; onChanged: () => void }) {
+	const [err, setErr] = useState("");
+	return (
+		<div className="card conn conn-proposal">
+			<div className="row conn-head">
+				<span className="conn-icon">{p.kind === "mcp" ? "🔌" : "🧾"}</span>
+				<div className="grow conn-name">
+					<div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+						<b>{p.title ?? p.label}</b>
+						<code className="mono conn-label">{p.label}</code>
+						<span className="pill">{p.kind === "mcp" ? "MCP server" : "REST API"}</span>
+						<span className="pill signal">proposed</span>
+					</div>
+					<div className="mono muted conn-where">{p.url ?? p.spec}</div>
+				</div>
+				<span className="muted conn-auth">{timeAgo(p.createdAt)}</span>
+			</div>
+			<div className="conn-reason">{p.reason}</div>
+			<div className="row conn-foot">
+				<span className="muted conn-auth">
+					{AUTH_LABEL[p.auth.kind]}
+					{"name" in p.auth ? ` (${p.auth.name})` : ""} · proposed in{" "}
+					<a href={chatHref(ws.id, p.proposedBy.id)} className="conn-from">
+						a chat
+					</a>
+				</span>
+				<span className="grow" />
+				{isOwner ? (
+					<>
+						<button className="btn primary small" onClick={onReview}>
+							Review and connect
+						</button>
+						<button className="btn ghost small" onClick={() => api.post(`/api/w/${ws.id}/connection-proposals/${p.id}/decline`).then(onChanged, (e) => setErr(e.message))}>
+							Decline
+						</button>
+					</>
+				) : (
+					<span className="muted conn-auth">A workspace owner connects it.</span>
+				)}
+			</div>
+			{err && <div className="err">{err}</div>}
+		</div>
+	);
+}
+
+function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?: ConnectionInfo; proposal?: ConnectionProposal; onDone: () => void }) {
+	const from = conn ?? proposal;
+	const [kind, setKind] = useState<"mcp" | "openapi">(from?.kind ?? "mcp");
+	const [label, setLabel] = useState(from?.label ?? "");
+	const [title, setTitle] = useState(from?.title ?? "");
+	const [url, setUrl] = useState(from?.url ?? "");
+	const [transport, setTransport] = useState(from?.transport ?? "");
 	const [specMode, setSpecMode] = useState<"url" | "paste">(conn?.spec === "inline" ? "paste" : "url");
-	const [spec, setSpec] = useState(conn?.spec && conn.spec !== "inline" ? conn.spec : "");
+	const [spec, setSpec] = useState(from?.spec && from.spec !== "inline" ? from.spec : "");
 	const [specText, setSpecText] = useState("");
-	const [baseUrl, setBaseUrl] = useState(conn?.baseUrl ?? "");
-	const [authKind, setAuthKind] = useState<ConnectionAuth["kind"]>(conn?.auth.kind ?? "none");
-	const [authName, setAuthName] = useState(conn && "name" in conn.auth ? conn.auth.name : "");
+	const [baseUrl, setBaseUrl] = useState(from?.baseUrl ?? "");
+	const [authKind, setAuthKind] = useState<ConnectionAuth["kind"]>(from?.auth.kind ?? "none");
+	const [authName, setAuthName] = useState(from && "name" in from.auth ? from.auth.name : "");
 	const [secrets, setSecrets] = useState<Record<string, string>>({});
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -221,7 +287,11 @@ function ConnectionForm({ wsId, conn, onDone }: { wsId: string; conn?: Connectio
 			...(kind === "mcp" ? { url, transport: transport || undefined } : specMode === "paste" ? (specText.trim() ? { specText } : {}) : { spec }),
 		};
 		try {
-			const r = conn ? await api.patch(`/api/w/${wsId}/connections/${conn.id}`, body) : await api.post(`/api/w/${wsId}/connections`, body);
+			const r = conn
+				? await api.patch(`/api/w/${wsId}/connections/${conn.id}`, body)
+				: proposal
+					? await api.post(`/api/w/${wsId}/connection-proposals/${proposal.id}/accept`, body)
+					: await api.post(`/api/w/${wsId}/connections`, body);
 			if (r.connection.status === "error") setErr(`Saved, but it isn't working yet: ${r.connection.error}`);
 			else onDone();
 		} catch (error: any) {
@@ -233,8 +303,19 @@ function ConnectionForm({ wsId, conn, onDone }: { wsId: string; conn?: Connectio
 
 	return (
 		<form className="card conn-form" onSubmit={submit}>
-			<h3>{conn ? `Edit ${conn.title}` : "Add a connection"}</h3>
-			{!conn && (
+			<h3>{conn ? `Edit ${conn.title}` : proposal ? `Connect ${proposal.title ?? proposal.label}` : "Add a connection"}</h3>
+			{proposal && (
+				<div className="conn-reason">
+					<b>An agent proposed this:</b> {proposal.reason}
+					{proposal.setup && (
+						<div>
+							<b>Getting the key:</b> {proposal.setup}
+						</div>
+					)}
+					<div className="muted">Check the address before connecting: it's what pi-os will call with the key you enter.</div>
+				</div>
+			)}
+			{!conn && !proposal && (
 				<div className="gk-grid conn-kinds">
 					<button type="button" className={`gk ${kind === "mcp" ? "on" : ""}`} onClick={() => setKind("mcp")}>
 						<div className="i">🔌</div>

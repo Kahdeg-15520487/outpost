@@ -9,7 +9,7 @@ import { GATEKEEPERS, type Gatekeeper, type GatekeeperMethod } from "../catalog.
 import { assertPublicUrl } from "../net.ts";
 import { McpPool } from "./mcp.ts";
 import { baseUrlOf, invoke, loadSpecText, operationsOf, parseSpec } from "./openapi.ts";
-import { CONNECTOR_INFO, type Connection, type ConnectionAuth, type ConnectionSecrets, type ConnMethod, connectionSecrets, paramHints, redact, secretNames } from "./types.ts";
+import { CONNECTOR_INFO, type Connection, type ConnectionAuth, type ConnectionProposal, type ConnectionSecrets, type ConnMethod, connectionSecrets, paramHints, redact, secretNames } from "./types.ts";
 
 export * from "./types.ts";
 
@@ -355,6 +355,91 @@ export class Connections {
 
 	async close() {
 		await pool.closeAll(`${this.wsId}/`);
+	}
+
+	// ---------------------------------------------------------------- proposals (drafted by agents)
+
+	async proposals(): Promise<ConnectionProposal[]> {
+		const doc = await this.harness.snapshot(ConnectionsDoc, ctx);
+		return Object.values(doc?.proposals ?? {})
+			.map(plain)
+			.sort((a, b) => b.createdAt - a.createdAt);
+	}
+
+	/** An agent drafts a connection (no secret) for an owner to review and connect. */
+	async propose(input: Omit<ConnectionInput, "auth"> & { auth?: { kind: string; name?: string }; reason?: string; setup?: string }, proposedBy: ConnectionProposal["proposedBy"]): Promise<ConnectionProposal> {
+		const kind = input.kind;
+		if (!kind || !CONNECTOR_INFO[kind]) throw new Error(`kind must be one of ${Object.keys(CONNECTOR_INFO).join(", ")}`);
+		const label = (input.label ?? "").trim();
+		if (!LABEL.test(label)) throw new Error("label: a letter, then letters, digits, - or _ (at most 40)");
+		if (GATEKEEPERS[label]) throw new Error(`"${label}" is a built-in Gatekeeper's name; pick another label`);
+		if ((await this.list()).some((c) => c.label === label)) throw new Error(`A connection called "${label}" already exists: ask for access to it with request_access instead`);
+		const pending = (await this.proposals()).filter((p) => p.status === "pending");
+		if (pending.some((p) => p.label === label)) throw new Error(`"${label}" is already proposed and waiting for an owner`);
+		if (pending.length >= 20) throw new Error("Too many connection proposals are waiting; ask the user to review them first");
+		const http = (v: string | undefined, what: string) => {
+			const t = v?.trim();
+			if (t && !/^https?:\/\/[^\s]+$/i.test(t)) throw new Error(`${what} must be an http(s) URL`);
+			return t || undefined;
+		};
+		const url = kind === "mcp" ? http(input.url, "url") : undefined;
+		const spec = kind === "openapi" ? http(input.spec, "spec") : undefined;
+		if (kind === "mcp" && !url) throw new Error("An MCP connection needs the server's url");
+		if (kind === "openapi" && !spec) throw new Error("A REST API connection needs the URL of its OpenAPI document (spec)");
+		let auth: ConnectionAuth;
+		try {
+			auth = normalizeAuth(input.auth as ConnectionAuth | undefined);
+		} catch (e) {
+			throw new Error((e as Error).message);
+		}
+		const proposal: ConnectionProposal = plain({
+			id: newId("cp"),
+			kind,
+			label,
+			title: input.title?.trim() || undefined,
+			url,
+			transport: kind === "mcp" && (input.transport === "http" || input.transport === "sse") ? input.transport : undefined,
+			spec,
+			baseUrl: http(input.baseUrl, "baseUrl"),
+			auth,
+			reason: (input.reason ?? "").trim().slice(0, 1000) || "(no reason given)",
+			setup: input.setup?.trim().slice(0, 1000) || undefined,
+			proposedBy,
+			status: "pending" as const,
+			createdAt: Date.now(),
+		});
+		await this.harness.commit(async (tx) => {
+			const doc = await tx.doc(ConnectionsDoc);
+			doc.proposals ??= {};
+			doc.proposals[proposal.id] = proposal;
+		}, ctx);
+		this.onChange();
+		return proposal;
+	}
+
+	/** An owner connects a proposal: its fields, overridden by what the owner changed, plus the secret. */
+	async accept(id: string, input: ConnectionInput, by: string): Promise<{ connection: Connection; proposal: ConnectionProposal }> {
+		const proposal = (await this.proposals()).find((p) => p.id === id);
+		if (!proposal || proposal.status !== "pending") throw new HttpError(409, "This proposal isn't waiting any more");
+		const { id: _id, reason: _r, setup: _s, proposedBy: _p, status: _st, createdAt: _c, ...fields } = proposal;
+		const connection = await this.create({ ...fields, ...input, kind: proposal.kind }, by);
+		await this.#settle(id, { status: "accepted", connection: connection.id, decidedBy: by, decidedAt: Date.now() });
+		return { connection, proposal: { ...proposal, status: "accepted", connection: connection.id } };
+	}
+
+	async decline(id: string, by: string): Promise<ConnectionProposal> {
+		const proposal = (await this.proposals()).find((p) => p.id === id);
+		if (!proposal || proposal.status !== "pending") throw new HttpError(409, "This proposal isn't waiting any more");
+		await this.#settle(id, { status: "declined", decidedBy: by, decidedAt: Date.now() });
+		return { ...proposal, status: "declined" };
+	}
+
+	async #settle(id: string, patch: Partial<ConnectionProposal>) {
+		await this.harness.commit(async (tx) => {
+			const p = (await tx.doc(ConnectionsDoc)).proposals?.[id];
+			if (p) Object.assign(p, plain(patch));
+		}, ctx);
+		this.onChange();
 	}
 }
 

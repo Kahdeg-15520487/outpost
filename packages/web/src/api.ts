@@ -16,6 +16,25 @@ export type Grant = { id: string; gatekeeper: string; resource: string; label: s
 export type AccessRequest = { id: string; gatekeeper: string; resource: string; reason: string; holder: Holder; connection?: string; methods?: string[]; status: "pending" | "granted" | "denied"; createdAt: number };
 export type ConnectionAuth = { kind: "none" } | { kind: "bearer" } | { kind: "header"; name: string } | { kind: "basic" } | { kind: "query"; name: string };
 export type ConnectionMethod = { name: string; description: string; effect: "read" | "write"; alwaysAsk: boolean; classifiedBy: "server" | "spec" | "owner" | "default"; params: Record<string, string> };
+/** A connection an agent drafted (no secret) for an owner to review, add the key and connect. */
+export type ConnectionProposal = {
+	id: string;
+	kind: "mcp" | "openapi";
+	label: string;
+	title?: string;
+	url?: string;
+	transport?: "http" | "sse";
+	spec?: string;
+	baseUrl?: string;
+	auth: ConnectionAuth;
+	reason: string;
+	setup?: string;
+	proposedBy: { kind: "conversation"; id: string; name: string };
+	status: "pending" | "accepted" | "declined";
+	connection?: string;
+	decidedBy?: string;
+	createdAt: number;
+};
 /** A workspace connection (generic connector: MCP server or OpenAPI REST API), as the API shows it: no secret values. */
 export type ConnectionInfo = {
 	id: string;

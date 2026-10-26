@@ -358,6 +358,20 @@ async function run() {
 		check("…stored with the policy", g?.policy?.createItem === "deny" && g?.gatekeeper === "openapi", g);
 		await shot("capability");
 
+		const w = await Workspace.get(ws);
+		const firstChat = Object.keys((await w.snapshot()).chats.chats)[0]!;
+		await w.connections.propose({ kind: "openapi", label: "stock", title: "Stock API", spec: `${services.apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, reason: "Check stock levels for the weekly report", setup: "Inventory admin → API keys" }, { kind: "conversation", id: firstChat, name: "Agent" });
+		await go(`#/w/${ws}/connections`);
+		check("a proposal shows on the Connections page, with a badge in the sidebar", await until("proposal", async () => /Proposed by agents/i.test(await text(".conn-proposals")) && /Stock API/.test(await text(".conn-proposals")) && /1/.test(await text(".side-item.on .badge"))));
+		await shot("proposal");
+		await clickText(".conn-proposal button", "Review and connect");
+		must("review: the form is filled in from the proposal", await until("prefilled", () => page.$eval(".conn-form input[pattern]", (i) => (i as HTMLInputElement).value === "stock").catch(() => false)));
+		check("…with the agent's reason and how to get the key", /Check stock levels/.test(await text(".conn-form")) && /Inventory admin → API keys/.test(await text(".conn-form")));
+		await page.type(".conn-form input[type=password]", API_KEY);
+		await clickText(".conn-form button", "Connect");
+		check("connected from the proposal", await until("stock connected", () => page.$$eval(".conn", (cs) => cs.some((c) => /Stock API/.test((c as HTMLElement).innerText) && /connected/.test((c as HTMLElement).innerText)))), await text(".conn-form .err"));
+		check("the proposal is no longer waiting", await until("gone", async () => !(await page.$(".conn-proposal"))));
+
 		await go(projectHash("overview"));
 		must("project header: Resources", await until("project resources", () => clickText(".ph-btn", /Resources/)));
 		await page.waitForSelector(".gk-grid");

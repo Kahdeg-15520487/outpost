@@ -47,3 +47,7 @@
 .chip { border: 1px solid var(--line); background: white; border-radius: 99px; padding: 2px 10px; font: 500 12px var(--sans); color: var(--text); cursor: pointer; }
 .chip:hover { border-color: var(--line-2); }
 .chip.on { background: var(--text); border-color: var(--text); color: var(--paper); }
+.conn-proposals { display: grid; gap: 10px; margin-bottom: 22px; }
+.conn-proposal { border-color: color-mix(in srgb, var(--signal) 40%, var(--line)); background: color-mix(in srgb, var(--signal-wash) 35%, var(--card)); }
+.conn-reason { font-size: 13px; line-height: 1.5; display: grid; gap: 4px; background: var(--paper); border-radius: 8px; padding: 8px 10px; }
+.conn-from { color: inherit; }

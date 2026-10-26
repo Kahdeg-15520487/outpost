@@ -521,6 +521,20 @@ export class Workspace {
 		await this.connections.remove(conn.id);
 	}
 
+	/** An owner connects a proposal an agent drafted; the agent hears about it and can ask for access. */
+	async acceptProposal(id: string, input: Parameters<Connections["accept"]>[1], by: string) {
+		const { connection, proposal } = await this.connections.accept(id, input, by);
+		const status = connection.status === "ok" ? `It works (${connection.methods.length} methods).` : `It isn't working yet: ${connection.error}`;
+		await this.#notify(proposal.proposedBy.id, `${by} added the connection you proposed, "${connection.label}" (${connection.title}). ${status} Ask for access with request_access("${connection.label}") if you need it.`).catch(() => {});
+		return connection;
+	}
+
+	async declineProposal(id: string, by: string) {
+		const proposal = await this.connections.decline(id, by);
+		await this.#notify(proposal.proposedBy.id, `${by} declined the connection you proposed ("${proposal.label}").`).catch(() => {});
+		return proposal;
+	}
+
 	async requestAccess(holder: Holder, gatekeeper: string, resource: string, reason: string, methods?: string[]) {
 		const conn = GATEKEEPERS[gatekeeper] ? undefined : await this.connections.get(gatekeeper);
 		const gk = GATEKEEPERS[gatekeeper] ?? (conn && this.connections.gatekeeper(conn));

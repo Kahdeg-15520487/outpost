@@ -279,6 +279,8 @@ Trust:
 ]
 ```
 
+**Agents can propose connections.** Ask in a chat ("connect us to Linear") and the agent finds the endpoint and drafts it with `propose_connection`: the MCP URL or OpenAPI document, how it authenticates, why, and how to get the key, but never the key itself (the tool has no field for one, and agents are told never to ask for keys in chat). The draft waits under Connections (with a sidebar badge, and in Approvals & access). An owner reviews it in a pre-filled form, types the key and connects it, or declines; the agent is told either way and then asks for access with `request_access`.
+
 Agents see their capabilities in `<resources>` (methods, and whether each reads, asks, runs or is refused), look methods up with `gatekeeper_tools`, call them with `gatekeeper_call`, and ask for a connection by its label with `request_access`. A write on a connection queues and returns `{status: "pending", actionId}`: a generic connector can't fake what the service would return. Gadgets call connections the same way: `ctx.gatekeepers["<label>"].<method>(args)`.
 
 ## Test

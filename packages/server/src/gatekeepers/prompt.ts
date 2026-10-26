@@ -1,3 +1,4 @@
+import { Type } from "@earendil-works/pi-ai";
 import type { Grant, Holder } from "../kernel/docs.ts";
 import type { Gatekeeper } from "./catalog.ts";
 
@@ -63,3 +64,27 @@ export function findMethods(grant: Grant, gk: Gatekeeper, opts: { search?: strin
 		.slice(0, 20)
 		.map(([name, m]) => ({ name, effect: m.effect, runs: howItRuns(grant, gk, name), description: m.description, arguments: m.inputSchema ?? m.params }));
 }
+
+/** propose_connection: shared by chats and project agents. The agent drafts; an owner adds the secret and connects. */
+export const PROPOSE_CONNECTION = {
+	description:
+		"Propose a new workspace connection to a third-party service (an MCP server, or a REST API with an OpenAPI document) for a workspace owner to review and connect. You never handle credentials: name the auth scheme only, and say in `setup` how the owner gets the key. Never ask the user to paste keys or tokens into the chat, and never put one in a URL. Find the real endpoint first (documentation, the vendor's MCP page). Returns immediately; you're told when an owner connects or declines it, then ask for access with request_access.",
+	parameters: Type.Object({
+		kind: Type.Union([Type.Literal("mcp"), Type.Literal("openapi")]),
+		label: Type.String({ description: "short name agents and gadgets will use, e.g. linear (a letter, then letters, digits, - or _)" }),
+		title: Type.Optional(Type.String({ description: "display name, e.g. Linear" })),
+		url: Type.Optional(Type.String({ description: "mcp: the server's endpoint URL" })),
+		transport: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("sse")], { description: "mcp: omit to try streamable HTTP, then SSE" })),
+		spec: Type.Optional(Type.String({ description: "openapi: URL of the OpenAPI/Swagger document" })),
+		baseUrl: Type.Optional(Type.String({ description: "openapi: the API's base URL, if the document doesn't name it" })),
+		auth: Type.Object(
+			{
+				kind: Type.Union([Type.Literal("none"), Type.Literal("bearer"), Type.Literal("header"), Type.Literal("basic"), Type.Literal("query")]),
+				name: Type.Optional(Type.String({ description: "header or query parameter name, for kind header/query (e.g. x-api-key)" })),
+			},
+			{ description: "how the service authenticates: bearer token, an API key in a header or the URL, username+password, or none" },
+		),
+		reason: Type.String({ description: "what it's for, for the owner reviewing it" }),
+		setup: Type.Optional(Type.String({ description: "how the owner gets the credential, e.g. 'Linear → Settings → API → Personal API keys'" })),
+	}),
+};

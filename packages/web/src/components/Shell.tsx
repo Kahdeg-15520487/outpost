@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConnectionsPage } from "./Connections";
 import { exportGadget } from "./Transfer";
 import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace } from "../store";
+import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections } from "../store";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
 import { HomePage } from "./Home";
@@ -63,6 +63,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		return () => removeEventListener("focus", loadModels);
 	}, [wsId]);
 	const { docs, gadgets, projects } = useWorkspace(ws?.id);
+	const proposed = useConnections(ws?.id).proposals.filter((p) => p.status === "pending").length;
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
 	const pending = Object.values(docs.approvals.actions).filter((a) => a.status === "pending").length + Object.values(docs.grants.requests).filter((r) => r.status === "pending").length;
 
@@ -148,6 +149,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								<a className={`side-item ${route.page === "connections" ? "on" : ""}`} href={`#/w/${ws.id}/connections`}>
 									<span className="ico">⇄</span>
 									<span className="t">Connections</span>
+									{proposed > 0 && <span className="badge" title="Connections agents proposed, waiting for an owner">{proposed}</span>}
 								</a>
 								<a className={`side-item ${route.page === "settings" ? "on" : ""}`} href={`#/w/${ws.id}/settings`}>
 									<span className="ico">⚙</span>

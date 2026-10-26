@@ -177,6 +177,32 @@ const asked = JSON.parse(out(await asAgent("planner", "request_access", { gateke
 const req = (await ws.harness.snapshot(GrantsDoc, ctx))!.requests[asked.requested];
 check("a project agent's access request is for its role and the methods it named", req?.connection === notesConn.id && req.holder.kind === "project" && req.holder.roles?.[0] === "planner" && req.methods?.join() === "search_notes", req);
 
+// ------------------------------------------------------------------ proposals (agents draft, owners connect)
+console.log("proposals");
+const { createOsExtension } = await import("../src/agent/extension.ts");
+const chatId = await ws.createChat(u, "proposals");
+const proposeTool = createOsExtension(ws).tools!.find((t: any) => t.name === "propose_connection") as any;
+const propose = async (args: any) => {
+	const r = await proposeTool.execute(args, { conversationId: Number(chatId), taskId: 9000 + Math.floor(Math.random() * 1000) }, ctx);
+	return JSON.parse(r.output.map((o: any) => o.text).join(""));
+};
+const paramNames = [...Object.keys(proposeTool.parameters.properties), ...Object.keys(proposeTool.parameters.properties.auth.properties)];
+check("the tool has no field for a credential", !paramNames.some((n) => /token|password|secret|value|key/i.test(n)), paramNames);
+const drafted = await propose({ kind: "openapi", label: "stock", title: "Stock API", spec: `${apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, reason: "check stock levels for the report", setup: "Inventory admin → API keys" });
+const prop = (await ws.connections.proposals()).find((p) => p.id === drafted.proposed);
+check("a chat's agent drafts a connection: it waits for an owner", prop?.status === "pending" && prop.proposedBy.id === chatId && prop.setup === "Inventory admin → API keys" && !(await ws.connections.list()).some((c) => c.label === "stock"), prop);
+check("an existing label is refused, pointing at request_access", /request_access/.test(await fails(propose({ kind: "mcp", label: "notes", url: mcpUrl, auth: { kind: "none" }, reason: "x" }))));
+check("the same label can't be proposed twice", /already proposed/.test(await fails(propose({ kind: "openapi", label: "stock", spec: `${apiOrigin}/openapi.yaml`, auth: { kind: "none" }, reason: "x" }))));
+check("URLs must be http(s)", /http\(s\)/.test(await fails(propose({ kind: "mcp", label: "evil", url: "file:///etc/passwd", auth: { kind: "none" }, reason: "x" }))));
+const accepted = await ws.acceptProposal(prop!.id, { secrets: { value: API_KEY } }, "owner");
+check("the owner adds the key and connects it", accepted.label === "stock" && accepted.status === "ok" && accepted.methods.length === 4 && accepted.trust === "byo", accepted.error);
+check("the proposal records the connection it became", (await ws.connections.proposals()).find((p) => p.id === prop!.id)?.connection === accepted.id);
+check("…and can't be accepted twice", /isn't waiting/.test(await fails(ws.acceptProposal(prop!.id, {}, "owner"))));
+const second = await propose({ kind: "mcp", label: "maybe", url: "https://mcp.example.com/mcp", auth: { kind: "bearer" }, reason: "might help" });
+await ws.declineProposal(second.proposed, "owner");
+check("an owner can decline one", (await ws.connections.proposals()).find((p) => p.id === second.proposed)?.status === "declined");
+await ws.removeConnection(accepted.id);
+
 // ------------------------------------------------------------------ removal, export
 console.log("removal and export");
 void gi;

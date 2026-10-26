@@ -639,7 +639,15 @@ export function createApi(): Router {
 	});
 	r.get("/api/w/:ws/connections", async (req) => {
 		const { ws } = await member(req);
-		return { connections: (await ws.connections.list()).map((c) => ws.connections.describe(c)) };
+		return { connections: (await ws.connections.list()).map((c) => ws.connections.describe(c)), proposals: await ws.connections.proposals() };
+	});
+	r.post("/api/w/:ws/connection-proposals/:id/accept", async (req) => {
+		const { user, ws } = await member(req, "owner");
+		return { connection: ws.connections.describe(await ws.acceptProposal(req.params.id!, await req.body(), user.displayName)) };
+	});
+	r.post("/api/w/:ws/connection-proposals/:id/decline", async (req) => {
+		const { user, ws } = await member(req, "owner");
+		return { proposal: await ws.declineProposal(req.params.id!, user.displayName) };
 	});
 	r.get("/api/w/:ws/connections/:id", async (req) => {
 		const { ws } = await member(req);

@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
-import { api, type AgentSummary, type ConnectionInfo, type Backlog, type Gadget, type PreviewInfo, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
+import { api, type AgentSummary, type ConnectionInfo, type ConnectionProposal, type Backlog, type Gadget, type PreviewInfo, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -329,6 +329,7 @@ export const timeAgo = (t: number) => {
 /** The workspace's connections (MCP servers, REST APIs), refetched when the server says they changed. */
 export function useConnections(ws: string | undefined) {
 	const [list, setList] = useState<ConnectionInfo[]>([]);
+	const [proposals, setProposals] = useState<ConnectionProposal[]>([]);
 	const [tick, setTick] = useState(0);
 	useEffect(() => {
 		if (!ws) return;
@@ -340,12 +341,16 @@ export function useConnections(ws: string | undefined) {
 		if (!ws) return;
 		let live = true;
 		api.get(`/api/w/${ws}/connections`).then(
-			(r) => live && setList(r.connections),
+			(r) => {
+				if (!live) return;
+				setList(r.connections);
+				setProposals(r.proposals ?? []);
+			},
 			() => {},
 		);
 		return () => {
 			live = false;
 		};
 	}, [ws, tick]);
-	return { connections: list, reload: () => setTick((t) => t + 1) };
+	return { connections: list, proposals, reload: () => setTick((t) => t + 1) };
 }

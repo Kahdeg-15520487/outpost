@@ -188,3 +188,30 @@ export function boundSchema(schema: unknown, max = 12_000): Record<string, any> 
 }
 
 export const truncateText = (s: string, n = 60_000) => (s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s);
+
+/**
+ * A connection an agent drafted for an owner to add: everything but the secret. Agents never create
+ * connections; an owner reviews the proposal, types the key, and connects it.
+ */
+export type ConnectionProposal = {
+	id: string;
+	kind: ConnectorKind;
+	label: string;
+	title?: string;
+	url?: string;
+	transport?: "http" | "sse";
+	spec?: string;
+	baseUrl?: string;
+	auth: ConnectionAuth;
+	/** Why the agent wants it. */
+	reason: string;
+	/** How the owner gets the credential (e.g. "Settings → API → New key"). */
+	setup?: string;
+	proposedBy: { kind: "conversation"; id: string; name: string };
+	status: "pending" | "accepted" | "declined";
+	/** The connection created from it. */
+	connection?: string;
+	decidedBy?: string;
+	decidedAt?: number;
+	createdAt: number;
+};

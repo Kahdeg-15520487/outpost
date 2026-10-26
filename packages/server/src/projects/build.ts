@@ -117,13 +117,15 @@ export class BuildScheduler {
 			if (!b.build.paused) {
 				// Assign ready tasks to free developers.
 				const holding = (key: string) => tasks.some((t) => t.assignee === key && (t.status === "doing" || t.status === "review" || t.status === "blocked"));
-				const activeAreas = new Set(tasks.filter((t) => t.status === "doing" && t.area).map((t) => t.area!));
+				// Parallel tasks in overlapping areas (one path inside the other) edit the same files and conflict:
+				// don't run them at the same time. Tasks pinned to a developer still go to them.
+				const activeAreas = tasks.filter((t) => (t.status === "doing" || t.status === "review") && t.area).map((t) => t.area!);
 				for (const dev of devs) {
 					if (holding(dev.key)) continue;
 					// Tasks pinned (by the lead or the user) to another developer wait for them.
 					// Pending items (drafted from feedback, or added after approval) wait for the user's approval.
 					const ready = tasks.filter((t) => t.status === "todo" && !isPending(b, t) && (!t.assignee || t.assignee === dev.key || !live(state.agents[t.assignee])) && depsDone(b, t));
-					const pick = ready.find((t) => t.assignee === dev.key) ?? ready.find((t) => !t.area || !activeAreas.has(t.area)) ?? ready[0];
+					const pick = ready.find((t) => t.assignee === dev.key) ?? ready.find((t) => !t.area || !activeAreas.some((a) => areasOverlap(a, t.area!)));
 					if (!pick) continue;
 					pick.status = "doing";
 					pick.assignee = dev.key;
@@ -132,7 +134,7 @@ export class BuildScheduler {
 					pick.nudges = 0;
 					pick.updatedAt = Date.now();
 					pushHistory(pick, "pi-os", `Assigned to ${dev.name}`);
-					if (pick.area) activeAreas.add(pick.area);
+					if (pick.area) activeAreas.push(pick.area);
 					changed = true;
 					acts.push({ kind: "brief", task: plain(pick), agent: dev.key });
 				}
@@ -217,6 +219,7 @@ export class BuildScheduler {
 			deps.length ? `\nBuilt on (already merged): ${deps.map((d) => `${d.id} ${d.title}`).join("; ")}.` : "",
 			prior.length ? `\nEarlier on this task:\n${prior.map((h) => `- ${h.by}: ${h.text}`).join("\n")}` : "",
 			context ? `\n\n## Context from main\n${context}` : "",
+			t.area ? `\n\n**Scope:** stay inside \`${t.area}\`; other developers work in parallel on other areas. If you must change something outside it, keep it minimal and say so in task_done's summary. Never edit pi-os's generated files (docs/backlog.md, docs/retrospectives/).` : "",
 			`\nYour worktree is synced with main. Read the design and decision records that matter, implement the task in \`app/\`, and run the tests. When it's complete, call **task_done** with a short summary: pi-os commits your branch, has it reviewed and merges it. If you can't finish it, call **task_blocked** with what you need. Don't publish task work yourself.`,
 		].join("");
 		await this.m.deliver(projectId, dev.key, { from: "pi-os", fromKey: "pi-os", text, kind: "message" }, `assign:${t.id}:${t.attempt ?? 1}`);
@@ -561,6 +564,21 @@ export class BuildScheduler {
 		await this.m.log(projectId, { at: Date.now(), kind: "user", text: `${by} ${paused ? "paused" : "resumed"} the build` });
 		if (!paused) this.kick(projectId, 50);
 	}
+}
+
+/**
+ * Whether two task areas touch the same files: any path of one equals, or contains, a path of the other
+ * ("app/src/sim" and "app/src/sim/state.js"). Areas may list several paths ("app/styles, app/src/ui").
+ */
+export function areasOverlap(a: string, b: string): boolean {
+	const paths = (s: string) =>
+		s
+			.split(/[,;\s]+/)
+			.map((p) => p.trim().replace(/^\.\//, "").replace(/\/+$/, ""))
+			.filter(Boolean);
+	const pa = paths(a);
+	const pb = paths(b);
+	return pa.some((x) => pb.some((y) => x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)));
 }
 
 /** A check result as stored on a task (documents reject undefined fields). */

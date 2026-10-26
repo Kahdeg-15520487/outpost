@@ -12,7 +12,7 @@ import { join } from "node:path";
 // A free port right now starts the range. Chosen before src/config.ts is imported (it reads the env),
 // hence the dynamic imports below.
 const start = await freePort();
-process.env.PI_OS_PREVIEW_PORTS = `${start}-${start + 3}`;
+process.env.PI_OS_PREVIEW_PORTS = `${start}-${start + 9}`;
 process.env.PI_OS_PREVIEW_BIND = "127.0.0.1";
 
 const { config } = await import("../src/config.ts");
@@ -57,7 +57,9 @@ check("preview.ports: the log says where it is", /public preview on http:\/\/127
 
 repos.set("p2", fakeProject("p2", "two"));
 const two = await previews.start("p2", "test");
-check("preview.ports: a second project takes the next port", two.port === start + 1, [one.port, two.port]);
+// Not necessarily start + 1: on Windows the OS hands out loopback ports sequentially, so the first
+// dev server's own port can land inside this test range. What matters: another port, from the range.
+check("preview.ports: a second project takes another port from the range", !!two.port && two.port !== one.port && two.port > start && two.port <= start + 9, [one.port, two.port]);
 check("preview.ports: both run at once", (await fetch(`http://127.0.0.1:${two.port}/`).then((r) => r.text())) === "hello from two\n");
 
 await previews.stop("p1", true);
@@ -68,7 +70,7 @@ const gone = await fetch(`http://127.0.0.1:${one.port}/`).then(
 check("preview.ports: stopping closes the public port", gone === "refused", gone);
 check("preview.ports: the other preview is untouched", (await fetch(`http://127.0.0.1:${two.port}/`).then((r) => r.text())) === "hello from two\n");
 
-check("preview.ports: parsed from the env", config.preview.ports?.[0] === start && config.preview.ports?.[1] === start + 3, config.preview.ports);
+check("preview.ports: parsed from the env", config.preview.ports?.[0] === start && config.preview.ports?.[1] === start + 9, config.preview.ports);
 
 previews.stopAll();
 await finish();

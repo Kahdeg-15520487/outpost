@@ -127,6 +127,8 @@ The **Backlog** tab is a Kanban board (To do / In progress / Review / Done) of t
 
 **Quality gates in the build.** Developer briefs inline the design sections and decision records the Planner named for each task, what dependencies delivered, and the last retrospective's actions. `task_done` runs the project's `test` command (`.pios/project.json`) on the submitted commit; failing work goes back to the developer. The reviewer approves only by confirming the **definition of done** (pi-os defaults plus the project's `definitionOfDone`). If `main` moved since the submission, pi-os tests the merge result before moving `main`. The task panel shows the checks with their output and the confirmed checklist. When a build finishes, pi-os writes `docs/retrospectives/NNNN-date.md` with its facts and the Lead adds lessons (Overview → Retrospective).
 
+**Fewer merge conflicts.** pi-os's generated files (`docs/backlog.md`, `docs/retrospectives/`) take `main`'s version on every merge; repositories use LF line endings and a repo-local "pi-os agents" git identity, so agents' own git commands behave the same on every machine; tasks with overlapping areas (one path inside the other) don't run in parallel.
+
 **Questions and readiness.** An agent's question is *blocking* (it waits for you) or *non-blocking* (it states its assumption and carries on). While a blocking question is open, nothing can be approved to build. Answer, dismiss, or re-flag questions on the Overview tab.
 
 **Feedback.** The App tab's Feedback panel sends your feedback on the running app to the Planner as FB-n, tied to the version you saw. The Planner drafts PBIs and tasks for it. They, and anything agents add after you approved the backlog, wait as **pending** until you approve them on the Backlog tab. You can also make a PBI from feedback yourself, or decline it.
@@ -269,6 +271,7 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | `transfer` | export/import of blueprints and gadgets between two running instances (code, data, visibility, permissions, validation, version and capability checks) |
 | `home` | the workspace homepage: runs recorded while nobody watches, the per-user "seen" boundary, a second visit reporting only what is new, summaries skipped on the demo model, non-members refused |
 | `quality` | M2 document gates, story-style briefs, tests before review and before merge (incl. merge results when main moved), definition of done, retrospective, restart resume |
+| `conflicts` | generated files never conflict, LF line endings and repo identity (new and older repos), real conflicts still reported, overlapping areas not run in parallel |
 | `gates` | blocking and non-blocking questions, readiness, feedback → pending items → approval, make-PBI, decline/reopen |
 | `build` | M4 scheduler (assignment, dependencies, review, changes, merge, roll-up, pause) and M5 preview (starts after a merge, restarts on the next, kills the old dev server, stop) |
 | `preview` | `preview.ports` (the container case): the browser port comes from the range, the app stays on loopback, two projects run side by side, stopping frees the port |

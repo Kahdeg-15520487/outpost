@@ -21,6 +21,32 @@ const IDENTITY = ["-c", "user.name=pi-os agents", "-c", "user.email=agents@pi-os
 
 export class GitError extends Error {}
 
+/** Files pi-os writes on main itself; on every merge main's version wins, so they never conflict. */
+export const isGenerated = (path: string) => path === "docs/backlog.md" || path.startsWith("docs/retrospectives/");
+
+/**
+ * Line endings: LF in the repository whatever each machine's git does (Git for Windows defaults to
+ * core.autocrlf=true, which agents' own git commands would otherwise apply, flipping files between
+ * CRLF and LF and making merges conflict in files nobody edited).
+ */
+export const GITATTRIBUTES = `# Written by pi-os: LF line endings in the repository, whatever each machine's git config says.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.wav binary
+*.zip binary
+`;
+
 export function git(cwd: string, args: string[], opts: { input?: string; maxBuffer?: number } = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = execFile("git", [...IDENTITY, ...args], { cwd, maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) => {
@@ -68,7 +94,9 @@ export class ProjectRepo {
 		mkdirSync(this.attachmentsDir, { recursive: true });
 		if (existsSync(join(this.main, ".git"))) return;
 		await git(this.main, ["init", "-q", "-b", "main"]);
+		await this.#configure();
 		const files: Record<string, string> = {
+			".gitattributes": GITATTRIBUTES,
 			"README.md": `# ${name}\n\n${goal.trim()}\n\n## Layout\n\n- \`app/\` — the application: everything it needs to build and run.\n- \`docs/\` — requirements, design, backlog, decision records (\`docs/decisions/\`), wireframes and throwaway prototypes.\n- \`.pios/project.json\` — how pi-os installs, tests and runs the app.\n`,
 			".gitignore": "node_modules/\ndist/\nbuild/\n.env\n.env.*\n*.log\n.DS_Store\n",
 			"app/.gitkeep": "",
@@ -82,6 +110,66 @@ export class ProjectRepo {
 		}
 		await git(this.main, ["add", "-A"]);
 		await git(this.main, ["commit", "-q", "-m", "Project created"]);
+	}
+
+	/**
+	 * Repo-local git settings shared by main and every worktree, so agents' own git commands behave like
+	 * pi-os's: no CRLF conversion, and commits authored by "pi-os agents" (not whoever's global git
+	 * identity happens to be on the machine).
+	 */
+	async #configure() {
+		const want: [string, string][] = [
+			["core.autocrlf", "false"],
+			["user.name", "pi-os agents"],
+			["user.email", "agents@pi-os.local"],
+		];
+		for (const [k, v] of want) if ((await git(this.main, ["config", "--local", "--get", k]).catch(() => "")).trim() !== v) await git(this.main, ["config", "--local", k, v]);
+	}
+
+	/**
+	 * Bring an existing project up to date with pi-os's repository setup (repo-local config, and a
+	 * .gitattributes with LF endings). The one-off renormalise commit only happens when main's checkout
+	 * is clean, so it never sweeps up uncommitted work.
+	 */
+	ensureSetup(): Promise<void> {
+		return withLock(this.projectId, async () => {
+			if (!existsSync(join(this.main, ".git"))) return;
+			await this.#configure();
+			if (existsSync(join(this.main, ".gitattributes"))) return;
+			const clean = !(await git(this.main, ["status", "--porcelain"])).trim();
+			writeFileSync(join(this.main, ".gitattributes"), GITATTRIBUTES);
+			await git(this.main, ["add", "--", ".gitattributes"]);
+			if (clean) await git(this.main, ["add", "--renormalize", "."]);
+			await git(this.main, ["commit", "-q", "-m", clean ? "pi-os: LF line endings (.gitattributes) and renormalise" : "pi-os: LF line endings (.gitattributes)"]);
+		});
+	}
+
+	/**
+	 * Merge `ref` into the checkout at `dir`. Conflicts in pi-os's generated files resolve to main's
+	 * version (`mainSide`: which side of this merge main is). Returns the other conflicting files, with
+	 * the merge left in progress for the caller to abort; [] when the merge is done and committed.
+	 */
+	async #merge(dir: string, ref: string, mainSide: "ours" | "theirs", message?: string): Promise<string[]> {
+		try {
+			await git(dir, ["merge", "-q", "--no-edit", ...(message ? ["--no-ff", "-m", message] : []), ref]);
+			return [];
+		} catch (e) {
+			const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim().split("\n").filter(Boolean);
+			if (!conflicted.length) return [(e as Error).message.split("\n")[0]!];
+			for (const f of conflicted.filter(isGenerated)) {
+				// Take main's side; if main deleted it, delete it here too.
+				await git(dir, ["checkout", `--${mainSide}`, "--", f]).then(
+					() => git(dir, ["add", "--", f]),
+					() => git(dir, ["rm", "-q", "--", f]),
+				);
+			}
+			const rest = conflicted.filter((f) => !isGenerated(f));
+			if (!rest.length) {
+				await git(dir, ["commit", "-q", "--no-edit"]);
+				return [];
+			}
+			return rest;
+		}
 	}
 
 	/** The agent's own worktree on its own branch, created from the current `main` on first use. */
@@ -104,12 +192,10 @@ export class ProjectRepo {
 			await git(dir, ["add", "-A"]);
 			const staged = (await git(dir, ["diff", "--cached", "--name-only"])).trim();
 			if (staged) await git(dir, ["commit", "-q", "-m", message]);
-			try {
-				await git(dir, ["merge", "-q", "--no-edit", "main"]);
-			} catch (e) {
-				const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+			const conflicts = await this.#merge(dir, "main", "theirs");
+			if (conflicts.length) {
 				await git(dir, ["merge", "--abort"]).catch(() => {});
-				return { merged: false, files: [], conflict: `Merging main into your branch conflicts in: ${conflicted || (e as Error).message}. Run \`git merge main\` in your worktree, resolve the conflicts, commit, and publish again.` };
+				return { merged: false, files: [], conflict: `Merging main into your branch conflicts in: ${conflicts.join(", ")}. Run \`git merge main\` in your worktree, resolve the conflicts (for docs/backlog.md and docs/retrospectives/ take main's version), commit, and publish again.` };
 			}
 			const ahead = (await git(this.main, ["rev-list", "--count", `main..${this.branch(agentKey)}`])).trim();
 			if (ahead === "0") return { merged: false, files: [] };
@@ -129,12 +215,10 @@ export class ProjectRepo {
 		const dir = await this.ensureWorktree(agentKey);
 		await git(dir, ["add", "-A"]);
 		if ((await git(dir, ["diff", "--cached", "--name-only"])).trim()) await git(dir, ["commit", "-q", "-m", "Work in progress"]);
-		try {
-			return (await git(dir, ["merge", "--no-edit", "main"])).trim() || "Up to date with main.";
-		} catch (e) {
-			const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
-			return `Conflicts in: ${conflicted}. Resolve them in your worktree and commit. (${(e as Error).message.split("\n")[0]})`;
-		}
+		const before = (await git(dir, ["rev-parse", "HEAD"])).trim();
+		const conflicts = await this.#merge(dir, "main", "theirs");
+		if (conflicts.length) return `Conflicts in: ${conflicts.join(", ")}. Resolve them in your worktree and commit (for docs/backlog.md and docs/retrospectives/ take main's version).`;
+		return (await git(dir, ["rev-parse", "HEAD"])).trim() === before ? "Up to date with main." : "Merged the latest main into your branch.";
 	}
 
 	/**
@@ -147,12 +231,10 @@ export class ProjectRepo {
 			const dir = await this.ensureWorktree(agentKey);
 			await git(dir, ["add", "-A"]);
 			if ((await git(dir, ["diff", "--cached", "--name-only"])).trim()) await git(dir, ["commit", "-q", "-m", message]);
-			try {
-				await git(dir, ["merge", "-q", "--no-edit", "main"]);
-			} catch (e) {
-				const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+			const conflicts = await this.#merge(dir, "main", "theirs");
+			if (conflicts.length) {
 				await git(dir, ["merge", "--abort"]).catch(() => {});
-				return { files: [], conflict: `Merging the latest main into your branch conflicts in: ${conflicted || (e as Error).message}. Run \`git merge main\` in your worktree, resolve the conflicts, commit, and call task_done again.` };
+				return { files: [], conflict: `Merging the latest main into your branch conflicts in: ${conflicts.join(", ")}. Run \`git merge main\` in your worktree, resolve the conflicts (for docs/backlog.md and docs/retrospectives/ take main's version), commit, and call task_done again.` };
 			}
 			const commit = (await git(dir, ["rev-parse", "HEAD"])).trim();
 			const files = (await git(this.main, ["diff", "--name-only", `main...${commit}`])).trim().split("\n").filter(Boolean);
@@ -165,12 +247,10 @@ export class ProjectRepo {
 		return withLock(this.projectId, async () => {
 			const files = (await git(this.main, ["diff", "--name-only", `main...${commit}`])).trim().split("\n").filter(Boolean);
 			if ((await git(this.main, ["rev-list", "--count", `main..${commit}`])).trim() === "0") return { commit: await this.head(), files: [] };
-			try {
-				await git(this.main, ["merge", "-q", "--no-ff", "-m", message, commit]);
-			} catch (e) {
-				const conflicted = (await git(this.main, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+			const conflicts = await this.#merge(this.main, commit, "ours", message);
+			if (conflicts.length) {
 				await git(this.main, ["merge", "--abort"]).catch(() => {});
-				return { files: [], conflict: conflicted || (e as Error).message.split("\n")[0] };
+				return { files: [], conflict: conflicts.join(", ") };
 			}
 			return { commit: await this.head(), files };
 		});
@@ -255,12 +335,10 @@ export class ProjectRepo {
 				await git(dir, ["clean", "-fdq"]);
 				await git(dir, ["checkout", "-q", "--detach", base]);
 			}
-			try {
-				await git(dir, ["merge", "-q", "--no-ff", "-m", message, commit]);
-			} catch (e) {
-				const conflicted = (await git(dir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).trim();
+			const conflicts = await this.#merge(dir, commit, "ours", message);
+			if (conflicts.length) {
 				await git(dir, ["merge", "--abort"]).catch(() => {});
-				return { conflict: conflicted || (e as Error).message.split("\n")[0] };
+				return { conflict: conflicts.join(", ") };
 			}
 			return { sha: (await git(dir, ["rev-parse", "HEAD"])).trim(), base };
 		});

@@ -110,7 +110,7 @@ stateDiagram-v2
 - **Ready** means status *todo*, not pending approval, with every dependency *done*.
 - **Pending** items wait for you: anything drafted from feedback, and anything an agent adds after you approved the backlog. pi-os assigns none of them until you approve them on the Backlog tab. A dependency on a PBI or feature waits for all of it.
 - **One task per developer.** A developer holding a task in *doing*, *review* or *blocked* gets no new work. The task stays theirs through review, so review notes go back to the person who wrote the code.
-- **Areas spread the work.** Among ready tasks, a developer gets one whose area nobody else is working in, to keep parallel edits from colliding.
+- **Overlapping areas never run in parallel.** A task waits while another task in an overlapping area is in progress or in review (one path inside the other, e.g. `app/src/sim` and `app/src/sim/state.js`; areas may list several paths). Tasks pinned to a developer still go to them. Briefs tell developers to stay inside their area.
 - **Pinned tasks wait for their person.** A task you or the Lead assigned to a developer waits for that developer.
 - **Briefs carry context (story-style).** pi-os syncs the developer's worktree with `main`, then sends the task, its PBI and acceptance criteria, earlier review notes, and a *Context from main* section: the design sections and decision records the Planner named for the task (`context: ["docs/design.md#Data model", …]`, inlined), what the dependencies delivered, the decision index, the design's outline, and the actions from the last retrospective.
 - **Tests before review.** `task_done` triggers the project's `test` command on the submitted commit, in a separate checkout. Failing work goes straight back to the developer with the output; only passing work (or a project without tests) reaches the reviewer.
@@ -139,6 +139,8 @@ gitGraph
 - **Task work** goes through `task_done`. pi-os commits the worktree and merges the latest `main` into the branch. A conflict goes back to the developer to resolve. The resulting commit is what the reviewer gets, checked out detached in the reviewer's worktree, and what pi-os merges (`--no-ff`) once it's approved. If `main` moved and the merge now conflicts, the task returns to the developer.
 - **Non-task work** (requirements, design, decision records, the skeleton) goes through `publish`: commit, merge `main` in, merge into `main`. It skips review today.
 - `main`'s first-parent history reads as one entry per task or publish, which the Repo tab shows.
+- **Generated files never conflict.** pi-os writes `docs/backlog.md` and `docs/retrospectives/` on `main` itself; on every merge (sync, publish, hand-in, merge into `main`) `main`'s version of them wins.
+- **The repository is the same on every machine.** pi-os creates it with `.gitattributes` (`* text=auto eol=lf`) and repo-local config: no CRLF conversion and the "pi-os agents" identity, so agents' own `git` commands behave like pi-os's whatever the machine's git defaults are (Git for Windows converts line endings by default, which once flipped whole files between CRLF and LF and made merges conflict in files nobody edited). Older projects get this setup when pi-os starts.
 - Merges that touch `app/` or `.pios/` restart the preview a few seconds later, from a separate checkout of `main`.
 
 ## 8. Quality controls

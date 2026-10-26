@@ -101,6 +101,10 @@ export class ProjectManager {
 				const instructions = agentInstructions({ role: a.role, title: titleFor(a.role), key: a.key, name: a.name, project: p, brief: a.brief, attachmentsDir: this.repo(p.id).attachmentsDir });
 				await c?.configure({ instructions }, ctx).catch((e) => console.warn(`[project ${p.id}] refresh ${a.key}:`, e?.message ?? e));
 			}
+			// Repository setup from newer pi-os versions (LF line endings, repo-local identity).
+			await this.repo(p.id)
+				.ensureSetup()
+				.catch((e) => console.warn(`[project ${p.id}] repo setup:`, e?.message ?? e));
 			// Resume the build: re-send briefs that never went out, assign what's ready.
 			this.build.kick(p.id, 3000);
 			// A dev server a killed pi-os left behind, then the preview itself if it was running.

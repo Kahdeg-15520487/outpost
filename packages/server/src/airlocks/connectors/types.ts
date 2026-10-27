@@ -13,7 +13,7 @@ import { EncryptedFileStore } from "../../kernel/credentials.ts";
  * admins declare them in outpost.config.json ("vetted": may reach private hosts, run local commands,
  * and have writes auto-approved).
  */
-export type ConnectorKind = "mcp" | "openapi" | "azure-devops";
+export type ConnectorKind = "mcp" | "openapi" | "azure-devops" | "github-repo";
 
 export type ConnectionAuth =
 	| { kind: "none" }
@@ -72,9 +72,9 @@ export type Connection = {
 	baseUrl?: string;
 	/** openapi: the base URL in use (the override, or the document's server), set on discovery. */
 	apiBase?: string;
-	/** openapi: parameter values outpost always sends (e.g. organization=rosen-nxt); hidden from agents, who can't change them. azure-devops: organization, and optionally project. */
+	/** openapi: parameter values outpost always sends (e.g. organization=rosen-nxt); hidden from agents, who can't change them. azure-devops: organization, and optionally project. github-repo: repository (owner/repo). */
 	params?: Record<string, string>;
-	/** Who the service says the connection acts as (azure-devops), set on discovery. */
+	/** Who the service says the connection acts as (azure-devops, github-repo), set on discovery. */
 	account?: string;
 	auth: ConnectionAuth;
 	/** Methods the owner marks as reads (no approval), overriding the server or the verb. */
@@ -90,6 +90,7 @@ export type Connection = {
 export const CONNECTOR_INFO: Record<ConnectorKind, { title: string; icon: string; description: string }> = {
 	mcp: { title: "MCP server", icon: "🔌", description: "Any Model Context Protocol server. Its tools become methods; tools the server marks read-only run, the rest queue for approval." },
 	openapi: { title: "REST API (OpenAPI)", icon: "🧾", description: "Any HTTP API with an OpenAPI 3 or Swagger 2 document. GET operations run; everything else queues for approval." },
+	"github-repo": { title: "GitHub repository", icon: "🐙", description: "One GitHub.com repository: metadata, issues and files, plus issues and comments with approval. Uses a fine-grained personal access token." },
 	"azure-devops": { title: "Azure DevOps", icon: "🔷", description: "Boards, repos, pull requests, pipelines and wiki of one organization (optionally one project), with a personal access token." },
 };
 

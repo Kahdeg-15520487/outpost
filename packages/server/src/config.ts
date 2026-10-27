@@ -21,7 +21,7 @@ export type ProviderConfig = {
 export type ConnectorConfig = {
 	/** Stable id; also the default label agents use. */
 	id: string;
-	kind: "mcp" | "openapi" | "azure-devops";
+	kind: "mcp" | "openapi" | "azure-devops" | "github-repo";
 	label?: string;
 	title?: string;
 	icon?: string;
@@ -35,7 +35,7 @@ export type ConnectorConfig = {
 	/** openapi: URL of the document, and optionally the API's base URL. */
 	spec?: string;
 	baseUrl?: string;
-	/** openapi: fixed parameters. azure-devops: { organization, project? }. */
+	/** openapi: fixed parameters. azure-devops: { organization, project? }. github-repo: { repository }. */
 	params?: Record<string, string>;
 	auth?: { kind: "none" } | { kind: "bearer"; token: string } | { kind: "header"; name: string; value: string } | { kind: "basic"; username: string; password: string } | { kind: "query"; name: string; value: string };
 	/** Methods to treat as reads (no approval). */

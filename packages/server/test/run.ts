@@ -17,6 +17,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "conflicts", file: "conflicts.ts", what: "generated files, line endings, repo identity, overlapping areas" },
 	{ name: "connectors", file: "connectors.ts", what: "MCP servers and OpenAPI REST APIs as Airlocks: discovery, secrets, capabilities, approvals" },
 	{ name: "azure-devops", file: "azure-devops.ts", what: "the Azure DevOps connector against a stand-in for dev.azure.com" },
+	{ name: "github", file: "github.ts", what: "the GitHub repository connector against a stand-in for api.github.com" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
 	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
 	{ name: "transfer", file: "transfer.ts", what: "export/import of blueprints and modules between two instances" },

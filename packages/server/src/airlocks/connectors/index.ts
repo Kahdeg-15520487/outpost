@@ -10,6 +10,7 @@ import { assertPublicUrl, guardedFetch } from "../net.ts";
 import { McpPool } from "./mcp.ts";
 import { baseUrlOf, invoke, loadSpecText, operationsOf, parseSpec } from "./openapi.ts";
 import { azdoCall, azdoCheck, azdoMethods, azdoOrgExists, azdoSimulate } from "./azure-devops.ts";
+import { githubCall, githubCheck, githubMethods, githubRepository } from "./github.ts";
 import { CONNECTOR_INFO, type Connection, type ConnectionAuth, type ConnectionProposal, type ConnectionSecrets, type ConnMethod, connectionSecrets, paramHints, redact, requiredSecretNames, secretNames } from "./types.ts";
 
 export * from "./types.ts";
@@ -187,6 +188,14 @@ export class Connections {
 			if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(c.params?.organization ?? "")) throw new HttpError(400, "Azure DevOps needs the organization's name (dev.azure.com/<organization>)");
 			if (c.auth.kind !== "basic" && c.auth.kind !== "bearer") throw new HttpError(400, "Azure DevOps authenticates with a personal access token");
 		}
+		if (c.kind === "github-repo") {
+			try {
+				githubRepository(c.params?.repository ?? "");
+			} catch (e) {
+				throw new HttpError(400, (e as Error).message);
+			}
+			if (c.auth.kind !== "bearer") throw new HttpError(400, "GitHub authenticates with a personal access token");
+		}
 		if (c.baseUrl && !/^https?:\/\//i.test(c.baseUrl)) throw new HttpError(400, "The base URL must be http(s)");
 	}
 
@@ -208,8 +217,8 @@ export class Connections {
 			transport: kind === "mcp" ? (input.transport === "sse" ? "sse" : input.transport === "http" ? "http" : undefined) : undefined,
 			spec: kind === "openapi" ? (input.specText?.trim() ? "inline" : input.spec?.trim()) : undefined,
 			baseUrl: input.baseUrl?.trim() || undefined,
-			params: kind === "openapi" || kind === "azure-devops" ? normalizeParams(input.params) : undefined,
-			auth: kind === "azure-devops" ? { kind: "basic" as const } : normalizeAuth(input.auth),
+			params: kind === "openapi" || kind === "azure-devops" || kind === "github-repo" ? canonicalParams(kind, normalizeParams(input.params)) : undefined,
+			auth: kind === "azure-devops" ? { kind: "basic" as const } : kind === "github-repo" ? { kind: "bearer" as const } : normalizeAuth(input.auth),
 			reads: input.reads?.length ? [...new Set(input.reads)] : undefined,
 			methods: [],
 			status: "pending" as const,
@@ -244,8 +253,8 @@ export class Connections {
 			...(current.kind === "mcp" && input.transport !== undefined ? { transport: input.transport === "sse" || input.transport === "http" ? input.transport : undefined } : {}),
 			...(current.kind === "openapi" && input.specText?.trim() ? { spec: "inline" } : current.kind === "openapi" && input.spec !== undefined ? { spec: input.spec.trim() } : {}),
 			...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl.trim() || undefined } : {}),
-			...((current.kind === "openapi" || current.kind === "azure-devops") && input.params !== undefined ? { params: normalizeParams(input.params) } : {}),
-			...(input.auth && current.kind !== "azure-devops" ? { auth: normalizeAuth(input.auth) } : {}),
+			...((current.kind === "openapi" || current.kind === "azure-devops" || current.kind === "github-repo") && input.params !== undefined ? { params: canonicalParams(current.kind, normalizeParams(input.params)) } : {}),
+			...(input.auth && current.kind !== "azure-devops" && current.kind !== "github-repo" ? { auth: normalizeAuth(input.auth) } : {}),
 			...(input.reads !== undefined ? { reads: input.reads.length ? [...new Set(input.reads)] : undefined } : {}),
 		});
 		this.#validate(next);
@@ -312,6 +321,10 @@ export class Connections {
 				const me = await azdoCheck(conn, secrets);
 				return { methods: azdoMethods(conn), account: me.name, apiBase: `https://dev.azure.com/${conn.params!.organization}${conn.params?.project ? `/${conn.params.project}` : ""}`, status: "ok", refreshedAt: Date.now() };
 			}
+			if (conn.kind === "github-repo") {
+				const me = await githubCheck(conn, secrets);
+				return { methods: githubMethods(conn), account: me.name, apiBase: me.url, status: "ok", refreshedAt: Date.now() };
+			}
 			const doc = await parseSpec(await loadSpecText(conn, this.#specFile(conn.id), secrets));
 			const apiBase = baseUrlOf(doc, conn);
 			await assertPublicUrl(apiBase, { allowPrivate: conn.source === "config" });
@@ -332,6 +345,7 @@ export class Connections {
 		const secrets = this.#secrets(conn);
 		if (conn.kind === "mcp") return pool.call(this.#key(conn), conn, secrets, name, args);
 		if (conn.kind === "azure-devops") return azdoCall(conn, secrets, name, args);
+		if (conn.kind === "github-repo") return githubCall(conn, secrets, name, args);
 		if (!conn.apiBase) throw new Error(`${conn.label} has no base URL yet${conn.error ? `: ${conn.error}` : ""}`);
 		return invoke(conn, conn.apiBase, m, args ?? {}, secrets);
 	}
@@ -404,7 +418,14 @@ export class Connections {
 		const spec = kind === "openapi" ? http(input.spec, "spec") : undefined;
 		if (kind === "mcp" && !url) throw new Error("An MCP connection needs the server's url");
 		if (kind === "openapi" && !spec) throw new Error("A REST API connection needs the URL of its OpenAPI document (spec)");
-		const params = kind === "openapi" || kind === "azure-devops" ? normalizeParams(input.params) : undefined;
+		let params = kind === "openapi" || kind === "azure-devops" || kind === "github-repo" ? normalizeParams(input.params) : undefined;
+		if (kind === "github-repo") {
+			try {
+				params = canonicalParams(kind, params);
+			} catch (e) {
+				throw new Error((e as Error).message);
+			}
+		}
 		if (kind === "azure-devops") {
 			const org = params?.organization ?? "";
 			if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(org)) throw new Error('Azure DevOps needs params.organization: the organization\'s name (dev.azure.com/<organization>), and optionally params.project');
@@ -416,7 +437,7 @@ export class Connections {
 		} catch (e) {
 			throw new Error((e as Error).message);
 		}
-		if (kind !== "azure-devops") await this.#probe(kind, url, spec);
+		if (kind === "mcp" || kind === "openapi") await this.#probe(kind, url, spec);
 		const proposal: ConnectionProposal = plain({
 			id: newId("cp"),
 			kind,
@@ -427,7 +448,7 @@ export class Connections {
 			spec,
 			baseUrl: http(input.baseUrl, "baseUrl"),
 			params,
-			auth: kind === "azure-devops" ? { kind: "basic" as const } : auth,
+			auth: kind === "azure-devops" ? { kind: "basic" as const } : kind === "github-repo" ? { kind: "bearer" as const } : auth,
 			reason: (input.reason ?? "").trim().slice(0, 1000) || "(no reason given)",
 			setup: input.setup?.trim().slice(0, 1000) || undefined,
 			proposedBy,
@@ -510,6 +531,16 @@ function azdoOverlay(method: string, _args: any, result: any, pending: { method:
 	const match = method === "query_work_items" ? "create_work_item" : method === "list_pull_requests" ? "create_pull_request" : undefined;
 	if (!match) return result;
 	return [...pending.filter((p) => p.method === match).map((p) => p.simulated), ...result];
+}
+
+/** github-repo stores the repository as owner/repo, whatever form (owner/repo or a github.com URL) was typed. */
+function canonicalParams(kind: Connection["kind"], params: Record<string, string> | undefined) {
+	if (kind !== "github-repo") return params;
+	try {
+		return { ...params, repository: githubRepository(params?.repository ?? "") };
+	} catch (e) {
+		throw new HttpError(400, (e as Error).message);
+	}
 }
 
 /** Fixed parameters: string values, sane names, at most 20. */

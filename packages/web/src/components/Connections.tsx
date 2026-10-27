@@ -10,7 +10,14 @@ const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
 	basic: "Username and password",
 	query: "API key in the URL",
 };
-const KIND_LABEL: Record<string, string> = { mcp: "MCP server", openapi: "REST API", "azure-devops": "Azure DevOps" };
+const KIND_LABEL: Record<string, string> = { mcp: "MCP server", openapi: "REST API", "azure-devops": "Azure DevOps", "github-repo": "GitHub" };
+/** Ready-made connectors: the user supplies only their own service settings and a token. */
+const GUIDED = ["github-repo", "azure-devops"];
+const KIND_ICON: Record<string, string> = { mcp: "🔌", openapi: "🧾", "azure-devops": "🔷", "github-repo": "🐙" };
+const GUIDE: Record<string, { token: string; steps: string }> = {
+	"github-repo": { token: "Personal access token", steps: "GitHub → Settings → Developer settings → Fine-grained personal access tokens. Choose only this repository. Grant Contents: Read, and Issues: Read and write if agents should file issues or comment." },
+	"azure-devops": { token: "Personal access token", steps: "Azure DevOps → User settings → Personal access tokens. Grant only the scopes agents need, for example Work Items (Read) and Code (Read); add write scopes only when you want agents to propose changes." },
+};
 const SECRET_LABEL: Record<string, string> = { token: "Token", value: "Key", username: "Username", password: "Password", pat: "Personal access token" };
 
 /** Workspace connections: third-party services (MCP servers, REST APIs) agents and modules can be granted. */
@@ -68,7 +75,7 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 							No connections yet.{" "}
 							{isOwner ? (
 								<>
-									Add an <b>MCP server</b> (its tools become methods) or a <b>REST API</b> with an OpenAPI document (its operations become methods).
+									Connect <b>GitHub</b> or <b>Azure DevOps</b> by filling in your own settings and a token, or add any <b>MCP server</b> or <b>REST API</b> with an OpenAPI document.
 								</>
 							) : (
 								"A workspace owner can add them."
@@ -98,7 +105,9 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 		.map(([k, v]) => `${k}=${v}`)
 		.join(" ");
 	const where =
-		conn.kind === "azure-devops"
+		conn.kind === "github-repo"
+			? `https://github.com/${conn.params?.repository ?? "?"}${conn.account ? `  ·  as ${conn.account}` : ""}`
+			: conn.kind === "azure-devops"
 			? `${conn.apiBase ?? `https://dev.azure.com/${conn.params?.organization ?? "?"}${conn.params?.project ? `/${conn.params.project}` : ""}`}${conn.account ? `  ·  as ${conn.account}` : ""}`
 			: (conn.kind === "mcp" ? (conn.transport === "stdio" ? `$ ${conn.command}` : conn.url) : conn.spec === "inline" ? `pasted document → ${conn.apiBase ?? conn.baseUrl ?? "?"}` : (conn.apiBase ?? conn.spec)) + (fixed ? `  ·  ${fixed}` : "");
 
@@ -163,8 +172,8 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 					{conn.secretsNeeded.length > 0 && (conn.secretsNeeded.every((s) => conn.secretsSet.includes(s)) ? " · set ✓" : " · not set")}
 				</span>
 				{isOwner && (
-					<button className="btn ghost small" disabled={busy} onClick={() => run(() => api.post(`/api/w/${wsId}/connections/${conn.id}/refresh`))}>
-						{busy ? "…" : "Refresh"}
+					<button className="btn ghost small" disabled={busy} title={GUIDED.includes(conn.kind) ? "Checks the token and access without changing anything" : "Discover the service's methods again"} onClick={() => run(() => api.post(`/api/w/${wsId}/connections/${conn.id}/refresh`))}>
+						{busy ? "…" : GUIDED.includes(conn.kind) ? "Test connection" : "Refresh"}
 					</button>
 				)}
 				{editable && (
@@ -231,7 +240,7 @@ function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; 
 	return (
 		<div className="card conn conn-proposal">
 			<div className="row conn-head">
-				<span className="conn-icon">{p.kind === "mcp" ? "🔌" : p.kind === "azure-devops" ? "🔷" : "🧾"}</span>
+				<span className="conn-icon">{KIND_ICON[p.kind]}</span>
 				<div className="grow conn-name">
 					<div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
 						<b>{p.title ?? p.label}</b>
@@ -239,7 +248,7 @@ function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; 
 						<span className="pill">{KIND_LABEL[p.kind]}</span>
 						<span className="pill signal">proposed</span>
 					</div>
-					<div className="mono muted conn-where">{p.kind === "azure-devops" ? `https://dev.azure.com/${p.params?.organization ?? "?"}${p.params?.project ? `/${p.params.project}` : ""}` : (p.url ?? p.spec)}</div>
+					<div className="mono muted conn-where">{p.kind === "github-repo" ? `https://github.com/${p.params?.repository ?? "?"}` : p.kind === "azure-devops" ? `https://dev.azure.com/${p.params?.organization ?? "?"}${p.params?.project ? `/${p.params.project}` : ""}` : (p.url ?? p.spec)}</div>
 				</div>
 				<span className="muted conn-auth">{timeAgo(p.createdAt)}</span>
 			</div>
@@ -273,7 +282,8 @@ function ProposalCard({ ws, p, isOwner, onReview, onChanged }: { ws: Workspace; 
 
 function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?: ConnectionInfo; proposal?: ConnectionProposal; onDone: () => void }) {
 	const from = conn ?? proposal;
-	const [kind, setKind] = useState<"mcp" | "openapi" | "azure-devops">(from?.kind ?? "mcp");
+	const [kind, setKind] = useState<ConnectionInfo["kind"]>(from?.kind ?? "github-repo");
+	const [repository, setRepository] = useState(from?.params?.repository ?? "");
 	const [org, setOrg] = useState(from?.params?.organization ?? "");
 	const [project, setProject] = useState(from?.params?.project ?? "");
 	const [label, setLabel] = useState(from?.label ?? "");
@@ -294,13 +304,16 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 	const [secrets, setSecrets] = useState<Record<string, string>>({});
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
-	const secretFields = kind === "azure-devops" ? ["password"] : authKind === "bearer" ? ["token"] : authKind === "basic" ? ["username", "password"] : authKind === "header" || authKind === "query" ? ["value"] : [];
+	/** A connection saved by this form that isn't working yet: retrying edits it instead of creating a second one. */
+	const [savedId, setSavedId] = useState<string>();
+	const guided = GUIDED.includes(kind);
+	const secretFields = kind === "azure-devops" ? ["password"] : kind === "github-repo" ? ["token"] : authKind === "bearer" ? ["token"] : authKind === "basic" ? ["username", "password"] : authKind === "header" || authKind === "query" ? ["value"] : [];
 
 	const submit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		setErr("");
 		setBusy(true);
-		const auth = kind === "azure-devops" ? { kind: "basic" } : authKind === "header" || authKind === "query" ? { kind: authKind, name: authName } : { kind: authKind };
+		const auth = kind === "azure-devops" ? { kind: "basic" } : kind === "github-repo" ? { kind: "bearer" } : authKind === "header" || authKind === "query" ? { kind: authKind, name: authName } : { kind: authKind };
 		const body: Record<string, unknown> = {
 			kind,
 			label,
@@ -310,14 +323,17 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 			secrets: Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v && secretFields.includes(k))),
 			...(kind === "mcp" ? { url, transport: transport || undefined } : specMode === "paste" ? (specText.trim() ? { specText } : {}) : { spec }),
 			...(kind === "openapi" ? { params: parseParams(params) } : {}),
+			...(kind === "github-repo" ? { params: { repository: repository.trim() } } : {}),
 			...(kind === "azure-devops" ? { params: { organization: org.trim(), ...(project.trim() ? { project: project.trim() } : {}) } } : {}),
 		};
 		try {
-			const r = conn
-				? await api.patch(`/api/w/${wsId}/connections/${conn.id}`, body)
+			const editId = conn?.id ?? savedId;
+			const r = editId
+				? await api.patch(`/api/w/${wsId}/connections/${editId}`, body)
 				: proposal
 					? await api.post(`/api/w/${wsId}/connection-proposals/${proposal.id}/accept`, body)
 					: await api.post(`/api/w/${wsId}/connections`, body);
+			if (r.connection.status === "error") setSavedId(r.connection.id);
 			if (r.connection.status === "error") setErr(`Saved, but it isn't working yet: ${r.connection.error}`);
 			else onDone();
 		} catch (error: any) {
@@ -343,6 +359,11 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 			)}
 			{!conn && !proposal && (
 				<div className="gk-grid conn-kinds">
+					<button type="button" className={`gk ${kind === "github-repo" ? "on" : ""}`} onClick={() => setKind("github-repo")}>
+						<div className="i">🐙</div>
+						<div className="n">GitHub</div>
+						<div className="d">One repository: issues, files and metadata. Filing issues and comments wait for approval.</div>
+					</button>
 					<button type="button" className={`gk ${kind === "mcp" ? "on" : ""}`} onClick={() => setKind("mcp")}>
 						<div className="i">🔌</div>
 						<div className="n">MCP server</div>
@@ -363,12 +384,20 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 			<div className="conn-fields">
 				<label className="label">Label</label>
 				<div>
-					<input className="input mono" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={kind === "azure-devops" ? "ado" : kind === "openapi" ? "inventory" : "linear"} required pattern="[A-Za-z][A-Za-z0-9_\-]{0,39}" />
+					<input className="input mono" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={kind === "github-repo" ? "widgets-repo" : kind === "azure-devops" ? "ado" : kind === "openapi" ? "inventory" : "linear"} required pattern="[A-Za-z][A-Za-z0-9_\-]{0,39}" />
 					<div className="hint">What agents and modules call it: ctx.airlocks["{label || "label"}"]</div>
 				</div>
 				<label className="label">Name</label>
-				<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === "mcp" ? "Linear" : kind === "azure-devops" ? "Azure DevOps" : "Inventory API"} />
-				{kind === "azure-devops" ? (
+				<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === "mcp" ? "Linear" : kind === "github-repo" ? "GitHub: widgets" : kind === "azure-devops" ? "Azure DevOps" : "Inventory API"} />
+				{kind === "github-repo" ? (
+					<>
+						<label className="label">Repository</label>
+						<div>
+							<input className="input mono" value={repository} onChange={(e) => setRepository(e.target.value)} placeholder="owner/repo" required />
+							<div className="hint">owner/repo, or its github.com address. One repository per connection.</div>
+						</div>
+					</>
+				) : kind === "azure-devops" ? (
 					<>
 						<label className="label">Organization</label>
 						<div>
@@ -422,8 +451,8 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 						</div>
 					</>
 				)}
-				{kind !== "azure-devops" && <label className="label">Authentication</label>}
-				<div className="row" style={{ gap: 8, display: kind === "azure-devops" ? "none" : undefined }}>
+				{!guided && <label className="label">Authentication</label>}
+				<div className="row" style={{ gap: 8, display: guided ? "none" : undefined }}>
 					<select className="input grow" value={authKind} onChange={(e) => setAuthKind(e.target.value as any)}>
 						{Object.entries(AUTH_LABEL).map(([k, v]) => (
 							<option key={k} value={k}>
@@ -434,16 +463,22 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 					{(authKind === "header" || authKind === "query") && <input className="input mono grow" value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder={authKind === "header" ? "x-api-key" : "api_key"} required />}
 				</div>
 				{secretFields.map((k) => (
-					<SecretField key={k} name={kind === "azure-devops" ? "pat" : k} isSet={!!conn?.secretsSet.includes(k) && (kind === "azure-devops" || conn.auth.kind === authKind)} value={secrets[k] ?? ""} onChange={(v) => setSecrets((s) => ({ ...s, [k]: v }))} />
+					<SecretField key={k} name={guided ? "pat" : k} isSet={!!conn?.secretsSet.includes(k) && (guided || conn.auth.kind === authKind)} value={secrets[k] ?? ""} onChange={(v) => setSecrets((s) => ({ ...s, [k]: v }))} />
 				))}
 			</div>
+			{guided && (
+				<div className="conn-guide">
+					<b>Getting the token.</b> {GUIDE[kind]?.steps}
+					<div className="muted">Outpost tests it when you connect. Use a token that expires and covers only what you need.</div>
+				</div>
+			)}
 			<div className="muted conn-note">
 				Outpost calls the service as this account for everyone in the workspace. Secrets are stored encrypted on the server and never shown again. Connections added here reach public hosts only, and their writes always need approval; an admin can declare trusted ones in outpost.config.json.
 			</div>
 			{err && <div className="err">{err}</div>}
 			<div className="row" style={{ gap: 8 }}>
 				<button className="btn primary" disabled={busy}>
-					{busy ? "Connecting…" : conn ? "Save and reconnect" : "Connect"}
+					{busy ? "Connecting…" : conn || savedId ? "Save and reconnect" : "Connect"}
 				</button>
 				<button type="button" className="btn ghost" onClick={onDone}>
 					{err.startsWith("Saved") ? "Close" : "Cancel"}

@@ -412,6 +412,44 @@ async function run() {
 		await shot("azure-devops-form");
 		await clickText(".conn-form button", "Cancel");
 
+		// GitHub: the user supplies a repository and a token; a stand-in api.github.com answers.
+		const { createServer } = await import("node:http");
+		const gh = createServer((req, res) => {
+			const json = (status: number, v: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(v));
+			if (req.headers.authorization !== "Bearer ghp_ui_test_token_123456") return json(401, { message: "Bad credentials" });
+			if (req.url === "/user") return json(200, { login: "build-bot" });
+			if (req.url === "/repos/acme/widgets") return json(200, { full_name: "acme/widgets" });
+			json(404, { message: "Not Found" });
+		});
+		await new Promise<void>((r) => gh.listen(0, "127.0.0.1", () => r()));
+		process.env.OUTPOST_GITHUB_URL = `http://127.0.0.1:${(gh.address() as any).port}`;
+		try {
+			await clickText(".page button", "+ Add connection");
+			await page.waitForSelector(".conn-form");
+			await clickText(".conn-form .gk", /GitHub/);
+			check("GitHub: a repository and a personal access token, no auth picker, with how to get the token", await until("github form", async () => {
+				const t = await text(".conn-form");
+				return /Repository/i.test(t) && /Personal access token/i.test(t) && !/Authentication/i.test(t) && /Fine-grained/i.test(t) && /Contents: Read/i.test(t);
+			}), await text(".conn-form"));
+			await shot("github-form");
+			await page.type('.conn-form input[placeholder="widgets-repo"]', "widgets-gh");
+			await page.type('.conn-form input[placeholder="owner/repo"]', "https://github.com/acme/widgets");
+			await page.type(".conn-form input[type=password]", "wrong-token");
+			await clickText(".conn-form button", "Connect");
+			check("a wrong token is explained and nothing half-connects silently", await until("github error", () => text(".conn-form .err").then((t) => /GitHub 401/.test(t) && !t.includes("wrong-token"))), await text(".conn-form .err"));
+			await page.$eval(".conn-form input[type=password]", (i) => (i as HTMLInputElement).select());
+			await page.type(".conn-form input[type=password]", "ghp_ui_test_token_123456");
+			await clickText(".conn-form button", /Save and reconnect|Connect/);
+			check("with a good token it connects and shows who it acts as", await until("github connected", () => page.$$eval(".conn", (cs) => cs.some((c) => /widgets-gh/.test(c.textContent ?? "") && /connected/.test(c.textContent ?? "") && /as build-bot/.test(c.textContent ?? "")))));
+			check("its card offers Test connection, and lists six methods", await until("github card", () => page.$$eval(".conn", (cs) => cs.some((c) => /Test connection/.test(c.textContent ?? "") && /6 methods/.test(c.textContent ?? "") && /GitHub/.test(c.textContent ?? "")))));
+			check("a repository pasted as a URL is shown once, as owner/repo", await page.$$eval(".conn", (cs) => cs.some((c) => /https:\/\/github\.com\/acme\/widgets/.test(c.textContent ?? "") && !/github\.com\/https/.test(c.textContent ?? ""))));
+			await shot("github-connected");
+			check("the API never returns the token", !JSON.stringify(await api("GET", `/api/w/${ws}/connections`)).includes("ghp_ui_test_token_123456"));
+		} finally {
+			gh.close();
+			delete process.env.OUTPOST_GITHUB_URL;
+		}
+
 		const w = await Workspace.get(ws);
 		const firstChat = Object.keys((await w.snapshot()).chats.chats)[0]!;
 		await go(`#/w/${ws}/connections`);

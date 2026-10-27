@@ -4,11 +4,11 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * pi-os reads exactly one configuration file: `pi-os.config.json` in the directory you started it
- * from, or the file named by `PI_OS_CONFIG`. Nothing is read from other tools' config (e.g. ~/.pi).
+ * outpost reads exactly one configuration file: `outpost.config.json` in the directory you started it
+ * from, or the file named by `OUTPOST_CONFIG`. Nothing is read from other tools' config (e.g. ~/.pi).
  *
  * Secret values may be literals or `$VAR` / `${VAR}` references to environment variables, so the
- * file itself can be committed without secrets. See pi-os.config.example.json.
+ * file itself can be committed without secrets. See outpost.config.example.json.
  */
 export type ProviderConfig = {
 	/** API key: a literal, or "$ENV_VAR". */
@@ -43,7 +43,7 @@ export type ConnectorConfig = {
 	/** Offer it only in these workspace ids. Default: every workspace. */
 	workspaces?: string[];
 };
-export type PiOsConfigFile = {
+export type OutpostConfigFile = {
 	server?: { host?: string; port?: number };
 	/** Relative paths resolve against the config file's directory. */
 	dataDir?: string;
@@ -57,7 +57,7 @@ export type PiOsConfigFile = {
 		/** Offer the offline scripted demo model. Default true. */
 		demo?: boolean;
 	};
-	gatekeepers?: {
+	airlocks?: {
 		github?: { token?: string };
 	};
 	/**
@@ -72,8 +72,8 @@ export type PiOsConfigFile = {
 	};
 	/**
 	 * Live previews (the App tab). The app itself always runs on loopback; these decide what browsers
-	 * connect to. Set `ports` when pi-os runs where loopback isn't reachable from the browser — a
-	 * container, or behind a port mapping: pi-os then listens on that range and forwards to the app.
+	 * connect to. Set `ports` when outpost runs where loopback isn't reachable from the browser — a
+	 * container, or behind a port mapping: outpost then listens on that range and forwards to the app.
 	 */
 	preview?: {
 		/** Address the public preview ports listen on. Default 127.0.0.1; use 0.0.0.0 in a container. */
@@ -81,11 +81,11 @@ export type PiOsConfigFile = {
 		/** "3100-3199" (or [3100, 3199]): the ports browsers use. Default: one ephemeral loopback port per preview. */
 		ports?: string | [number, number];
 	};
-	/** Headless rendering of gadgets (agent visual feedback via gadget_screenshot). */
+	/** Headless rendering of modules (agent visual feedback via module_screenshot). */
 	render?: {
-		/** false disables gadget_screenshot. Default true. */
+		/** false disables module_screenshot. Default true. */
 		enabled?: boolean;
-		/** Chrome / Chromium / Edge executable. Default: auto-detect (also PI_OS_CHROME). */
+		/** Chrome / Chromium / Edge executable. Default: auto-detect (also OUTPOST_CHROME). */
 		chromePath?: string;
 	};
 };
@@ -93,13 +93,13 @@ export type PiOsConfigFile = {
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 // pnpm runs package scripts inside the package; INIT_CWD is where you actually ran the command.
 const startDir = process.env.INIT_CWD ?? process.cwd();
-const configPath = resolve(startDir, process.env.PI_OS_CONFIG || "pi-os.config.json");
+const configPath = resolve(startDir, process.env.OUTPOST_CONFIG || "outpost.config.json");
 
 class ConfigError extends Error {}
 
-function readConfigFile(): { file: PiOsConfigFile; found: boolean } {
+function readConfigFile(): { file: OutpostConfigFile; found: boolean } {
 	if (!existsSync(configPath)) {
-		if (process.env.PI_OS_CONFIG) throw new ConfigError(`PI_OS_CONFIG points to ${configPath}, which does not exist`);
+		if (process.env.OUTPOST_CONFIG) throw new ConfigError(`OUTPOST_CONFIG points to ${configPath}, which does not exist`);
 		return { file: {}, found: false };
 	}
 	try {
@@ -121,13 +121,13 @@ const { file, found } = (() => {
 	try {
 		return readConfigFile();
 	} catch (error) {
-		console.error(`pi-os: ${(error as Error).message}`);
+		console.error(`outpost: ${(error as Error).message}`);
 		process.exit(1);
 	}
 })();
 
 const baseDir = found ? dirname(configPath) : startDir;
-const dataDir = resolve(process.env.PI_OS_DATA ?? (file.dataDir ? (isAbsolute(file.dataDir) ? file.dataDir : join(baseDir, file.dataDir)) : join(baseDir, "data")));
+const dataDir = resolve(process.env.OUTPOST_DATA ?? (file.dataDir ? (isAbsolute(file.dataDir) ? file.dataDir : join(baseDir, file.dataDir)) : join(baseDir, "data")));
 mkdirSync(join(dataDir, "workspaces"), { recursive: true });
 
 const defaultModel = (() => {
@@ -135,7 +135,7 @@ const defaultModel = (() => {
 	if (!raw) return undefined;
 	const [provider, ...rest] = raw.split("/");
 	if (!provider || !rest.length) {
-		console.warn(`pi-os: models.default must be "provider/modelId", got "${raw}" — ignoring`);
+		console.warn(`outpost: models.default must be "provider/modelId", got "${raw}" — ignoring`);
 		return undefined;
 	}
 	return { provider, modelId: rest.join("/") };
@@ -147,19 +147,19 @@ function parsePortRange(value: string | [number, number] | undefined): [number, 
 	const nums = Array.isArray(value) ? value.map(Number) : /^\s*(\d{2,5})\s*[-:]\s*(\d{2,5})\s*$/.exec(value)?.slice(1).map(Number);
 	const [start, end] = nums ?? [];
 	if (!start || !end || start > end || start < 1 || end > 65535) {
-		console.warn(`pi-os: preview.ports must be a range like "3100-3199", got ${JSON.stringify(value)} — ignoring`);
+		console.warn(`outpost: preview.ports must be a range like "3100-3199", got ${JSON.stringify(value)} — ignoring`);
 		return undefined;
 	}
 	return [start, end];
 }
 
-/** The secret that signs frame tokens and encrypts stored credentials. PI_OS_SECRET (hex/base64, 32 bytes) wins over the generated file. */
+/** The secret that signs frame tokens and encrypts stored credentials. OUTPOST_SECRET (hex/base64, 32 bytes) wins over the generated file. */
 const secretFile = join(dataDir, "secret.key");
 const secret: Buffer = (() => {
-	if (process.env.PI_OS_SECRET) {
-		const s = process.env.PI_OS_SECRET;
+	if (process.env.OUTPOST_SECRET) {
+		const s = process.env.OUTPOST_SECRET;
 		const buf = /^[0-9a-f]{64}$/i.test(s) ? Buffer.from(s, "hex") : Buffer.from(s, "base64");
-		if (buf.length !== 32) throw new Error("PI_OS_SECRET must be 32 bytes (64 hex chars or base64)");
+		if (buf.length !== 32) throw new Error("OUTPOST_SECRET must be 32 bytes (64 hex chars or base64)");
 		return buf;
 	}
 	if (existsSync(secretFile)) return readFileSync(secretFile);
@@ -185,9 +185,9 @@ export const config = {
 	providers: file.models?.providers ?? {},
 	ambientEnv: file.models?.ambientEnv ?? true,
 	demoModel: file.models?.demo ?? true,
-	githubToken: () => resolveSecret(file.gatekeepers?.github?.token).value,
-	render: { enabled: file.render?.enabled ?? true, chromePath: process.env.PI_OS_CHROME ?? file.render?.chromePath },
-	preview: { bind: process.env.PI_OS_PREVIEW_BIND ?? file.preview?.bind ?? "127.0.0.1", ports: parsePortRange(process.env.PI_OS_PREVIEW_PORTS ?? file.preview?.ports) },
+	githubToken: () => resolveSecret(file.airlocks?.github?.token).value,
+	render: { enabled: file.render?.enabled ?? true, chromePath: process.env.OUTPOST_CHROME ?? file.render?.chromePath },
+	preview: { bind: process.env.OUTPOST_PREVIEW_BIND ?? file.preview?.bind ?? "127.0.0.1", ports: parsePortRange(process.env.OUTPOST_PREVIEW_PORTS ?? file.preview?.ports) },
 	maxUploadBytes: Math.round((file.files?.maxUploadMB ?? 100) * (1 << 20)),
 	secret,
 };

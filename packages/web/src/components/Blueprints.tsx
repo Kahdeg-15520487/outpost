@@ -9,7 +9,7 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 	const [list, setList] = useState<Blueprint[]>([]);
 	const [busy, setBusy] = useState<string>();
 	const [dialog, setDialog] = useState<"import" | "export">();
-	const { gadgets } = useWorkspace(ws.id);
+	const { modules } = useWorkspace(ws.id);
 	const canEdit = ws.role !== "viewer";
 	const load = () => api.get("/api/blueprints").then((r) => setList(r.blueprints));
 	useEffect(() => {
@@ -20,8 +20,8 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 	const use = async (bp: Blueprint) => {
 		setBusy(bp.id);
 		try {
-			const r = await api.post(`/api/w/${ws.id}/gadgets`, { name: bp.name, blueprintId: bp.id });
-			navigate(chatHref(ws.id, undefined, r.gadget.id, true));
+			const r = await api.post(`/api/w/${ws.id}/modules`, { name: bp.name, blueprintId: bp.id });
+			navigate(chatHref(ws.id, undefined, r.module.id, true));
 		} finally {
 			setBusy(undefined);
 		}
@@ -37,10 +37,10 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 						<h1 className="grow">Blueprints</h1>
 						{canEdit && (
 							<>
-								<button className="btn small" onClick={() => setDialog("import")} title="Import blueprints and gadgets from a .pios.json file">
+								<button className="btn small" onClick={() => setDialog("import")} title="Import blueprints and modules from a .outpost.json file">
 									Import…
 								</button>
-								<button className="btn small" onClick={() => setDialog("export")} title="Export your blueprints and this workspace's gadgets to move them to another pi-os">
+								<button className="btn small" onClick={() => setDialog("export")} title="Export your blueprints and this workspace's modules to move them to another Outpost instance">
 									Export…
 								</button>
 							</>
@@ -59,7 +59,7 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 				</div>
 			</div>
 			{dialog === "import" && <ImportDialog ws={ws} onClose={() => setDialog(undefined)} onImported={load} />}
-			{dialog === "export" && <ExportDialog ws={ws} mine={community.filter((b) => b.mine).length} gadgets={gadgets.length} onClose={() => setDialog(undefined)} />}
+			{dialog === "export" && <ExportDialog ws={ws} mine={community.filter((b) => b.mine).length} modules={modules.length} onClose={() => setDialog(undefined)} />}
 		</div>
 	);
 }
@@ -77,7 +77,7 @@ function Grid({ list, busy, onUse, canUse, onDelete }: { list: Blueprint[]; busy
 					</div>
 					<div className="row bp-actions">
 						<span className="grow" />
-						<button className="btn ghost small" onClick={() => exportBlueprint(b.id).catch((e) => alert(e.message))} title="Download as a .pios.json file to import on another pi-os">
+						<button className="btn ghost small" onClick={() => exportBlueprint(b.id).catch((e) => alert(e.message))} title="Download as a .outpost.json file to import on another Outpost instance">
 							Export
 						</button>
 						{onDelete && b.mine && (

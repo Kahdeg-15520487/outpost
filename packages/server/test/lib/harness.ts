@@ -1,9 +1,9 @@
 /**
  * Shared test harness. Import it FIRST (before anything from src/): it gives the test its own throwaway
- * data dir and keeps pi-os from reading the developer's pi-os.config.json, keys or data. Then:
+ * data dir and keeps outpost from reading the developer's outpost.config.json, keys or data. Then:
  *   check(name, ok, detail)   record a result
  *   until(what, fn, ms)       poll until fn returns something truthy
- *   startServer()             boot pi-os in this process on a free port (or use $BASE if set)
+ *   startServer()             boot outpost in this process on a free port (or use $BASE if set)
  *   finish()                  stop everything, print the summary, exit 0/1
  */
 import { mkdtempSync, rmSync } from "node:fs";
@@ -11,12 +11,12 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const testDir = mkdtempSync(join(tmpdir(), "pios-test-"));
+export const testDir = mkdtempSync(join(tmpdir(), "outpost-test-"));
 // The runner (test/run.ts) deletes it after this process exits; on Windows the open databases keep
 // this process from deleting it itself.
 console.log(`[harness] dir ${testDir}`);
-process.env.PI_OS_DATA = join(testDir, "data");
-process.env.PI_OS_CONFIG = "";
+process.env.OUTPOST_DATA = join(testDir, "data");
+process.env.OUTPOST_CONFIG = "";
 // pnpm sets INIT_CWD to where it was invoked (the repo root, next to the developer's config).
 process.env.INIT_CWD = testDir;
 process.env.HOST = "127.0.0.1";
@@ -70,7 +70,7 @@ export function freePort(): Promise<number> {
 	});
 }
 
-/** Boot pi-os (API, sockets, built web app) in this process on a free port; $BASE uses an external server instead. */
+/** Boot outpost (API, sockets, built web app) in this process on a free port; $BASE uses an external server instead. */
 export async function startServer(): Promise<string> {
 	if (process.env.BASE) return process.env.BASE;
 	const port = Number(process.env.PORT);
@@ -90,7 +90,7 @@ export async function finish(error?: unknown): Promise<never> {
 	try {
 		const { Workspace } = await import("../../src/kernel/workspace.ts");
 		await Promise.race([Workspace.closeAll(), sleep(10000)]);
-		const { closeRenderer } = await import("../../src/gadgets/render.ts");
+		const { closeRenderer } = await import("../../src/modules/render.ts");
 		await closeRenderer().catch(() => {});
 	} catch {}
 	console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nALL GOOD (${passed} checks)`);
@@ -103,12 +103,12 @@ export async function finish(error?: unknown): Promise<never> {
 	return new Promise<never>(() => {});
 }
 
-/** Mark a project's requirements and design approved (for suites that test what comes after M2's gates). */
-export async function passDocGates(ws: { harness: any }, projectId: string) {
-	const { ProjectDoc } = await import("../../src/projects/docs.ts");
+/** Mark a mission's requirements and design approved (for suites that test what comes after M2's gates). */
+export async function passDocGates(ws: { harness: any }, missionId: string) {
+	const { MissionDoc } = await import("../../src/missions/docs.ts");
 	const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
 	await ws.harness.commit(async (tx: any) => {
-		const st = await tx.doc(ProjectDoc, projectId, null);
+		const st = await tx.doc(MissionDoc, missionId, null);
 		st.gates = { requirements: { status: "approved" }, design: { status: "approved" } };
 	}, BACKGROUND_CONTEXT);
 }

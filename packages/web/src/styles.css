@@ -73,9 +73,9 @@ textarea.input { resize: vertical; }
 
 /* ------------------------------------------------------------------ shell */
 .shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); height: 100%; }
-.shell.with-gadget { grid-template-columns: 252px minmax(380px, 1fr) minmax(420px, 1.25fr); }
-/* Gadget opened by you: full width, chat hidden (kept mounted so drafts and scroll survive). */
-.shell.with-gadget.chat-hidden { grid-template-columns: 252px minmax(0, 1fr); }
+.shell.with-module { grid-template-columns: 252px minmax(380px, 1fr) minmax(420px, 1.25fr); }
+/* Module opened by you: full width, chat hidden (kept mounted so drafts and scroll survive). */
+.shell.with-module.chat-hidden { grid-template-columns: 252px minmax(0, 1fr); }
 .shell.chat-hidden > .main { display: none; }
 .gwin-chat { background: transparent; border-color: var(--line-2); }
 .gwin-chat.on { background: var(--ink); color: var(--ink-text); border-color: var(--ink); }
@@ -83,7 +83,10 @@ textarea.input { resize: vertical; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; }
 .brand .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--signal); color: var(--ink); display: grid; place-items: center; font: 700 italic 20px/1 var(--display); }
 .brand .name { font: 600 19px/1 var(--display); letter-spacing: -0.01em; }
-.brand .name em { color: var(--signal); font-style: italic; }
+.brand .logo { flex: none; }
+.brand .logo img { display: block; }
+.brand a { text-decoration: none; }
+.brand a:focus-visible { outline: 2px solid var(--signal); outline-offset: 4px; }
 .kernel { margin-left: auto; display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--ink-muted); }
 .kernel .dot { width: 7px; height: 7px; border-radius: 50%; background: #3fbf6a; box-shadow: 0 0 0 3px rgba(63, 191, 106, .18); }
 .kernel .dot.off { background: #c4402f; box-shadow: 0 0 0 3px rgba(196, 64, 47, .2); }
@@ -206,9 +209,9 @@ textarea.input { resize: vertical; }
 .hero h1 { font: 500 44px/1.05 var(--display); letter-spacing: -0.03em; margin: 0 0 10px; }
 .hero h1 em { color: var(--signal); }
 .hero p { color: var(--muted); font-size: 16px; max-width: 560px; }
-/* A chat opened beside a gadget greets you about that gadget. */
-.gadget-hero { margin-top: 5vh; }
-.gadget-hero h1 { font-size: 40px; }
+/* A chat opened beside a module greets you about that module. */
+.module-hero { margin-top: 5vh; }
+.module-hero h1 { font-size: 40px; }
 .gh-tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 13px; max-width: 100%; }
 .gh-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--paper-2); font-size: 15px; }
 .gh-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -216,11 +219,11 @@ textarea.input { resize: vertical; }
 .gh-src::before { content: "· "; }
 .gh-arrow { font: 11px var(--mono); color: var(--signal-ink); white-space: nowrap; margin-left: 4px; animation: nudge 1.6s ease-in-out 3; }
 @keyframes nudge { 50% { transform: translateX(4px); } }
-.gadget-hero .suggestion { animation: rise .35s ease-out both; }
+.module-hero .suggestion { animation: rise .35s ease-out both; }
 @media (max-width: 900px) { .gh-arrow { display: none; } }
-@media (prefers-reduced-motion: reduce) { .gh-arrow, .gadget-hero .suggestion { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .gh-arrow, .module-hero .suggestion { animation: none; } }
 
-/* ------------------------------------------------------------------ gadget window */
+/* ------------------------------------------------------------------ module window */
 .gwin { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line-2); background: var(--card); }
 .gwin-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--paper-2); min-height: 54px; }
 .gwin-bar .icon { font-size: 18px; }
@@ -295,15 +298,15 @@ textarea.input { resize: vertical; }
 .auth-form h2 { font: 600 28px var(--display); margin: 0 0 8px; }
 
 @media (max-width: 1100px) {
-	.shell.with-gadget { grid-template-columns: 220px minmax(0, 1fr); }
-	.shell.with-gadget .main { display: none; }
+	.shell.with-module { grid-template-columns: 220px minmax(0, 1fr); }
+	.shell.with-module .main { display: none; }
 }
 /* Sidebar tucked away: it leaves the grid, so the remaining columns shift left. */
 .shell.side-collapsed > .sidebar { display: none; }
 .shell.side-collapsed { grid-template-columns: minmax(0, 1fr); }
-.shell.side-collapsed.with-gadget { grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.25fr); }
-.shell.side-collapsed.with-gadget.chat-hidden { grid-template-columns: minmax(0, 1fr); }
-@media (max-width: 1100px) { .shell.side-collapsed.with-gadget { grid-template-columns: minmax(0, 1fr); } }
+.shell.side-collapsed.with-module { grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.25fr); }
+.shell.side-collapsed.with-module.chat-hidden { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1100px) { .shell.side-collapsed.with-module { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) { .side-reveal { display: none; } }
 @media (max-width: 760px) {
 	.auth { grid-template-columns: 1fr; } .auth-art { display: none; }
@@ -375,7 +378,7 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .mp-tags span { font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--paper-2); color: var(--muted); }
 .mp-dialog input[type="checkbox"] { accent-color: var(--signal); width: 15px; height: 15px; }
 
-/* Double-click-to-rename labels (gadget title, chat title) */
+/* Double-click-to-rename labels (module title, chat title) */
 .renamable { cursor: text; border-radius: 4px; }
 .renamable:hover { box-shadow: 0 0 0 1px var(--line-2); background: rgba(255, 255, 255, .35); }
 .label-rename { font: inherit; color: inherit; letter-spacing: inherit; width: 100%; min-width: 120px; padding: 0 4px; margin: -1px -5px; border: 1px solid var(--signal); border-radius: 4px; background: var(--card); outline: none; box-shadow: 0 0 0 3px var(--signal-wash); }

@@ -6,7 +6,7 @@
  *  - definition of done: the reviewer confirms every item to approve;
  *  - M6: the retrospective after a build, its lessons in later briefs, and a restart (workspace
  *    closed and reopened) resuming briefs and the preview.
- * Run: pnpm --filter @pi-os/server test -- quality
+ * Run: pnpm --filter @outpost/server test -- quality
  */
 import { check, finish, must, until } from "./lib/harness.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -14,16 +14,16 @@ import { join } from "node:path";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
-const { addItems } = await import("../src/projects/backlog.ts");
-const { DEFAULT_DOD } = await import("../src/projects/checks.ts");
-const { storyContext } = await import("../src/projects/story.ts");
-const { ProjectDoc } = await import("../src/projects/docs.ts");
+const { addItems } = await import("../src/missions/backlog.ts");
+const { DEFAULT_DOD } = await import("../src/missions/checks.ts");
+const { storyContext } = await import("../src/missions/story.ts");
+const { MissionDoc } = await import("../src/missions/docs.ts");
 const { BACKGROUND_CONTEXT: ctx } = await import("@earendil-works/chord/context");
 
 const u = users.create("quality", "password123");
 const wsId = workspaces.create("quality", u.id).id;
 let ws = await Workspace.get(wsId);
-let pm = ws.projects;
+let pm = ws.missions;
 const sent: { to: string; text: string }[] = [];
 const capture = () => {
 	pm.build.nudges = false;
@@ -34,7 +34,7 @@ const capture = () => {
 	}) as any;
 };
 capture();
-const p = await pm.create(u, { goal: "Quality gates regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+const p = await pm.create(u, { goal: "Quality gates regression mission", model: { provider: "outpost-demo", modelId: "demo" } });
 await pm.stopAll(p.id);
 for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(p.id, { role, brief: "wait", start: false });
 const repo = pm.repo(p.id);
@@ -74,18 +74,18 @@ await pm.approveGate(p.id, "design", u);
 check("approve design: stage planning", (await pm.meta(p.id)).stage === "planning");
 await pm.removeItem(p.id, "F1", u);
 
-// a project from before gates isn't held to them
-const legacy = await pm.create(u, { goal: "Legacy project without gates", model: { provider: "pi-os-demo", modelId: "demo" } });
+// a mission from before gates isn't held to them
+const legacy = await pm.create(u, { goal: "Legacy mission without gates", model: { provider: "outpost-demo", modelId: "demo" } });
 await pm.stopAll(legacy.id);
-await ws.harness.commit(async (tx) => void delete ((await tx.doc(ProjectDoc, legacy.id, null)) as any).gates, ctx);
+await ws.harness.commit(async (tx) => void delete ((await tx.doc(MissionDoc, legacy.id, null)) as any).gates, ctx);
 await pm.editBacklog(legacy.id, (b) => addItems(b, [{ type: "task", title: "y" }], "planner"));
-check("older projects (no gates) approve as before", (await rejects(() => pm.approveBacklog(legacy.id, u))) === "");
+check("older missions (no gates) approve as before", (await rejects(() => pm.approveBacklog(legacy.id, u))) === "");
 await pm.archive(legacy.id);
 
 // ------------------------------------------------------------------ story briefs + checks + DoD
 console.log("story briefs");
 await repo.writeMain("docs/decisions/0001-use-rows.md", "# 0001. Store tasks as rows\n- Status: accepted\n", "adr");
-await repo.writeMain(".pios/project.json", JSON.stringify({ test: "node check.js", dev: { command: "node server.js" }, definitionOfDone: ["The changelog mentions it"] }), "run config");
+await repo.writeMain(".outpost/mission.json", JSON.stringify({ test: "node check.js", dev: { command: "node server.js" }, definitionOfDone: ["The changelog mentions it"] }), "run config");
 await repo.writeMain("app/check.js", `const fs=require("fs");const ok=fs.existsSync("ok.txt")&&fs.readFileSync("ok.txt","utf8").trim()==="ok";if(fs.existsSync("flag.txt")&&fs.existsSync("t3.txt")){console.log("flag and t3 clash");process.exit(1)}console.log(ok?"all good":"ok.txt is not ok");process.exit(ok?0:1);\n`, "check");
 await repo.writeMain("app/ok.txt", "ok\n", "ok");
 await repo.writeMain("app/server.js", `require("http").createServer((q,s)=>s.end("up")).listen(process.env.PORT,"127.0.0.1");\n`, "server");
@@ -128,7 +128,7 @@ await until("review", async () => (await item(tStore!)).reviewBriefed && (await 
 t = await item(tStore!);
 check("passing tests route it to the reviewer", t.status === "review" && t.reviewer === "reviewer" && t.checks?.status === "passed" && t.checks.stage === "submit", t.checks);
 const reviewBrief = lastTo("reviewer");
-check("review brief: checks result + numbered definition of done (with the project's item)", /test suite passed/.test(reviewBrief) && /Definition of done/.test(reviewBrief) && reviewBrief.includes(`${DEFAULT_DOD.length + 1}. The changelog mentions it`), reviewBrief.slice(-600));
+check("review brief: checks result + numbered definition of done (with the mission's item)", /test suite passed/.test(reviewBrief) && /Definition of done/.test(reviewBrief) && reviewBrief.includes(`${DEFAULT_DOD.length + 1}. The changelog mentions it`), reviewBrief.slice(-600));
 
 console.log("definition of done");
 const reviewerRec = await agent("reviewer");
@@ -171,7 +171,7 @@ console.log("retrospective");
 const b = await until("retrospective written", async () => ((await pm.backlog(p.id)).build?.retro ? pm.backlog(p.id) : undefined), 20000);
 const retroPath = b?.build?.retro;
 const retro = retroPath ? (await repo.read(retroPath))?.text ?? "" : "";
-check("pi-os writes the retrospective's facts when the build finishes", /^docs\/retrospectives\/0001-\d{4}-\d\d-\d\d\.md$/.test(retroPath ?? "") && /3 tasks\*\* merged/.test(retro) && /test failures: \*\*2\*\*/.test(retro) && /_Waiting for the lead._/.test(retro), retro.slice(0, 600));
+check("outpost writes the retrospective's facts when the build finishes", /^docs\/retrospectives\/0001-\d{4}-\d\d-\d\d\.md$/.test(retroPath ?? "") && /3 tasks\*\* merged/.test(retro) && /test failures: \*\*2\*\*/.test(retro) && /_Waiting for the lead._/.test(retro), retro.slice(0, 600));
 check("the lead is asked for lessons", /retro_notes/.test(lastTo("lead")));
 await tool("lead", "retro_notes", { went_well: ["parallel tasks"], to_improve: ["flaky checks"], actions: ["Run node check.js before task_done"] });
 const retro2 = (await repo.read(retroPath!))?.text ?? "";
@@ -191,7 +191,7 @@ await pm.editBacklog(p.id, (b) => void (b.items[tAfter]!.briefed = false));
 const sentBefore = sent.length;
 await Workspace.close(wsId);
 ws = await Workspace.get(wsId);
-pm = ws.projects;
+pm = ws.missions;
 capture();
 check("after a restart the unsent brief goes out", !!(await until("re-briefed", async () => (await item(tAfter)).briefed, 20000)) && sent.slice(sentBefore).some((m) => m.text.includes(tAfter)));
 check("after a restart the preview comes back", !!(await until("preview back", () => pm.previews.info(p.id).status === "running", 30000)), pm.previews.info(p.id));

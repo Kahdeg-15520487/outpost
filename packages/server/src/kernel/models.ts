@@ -1,15 +1,15 @@
 import { createModels, defaultProviderAuthContext, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Message, type MutableModels } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { config } from "../config.ts";
-import { OsCredentialStore } from "./credentials.ts";
+import { OutpostCredentialStore } from "./credentials.ts";
 
-export const credentials = new OsCredentialStore();
+export const credentials = new OutpostCredentialStore();
 
-export const DEMO_MODEL = { provider: "pi-os-demo", modelId: "demo" } as const;
+export const DEMO_MODEL = { provider: "outpost-demo", modelId: "demo" } as const;
 
 /**
  * A scripted model so the OS is fully usable without any API key. It recognizes a few
- * intents ("make a todo list", "make slides", "list my gadgets") and drives the real tools.
+ * intents ("make a todo list", "make slides", "list my modules") and drives the real tools.
  */
 function demoProvider() {
 	const faux = fauxProvider({
@@ -21,11 +21,11 @@ function demoProvider() {
 		const last = messages.at(-1);
 		if (last?.role === "toolResult") {
 			const text = last.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-			const id = /"?id"?\s*[:=]\s*"?(g_[a-z0-9]+)/i.exec(text)?.[1];
+			const id = /"?id"?\s*[:=]\s*"?(mod_[a-z0-9]+)/i.exec(text)?.[1];
 			return fauxAssistantMessage([
 				fauxText(
 					id
-						? `Done — I created the gadget \`${id}\`. It is open in the panel on the right. Ask me to change anything about it, or share it with a teammate.`
+						? `Done — I created the module \`${id}\`. It is open in the panel on the right. Ask me to change anything about it, or share it with a teammate.`
 						: `Here is what I found:\n\n${text.slice(0, 1500)}`,
 				),
 			]);
@@ -46,12 +46,12 @@ function demoProvider() {
 							: undefined;
 		if (/\b(make|create|build|new)\b/.test(p) && blueprint) {
 			const name = blueprint.replace("bp_", "").replace(/^./, (c) => c.toUpperCase());
-			return fauxAssistantMessage([fauxText(`Creating a ${name} gadget from the built-in blueprint…`), fauxToolCall("gadget_create", { name, blueprint })], {
+			return fauxAssistantMessage([fauxText(`Creating a ${name} module from the built-in blueprint…`), fauxToolCall("module_create", { name, blueprint })], {
 				stopReason: "toolUse",
 			});
 		}
-		if (/\b(list|show)\b.*\bgadgets?\b/.test(p)) {
-			return fauxAssistantMessage([fauxToolCall("codemode", { code: "const r = await tools.gadget_list({}); console.log(JSON.stringify(r, null, 2));" })], {
+		if (/\b(list|show)\b.*\bmodules?\b/.test(p)) {
+			return fauxAssistantMessage([fauxToolCall("codemode", { code: "const r = await tools.module_list({}); console.log(JSON.stringify(r, null, 2));" })], {
 				stopReason: "toolUse",
 			});
 		}
@@ -59,9 +59,9 @@ function demoProvider() {
 			fauxText(
 				"I'm the **offline demo model** — I can only follow a few scripts:\n\n" +
 					"- *make a todo list* / *make slides* / *make a whiteboard* / *make a tic tac toe game* / *make notes*\n" +
-					"- *list my gadgets*\n\n" +
+					"- *list my modules*\n\n" +
 					"Pick a real model in the model menu (any provider pi supports: Anthropic, OpenAI, Google, OpenRouter, Groq, …). " +
-					"Configure keys in `pi-os.config.json` (`models.providers`), under **Settings → Model providers**, or with the provider's standard env var.",
+					"Configure keys in `outpost.config.json` (`models.providers`), under **Settings → Model providers**, or with the provider's standard env var.",
 			),
 		]);
 	};
@@ -74,28 +74,28 @@ function demoProvider() {
 	return faux.provider;
 }
 
-/** With `models.ambientEnv: false`, providers see no env vars or ambient files (AWS profiles, gcloud ADC): only pi-os credentials. */
+/** With `models.ambientEnv: false`, providers see no env vars or ambient files (AWS profiles, gcloud ADC): only outpost credentials. */
 const isolatedAuthContext = { env: async () => undefined, fileExists: async () => false };
 
-export function createOsModels(): MutableModels {
+export function createOutpostModels(): MutableModels {
 	const models = createModels({
 		credentials,
 		authContext: config.ambientEnv ? defaultProviderAuthContext() : isolatedAuthContext,
-		identity: { attribution: { name: "pi-os", url: "https://github.com/earendil-works/pi" } },
+		identity: { attribution: { name: "Outpost", url: "https://github.com/Kahdeg-15520487/outpost" } },
 	});
 	const builtins = builtinProviders();
 	for (const provider of builtins) if (config.providers[provider.id]?.enabled !== false) models.setProvider(provider);
 	if (config.demoModel) models.setProvider(demoProvider());
 	const unknown = Object.keys(config.providers).filter((id) => !builtins.some((p) => p.id === id));
-	if (unknown.length) console.warn(`pi-os: unknown provider id(s) in config: ${unknown.join(", ")}. Known: ${builtins.map((p) => p.id).join(", ")}`);
+	if (unknown.length) console.warn(`outpost: unknown provider id(s) in config: ${unknown.join(", ")}. Known: ${builtins.map((p) => p.id).join(", ")}`);
 	for (const [id, entry] of Object.entries(config.providers)) {
 		const ref = /^\$\{?(\w+)\}?$/.exec(entry.apiKey ?? "")?.[1];
-		if (ref && !process.env[ref]) console.warn(`pi-os: models.providers.${id}.apiKey references $${ref}, which is not set`);
+		if (ref && !process.env[ref]) console.warn(`outpost: models.providers.${id}.apiKey references $${ref}, which is not set`);
 	}
 	return models;
 }
 
-export const models = createOsModels();
+export const models = createOutpostModels();
 
 export async function listModels() {
 	const available = await models.getAvailable().catch(() => [] as const);

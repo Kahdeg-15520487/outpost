@@ -1,8 +1,8 @@
 /**
- * Browser test of the web app against a real (in-process) pi-os: chat, sidebar menus, the model
- * picker, and the project page (layouts, tiles, attachments, repo tree, backlog build bar, item
- * history, live preview). Needs Chrome, Edge or Chromium (or PI_OS_CHROME) and a built web app
- * (pnpm build). Run: pnpm --filter @pi-os/server test:ui   (HEADFUL=1 to watch)
+ * Browser test of the web app against a real (in-process) outpost: chat, sidebar menus, the model
+ * picker, and the mission page (layouts, tiles, attachments, repo tree, backlog build bar, item
+ * history, live preview). Needs Chrome, Edge or Chromium (or OUTPOST_CHROME) and a built web app
+ * (pnpm build). Run: pnpm --filter @outpost/server test:ui   (HEADFUL=1 to watch)
  */
 import { check, finish, must, sleep, startServer, until, passDocGates } from "./lib/harness.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -10,10 +10,10 @@ import { join } from "node:path";
 import puppeteer, { type Page } from "puppeteer-core";
 
 const { config } = await import("../src/config.ts");
-const { findBrowser } = await import("../src/gadgets/render.ts");
+const { findBrowser } = await import("../src/modules/render.ts");
 const browserPath = findBrowser();
 if (!browserPath) {
-	console.log("  - skipped: no Chrome/Edge/Chromium found (set PI_OS_CHROME)");
+	console.log("  - skipped: no Chrome/Edge/Chromium found (set OUTPOST_CHROME)");
 	await finish();
 }
 if (!existsSync(join(config.webDist, "index.html"))) await finish(new Error("The web app isn't built: run `pnpm build` first"));
@@ -21,8 +21,8 @@ if (!existsSync(join(config.webDist, "index.html"))) await finish(new Error("The
 const base = await startServer();
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { users } = await import("../src/kernel/system-db.ts");
-const { addItems } = await import("../src/projects/backlog.ts");
-const { DEFAULT_DOD } = await import("../src/projects/checks.ts");
+const { addItems } = await import("../src/missions/backlog.ts");
+const { DEFAULT_DOD } = await import("../src/missions/checks.ts");
 
 let page: Page;
 
@@ -70,10 +70,14 @@ const clickText = (sel: string, label: string | RegExp) =>
 async function run() {
 	console.log("shell + chat");
 	await page.goto(base);
+	await page.waitForSelector(".auth-form");
+	check("login uses the Outpost name and mark", await page.title() === "Outpost" && await text(".brand .name") === "Outpost" && !!(await page.$('.brand img[src="/outpost.svg"]')));
+	await shot("outpost-login");
 	await api("POST", "/api/auth/signup", { username: "ana", password: "password123", displayName: "Ana" });
 	const ws = (await api("GET", "/api/workspaces")).workspaces[0].id as string;
 	await go("");
 	must("signed in: the shell shows the sidebar", await until("sidebar", () => page.$(".new-chat")));
+	check("sidebar uses Outpost, Missions and Modules", await text(".brand .name") === "Outpost" && /missions/i.test(await text(".side-scroll")) && /modules/i.test(await text(".side-scroll")));
 
 	await page.click(".new-chat");
 	await page.waitForSelector(".composer textarea");
@@ -165,16 +169,16 @@ async function run() {
 	await until("dialog closed", async () => !(await page.$(".mp-dialog")));
 	const picker = (await api("GET", "/api/models")).picker;
 	// A fully checked provider is stored as "everything" (omitted); hidden ones as [].
-	check("picker saved per user: OpenAI hidden, demo kept", Array.isArray(picker.openai) && picker.openai.length === 0 && (picker["pi-os-demo"] === undefined || JSON.stringify(picker["pi-os-demo"]) === '["demo"]'), picker);
+	check("picker saved per user: OpenAI hidden, demo kept", Array.isArray(picker.openai) && picker.openai.length === 0 && (picker["outpost-demo"] === undefined || JSON.stringify(picker["outpost-demo"]) === '["demo"]'), picker);
 	const options = await page.$$eval(".composer select option", (os) => (os as HTMLOptionElement[]).filter((o) => !o.disabled).map((o) => o.value).filter((v) => v && v !== "__manage"));
-	check("the dropdown offers only the picked models", options.length > 0 && options.every((v) => v.startsWith("pi-os-demo/")), options);
+	check("the dropdown offers only the picked models", options.length > 0 && options.every((v) => v.startsWith("outpost-demo/")), options);
 
 	console.log("export / import");
-	const bundlePath = join(process.env.PI_OS_DATA!, "..", "import.pios.json");
+	const bundlePath = join(process.env.OUTPOST_DATA!, "..", "import.outpost.json");
 	writeFileSync(
 		bundlePath,
-		JSON.stringify({ format: "pi-os/bundle", version: 1, exportedAt: new Date().toISOString(), blueprints: [{ name: "Imported board", description: "from elsewhere", icon: "▦", files: { "index.html": "<h1>board</h1>" } }], gadgets: [
-				{ name: "Imported gadget", icon: "◆", files: { "index.html": "<h1>hi</h1>" }, data: { count: 3 } },
+		JSON.stringify({ format: "outpost/bundle", version: 2, exportedAt: new Date().toISOString(), blueprints: [{ name: "Imported board", description: "from elsewhere", icon: "▦", files: { "index.html": "<h1>board</h1>" } }], modules: [
+				{ name: "Imported module", icon: "◆", files: { "index.html": "<h1>hi</h1>" }, data: { count: 3 } },
 				{ name: "Needs teleport", icon: "◆", files: { "index.html": "<h1>x</h1>", "server.js": "export default class S { constructor(ctx) { this.ctx = ctx; } go() { return this.ctx.teleport(); } }" } },
 			] }),
 	);
@@ -183,18 +187,18 @@ async function run() {
 	await clickText(".bp-head button", "Import…");
 	const fileInput = await until("file input", () => page.$(".tx-drop input[type=file]"));
 	await (fileInput as any).uploadFile(bundlePath);
-	check("import shows what the file holds before importing", await until("preview", () => text(".tx-preview").then((t) => /Imported board/.test(t) && /Imported gadget/.test(t) && /with data/.test(t))));
-	check("import checks each item against this pi-os (version + capabilities)", /older pi-os/.test(await text(".tx-producer")) && (await count(".tx-check li.ok")) === 2 && (await count(".tx-check li.blocked")) === 1 && /ctx\.teleport/.test(await text(".tx-check li.blocked")));
+	check("import shows what the file holds before importing", await until("preview", () => text(".tx-preview").then((t) => /Imported board/.test(t) && /Imported module/.test(t) && /with data/.test(t))));
+	check("import checks each item against this outpost (version + capabilities)", /producer version not recorded/.test(await text(".tx-producer")) && (await count(".tx-check li.ok")) === 2 && (await count(".tx-check li.blocked")) === 1 && /ctx\.teleport/.test(await text(".tx-check li.blocked")));
 	check("the import button counts only what can run", /Import 2 of 3/.test(await text(".tx-dialog .btn.primary")));
 	await shot("import");
 	await clickText(".tx-dialog button", /^Import/);
-	check("import result lists the new blueprint and gadget", await until("result", () => text(".tx-dialog").then((t) => /imported/i.test(t) && /in your library/i.test(t) && /Imported gadget/.test(t))));
+	check("import result lists the new blueprint and module", await until("result", () => text(".tx-dialog").then((t) => /imported/i.test(t) && /in your library/i.test(t) && /Imported module/.test(t))));
 	check("the result says what wasn't imported and why", /not imported/i.test(await text(".tx-dialog")) && /Needs teleport/.test(await text(".tx-dialog")));
 	await clickText(".tx-dialog button", "Done");
 	check("the imported blueprint is in the library", await until("listed", () => page.$$eval(".bp-grid .bp .n", (ns) => ns.some((n) => n.textContent === "Imported board"))));
-	check("the imported gadget is in the sidebar", await until("sidebar gadget", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported gadget"))));
+	check("the imported module is in the sidebar", await until("sidebar module", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported module"))));
 	await clickText(".bp-head button", "Export…");
-	check("export dialog offers my blueprints and the workspace's gadgets", await until("export dialog", () => text(".tx-dialog").then((t) => /My blueprints \(1\)/.test(t) && /Gadgets in/.test(t) && /Include their data/.test(t))));
+	check("export dialog offers my blueprints and the workspace's modules", await until("export dialog", () => text(".tx-dialog").then((t) => /My blueprints \(1\)/.test(t) && /Modules in/.test(t) && /Include their data/.test(t))));
 	await sleep(400);
 	await shot("export");
 	await page.keyboard.press("Escape");
@@ -216,13 +220,13 @@ async function run() {
 	await clickText(".home-actions .btn", /Start a chat/);
 	check("Start a chat opens a new chat", await until("new chat", () => page.$(".composer textarea")));
 
-	console.log("project page");
-	const pid = await seedProject(ws);
-	const projectHash = (tab: string) => `#/w/${ws}/p/${pid}?tab=${tab}`;
+	console.log("mission page");
+	const pid = await seedMission(ws);
+	const missionHash = (tab: string) => `#/w/${ws}/missions/${pid}?tab=${tab}`;
 
-	await page.evaluate(() => localStorage.setItem("pios.project.layout", "side"));
-	await go(projectHash("overview"));
-	must("project page renders its tiles", await until("tiles", () => count(".agent-tile").then((n) => n === 4)));
+	await page.evaluate(() => localStorage.setItem("outpost.mission.layout", "side"));
+	await go(missionHash("overview"));
+	must("mission page renders its tiles", await until("tiles", () => count(".agent-tile").then((n) => n === 4)));
 	const sizes = await page.$$eval(".agent-tile", (ts) => ts.map((t) => t.getBoundingClientRect()).map((r) => [Math.round(r.width), Math.round(r.height)]));
 	check("side layout: tiles fill their columns (≥180×150)", sizes.every(([w, h]) => w! >= 180 && h! >= 150), sizes);
 	check("a developer's tile shows its task", await until("task chip", () => page.$$eval(".at-task", (ts) => ts.some((t) => /T2/.test(t.textContent ?? "")))));
@@ -230,7 +234,7 @@ async function run() {
 
 	await clickText(".ph-layout button", /Team/);
 	await sleep(400);
-	check("Team layout: all tiles in one grid above the viewer", (await page.$eval(".project-body", (b) => b.className)).includes("team") && (await count(".project-body.team > .tiles .agent-tile")) === 4);
+	check("Team layout: all tiles in one grid above the viewer", (await page.$eval(".mission-body", (b) => b.className)).includes("team") && (await count(".mission-body.team > .tiles .agent-tile")) === 4);
 	const sp = await page.$(".splitter");
 	if (sp) {
 		const box = (await sp.boundingBox())!;
@@ -239,16 +243,16 @@ async function run() {
 		await page.mouse.move(box.x + box.width / 2, box.y + 150, { steps: 6 });
 		await page.mouse.up();
 	}
-	const split = Number(await page.evaluate(() => localStorage.getItem("pios.project.split")));
+	const split = Number(await page.evaluate(() => localStorage.getItem("outpost.mission.split")));
 	check("dragging the splitter resizes and remembers it", sp && split > 0.5 && split <= 0.8, split);
-	await page.evaluate(() => localStorage.setItem("pios.project.layout", "side"));
+	await page.evaluate(() => localStorage.setItem("outpost.mission.layout", "side"));
 
-	await go(projectHash("requirements"));
+	await go(missionHash("requirements"));
 	check("Requirements: attachments as a compact strip", await until("chips", () => count(".att-strip .att-chip").then((n) => n === 2)));
 	check("Requirements tab label counts the attachments", (await text(".vt-count")).trim() === "2", await text(".vt-count"));
 	check("requirements document rendered below", (await text(".doc")).includes("Acceptance"));
 
-	await go(projectHash("repo"));
+	await go(missionHash("repo"));
 	must("Repo: the file tree renders", await until("tree", () => count(".rt-row").then((n) => n > 3)));
 	const heights = await page.$$eval(".rt-row", (rs) => rs.map((r) => Math.round(r.getBoundingClientRect().height)));
 	check("tree rows are full height (not squashed)", heights.every((h) => h >= 24), heights);
@@ -262,7 +266,7 @@ async function run() {
 	await clickText(".rt-file", "server.js");
 	check("opening a file shows its content", await until("code", () => text(".repo-code").then((t) => t.includes("createServer"))));
 
-	await go(projectHash("backlog"));
+	await go(missionHash("backlog"));
 	must("Backlog: the build bar shows progress", await until("build bar", () => text(".bl-build").then((t) => /Building/.test(t) && /merged/.test(t))));
 	const spill = await page.$$eval(".kb-card", (cards) =>
 		cards.flatMap((c) => {
@@ -281,15 +285,15 @@ async function run() {
 	await shot("marquee");
 	await page.mouse.move(5, 5);
 	await clickText(".bl-build button", "Pause build");
-	check("pause from the build bar", await until("paused", async () => (await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.build?.paused === true && /Resume build/.test(await text(".bl-build"))));
+	check("pause from the build bar", await until("paused", async () => (await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.build?.paused === true && /Resume build/.test(await text(".bl-build"))));
 	await clickText(".bl-build button", "Resume build");
-	await until("resumed", async () => !(await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.build?.paused);
+	await until("resumed", async () => !(await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.build?.paused);
 	await page.evaluate(() => ([...document.querySelectorAll(".kb-card")].find((c) => c.querySelector(".kc-id")?.textContent === "T1") as HTMLElement | undefined)?.click());
 	check("a task's panel shows its review and merge history", await until("history", () => text(".ip-history").then((t) => /Changes requested/.test(t) && /Merged into main/.test(t))));
 	check("the panel shows the definition of done the reviewer confirmed", (await count(".ip-dod li.met")) === 5 && /confirmed by Reviewer/i.test(await text(".ip")));
 	check("the panel shows the checks", /no tests/i.test(await text(".ip-check")));
 
-	await go(projectHash("app"));
+	await go(missionHash("app"));
 	const running = await until("preview running", () => text(".pv-status").then((t) => /Running/.test(t)), 40000);
 	check("App tab: the preview runs main", running, await text(".pv"));
 	const src = await page.$eval(".pv-frame", (f) => (f as HTMLIFrameElement).src).catch(() => "");
@@ -297,7 +301,7 @@ async function run() {
 	check("the preview iframe serves the app", body.includes("Who's in"), { src, body: body.slice(0, 80) });
 
 	console.log("questions + feedback");
-	const pm = (await Workspace.get(ws)).projects;
+	const pm = (await Workspace.get(ws)).missions;
 	const asAgent = async (key: string, name: string, args: unknown) => {
 		const a = (await pm.state(pid)).agents[key]!;
 		return pm.tools.get(name)!.execute(args, { conversationId: Number(a.conversationId), taskId: Date.now() } as any);
@@ -305,18 +309,18 @@ async function run() {
 	await asAgent("lead", "ask_user", { question: "Should weekends show?" });
 	await asAgent("lead", "ask_user", { question: "Week starts Monday?", blocking: false, assumption: "Monday" });
 	await pm.stopAll(pid);
-	await go(projectHash("overview"));
+	await go(missionHash("overview"));
 	check("readiness: not ready while a blocking question is open", await until("readiness", () => text(".ov-ready.no").then((t) => /Not ready to build/.test(t))));
 	check("question cards say blocking / non-blocking, with the assumption", (await count(".q-flag.blocking")) === 1 && (await count(".q-flag.nonblocking")) === 1 && /Monday/.test(await text(".q-assume")));
 	await page.evaluate(() => ([...document.querySelectorAll(".q-card.blocking button")].find((b) => b.textContent === "Not blocking") as HTMLElement | undefined)?.click());
 	await shot("questions");
-	check("switching it to non-blocking makes the project ready", await until("ready", () => page.$(".ov-ready.yes")));
+	check("switching it to non-blocking makes the mission ready", await until("ready", () => page.$(".ov-ready.yes")));
 	const before2 = await count(".q-card");
 	await page.evaluate(() => ([...document.querySelectorAll(".q-card button")].find((b) => b.textContent === "Dismiss") as HTMLElement | undefined)?.click());
 	check("dismiss closes a question", await until("dismissed", () => count(".q-card").then((n) => n === before2 - 1)));
 
-	await page.evaluate(() => localStorage.setItem("pios.preview.feedback", "1"));
-	await go(projectHash("app"));
+	await page.evaluate(() => localStorage.setItem("outpost.preview.feedback", "1"));
+	await go(missionHash("app"));
 	must("App tab: the feedback panel opens", await until("feedback panel", () => page.$(".fb-form textarea")));
 	await page.type(".fb-form textarea", "Show the week number in the header");
 	await clickText(".fb-form button", "Send to the team");
@@ -325,33 +329,33 @@ async function run() {
 	check("drafted items show as waiting for approval", await until("pending status", () => text(".fb-item").then((t) => /Waiting for your approval/.test(t))));
 	await shot("feedback");
 
-	await go(projectHash("backlog"));
+	await go(missionHash("backlog"));
 	must("Backlog: the pending items bar lists them", await until("pending bar", () => text(".bl-pending").then((t) => /2 new items waiting/.test(t) && /FB-1/.test(t))));
 	check("pending cards are marked", (await count(".kb-card.pending")) >= 1);
 	await shot("pending");
 	await clickText(".bl-pending button", /^Approve/);
-	check("approve from the bar: nothing pending any more", await until("approved", async () => !Object.values((await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.items as any[]).some((i) => i.pending)));
+	check("approve from the bar: nothing pending any more", await until("approved", async () => !Object.values((await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.items as any[]).some((i) => i.pending)));
 
 	console.log("document gates");
-	const { ProjectDoc } = await import("../src/projects/docs.ts");
+	const { MissionDoc } = await import("../src/missions/docs.ts");
 	const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
-	await (await Workspace.get(ws)).harness.commit(async (tx: any) => void ((await tx.doc(ProjectDoc, pid, null)).gates = {}), BACKGROUND_CONTEXT);
+	await (await Workspace.get(ws)).harness.commit(async (tx: any) => void ((await tx.doc(MissionDoc, pid, null)).gates = {}), BACKGROUND_CONTEXT);
 	await asAgent("lead", "request_review", { gate: "requirements", summary: "Three stories, one open point" });
 	await pm.stopAll(pid);
-	await go(projectHash("overview"));
+	await go(missionHash("overview"));
 	check("Overview: the requirements wait for approval", await until("ov gate", () => text(".ov-gate").then((t) => /requirements are waiting for your approval/i.test(t))));
-	await go(projectHash("requirements"));
+	await go(missionHash("requirements"));
 	must("Requirements tab: approval bar", await until("gate bar", () => text(".gate-bar.pending").then((t) => /waiting for your approval/.test(t) && /Three stories/.test(t))));
 	await shot("gate");
 	await clickText(".gate-bar button", /^Approve requirements/);
-	check("approve from the tab", await until("approved", async () => (await api("GET", `/api/w/${ws}/projects/${pid}`)).state.gates?.requirements?.status === "approved" && /approved/.test(await text(".gate-bar"))));
-	await go(projectHash("design"));
+	check("approve from the tab", await until("approved", async () => (await api("GET", `/api/w/${ws}/missions/${pid}`)).state.gates?.requirements?.status === "approved" && /approved/.test(await text(".gate-bar"))));
+	await go(missionHash("design"));
 	check("Design tab: not submitted yet", await until("design gate", () => text(".gate-bar.idle").then((t) => /not submitted for your approval yet/.test(t))));
-	await go(projectHash("backlog"));
-	check("the backlog says which documents still need approval", /Approve the design first/.test(await text(".bl")) || (await api("GET", `/api/w/${ws}/projects/${pid}`)).backlog.approval.status === "approved");
+	await go(missionHash("backlog"));
+	check("the backlog says which documents still need approval", /Approve the design first/.test(await text(".bl")) || (await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.approval.status === "approved");
 
 	console.log("connections");
-	process.env.PI_OS_ALLOW_PRIVATE_HOSTS = "1";
+	process.env.OUTPOST_ALLOW_PRIVATE_HOSTS = "1";
 	const { startServices, API_KEY } = await import("./fixtures/services.ts");
 	const services = await startServices();
 	try {
@@ -378,7 +382,7 @@ async function run() {
 		await clickText(".side-item .t", "Renamed chat");
 		must("back in the chat", await until("resources button", () => clickText(".chat-head button, button", /Resources/)));
 		await page.waitForSelector(".gk-grid");
-		check("the connection is offered next to the built-in Gatekeepers", await clickText(".gk", /inventory/));
+		check("the connection is offered next to the built-in Airlocks", await clickText(".gk", /inventory/));
 		must("its methods, to choose from", await until("cap rows", () => count(".cap-row").then((n) => n === 4)));
 		check("added in the UI: writes can't be set to auto", !(await page.$$eval(".cap-row select option", (os) => os.some((o) => (o as HTMLOptionElement).value === "auto"))));
 		await page.$$eval(".cap-row", (rows) => {
@@ -393,7 +397,7 @@ async function run() {
 		const { GrantsDoc } = await import("../src/kernel/docs.ts");
 		const { BACKGROUND_CONTEXT: bg } = await import("@earendil-works/chord/context");
 		const g = Object.values((await (await Workspace.get(ws)).harness.snapshot(GrantsDoc, bg))?.grants ?? {}).find((x) => x.connection);
-		check("…stored with the policy", g?.policy?.createItem === "deny" && g?.gatekeeper === "openapi", g);
+		check("…stored with the policy", g?.policy?.createItem === "deny" && g?.airlock === "openapi", g);
 		await shot("capability");
 
 		await go(`#/w/${ws}/connections`);
@@ -413,9 +417,9 @@ async function run() {
 		await go(`#/w/${ws}/connections`);
 		await page.waitForSelector(".conn");
 		// The agent proposes while the page is open: it must appear live, without a reload.
-		const { createOsExtension } = await import("../src/agent/extension.ts");
+		const { createOutpostExtension } = await import("../src/agent/extension.ts");
 		const { BACKGROUND_CONTEXT: tctx } = await import("@earendil-works/chord/context");
-		const proposeTool = createOsExtension(w).tools!.find((t: any) => t.name === "propose_connection") as any;
+		const proposeTool = createOutpostExtension(w).tools!.find((t: any) => t.name === "propose_connection") as any;
 		await proposeTool.execute({ kind: "openapi", label: "stock", title: "Stock API", spec: `${services.apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, reason: "Check stock levels for the weekly report", setup: "Inventory admin → API keys" }, { conversationId: Number(firstChat), taskId: 77001 }, tctx);
 		check("a proposal shows on the Connections page live, with a badge in the sidebar", await until("proposal", async () => /Proposed by agents/i.test(await text(".conn-proposals")) && /Stock API/.test(await text(".conn-proposals")) && /1/.test(await text(".side-item.on .badge"))));
 		await shot("proposal");
@@ -427,17 +431,17 @@ async function run() {
 		check("connected from the proposal", await until("stock connected", () => page.$$eval(".conn", (cs) => cs.some((c) => /Stock API/.test((c as HTMLElement).innerText) && /connected/.test((c as HTMLElement).innerText)))), await text(".conn-form .err"));
 		check("the proposal is no longer waiting", await until("gone", async () => !(await page.$(".conn-proposal"))));
 
-		await go(projectHash("overview"));
-		must("project header: Resources", await until("project resources", () => clickText(".ph-btn", /Resources/)));
+		await go(missionHash("overview"));
+		must("mission header: Resources", await until("mission resources", () => clickText(".ph-btn", /Resources/)));
 		await page.waitForSelector(".gk-grid");
 		await clickText(".gk", /inventory/);
-		must("project grants can be for some roles", await until("role chips", () => count(".cap-roles .chip").then((n) => n >= 3)));
+		must("mission grants can be for some roles", await until("role chips", () => count(".cap-roles .chip").then((n) => n >= 3)));
 		await clickText(".cap-roles .chip", "Developer");
 		await clickText(".dialog button, .panel button", "Introduce");
-		check("granted to the project's developers only", await until("project grant", () => text(".panel").then((t) => /for Developer/.test(t))), await text(".panel .err"));
-		const pg = Object.values((await (await Workspace.get(ws)).harness.snapshot(GrantsDoc, bg))?.grants ?? {}).find((x) => x.holder.kind === "project");
+		check("granted to the mission's developers only", await until("mission grant", () => text(".panel").then((t) => /for Developer/.test(t))), await text(".panel .err"));
+		const pg = Object.values((await (await Workspace.get(ws)).harness.snapshot(GrantsDoc, bg))?.grants ?? {}).find((x) => x.holder.kind === "mission");
 		check("…stored with the role", pg?.holder.id === pid && pg.holder.roles?.join() === "worker", pg?.holder);
-		await shot("project-resources");
+		await shot("mission-resources");
 	} finally {
 		services.close();
 	}
@@ -445,22 +449,22 @@ async function run() {
 	console.log("updates");
 	check("no update banner while the server serves the same app", !(await page.$(".update-banner")));
 	const { dropSockets } = await import("../src/collab/socket.ts");
-	process.env.PI_OS_BUILD_ID = "a-newer-build";
+	process.env.OUTPOST_BUILD_ID = "a-newer-build";
 	dropSockets();
 	check("a tab left open across an update offers to reload", await until("banner", () => text(".update-banner").then((t) => /updated while this tab was open/.test(t))));
-	delete process.env.PI_OS_BUILD_ID;
+	delete process.env.OUTPOST_BUILD_ID;
 
 	check("no errors in the page", errors.length === 0, errors);
 }
 
-/** A project mid-build: requirements, two attachments, T1 reviewed (changes, then approved) and merged, T2 in progress, preview config on main. */
-async function seedProject(wsId: string): Promise<string> {
+/** A mission mid-build: requirements, two attachments, T1 reviewed (changes, then approved) and merged, T2 in progress, preview config on main. */
+async function seedMission(wsId: string): Promise<string> {
 	const ws = await Workspace.get(wsId);
-	const pm = ws.projects;
+	const pm = ws.missions;
 	pm.build.nudges = false;
 	const ana = users.byUsername("ana")!;
-	const { project } = await api("POST", `/api/w/${wsId}/projects`, { goal: "A team availability board: who is in the office which day", model: { provider: "pi-os-demo", modelId: "demo" } });
-	const pid = project.id as string;
+	const { mission } = await api("POST", `/api/w/${wsId}/missions`, { goal: "A team availability board: who is in the office which day", model: { provider: "outpost-demo", modelId: "demo" } });
+	const pid = mission.id as string;
 	await passDocGates(ws, pid);
 	await pm.stopAll(pid);
 	for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(pid, { role, brief: "wait", start: false });
@@ -469,7 +473,7 @@ async function seedProject(wsId: string): Promise<string> {
 	// two attachments, through the same API the page uses
 	const up = (name: string, body: string, type: string) => page.evaluate(async (wsId, name, body, type) => (await (await fetch(`/api/w/${wsId}/files`, { method: "POST", headers: { "x-file-name": name, "content-type": type }, body })).json()).file.id, wsId, name, body, type);
 	const files = [await up("brief.txt", "office days matter", "text/plain"), await up("roster.csv", "name\nAna\nBo", "text/csv")];
-	await api("POST", `/api/w/${wsId}/projects/${pid}/agents/lead/messages`, { text: "for the requirements", files });
+	await api("POST", `/api/w/${wsId}/missions/${pid}/agents/lead/messages`, { text: "for the requirements", files });
 	await pm.stopAll(pid);
 
 	await pm.editBacklog(pid, (b) =>
@@ -495,7 +499,7 @@ async function seedProject(wsId: string): Promise<string> {
 	};
 	write("app/server.js", `require("http").createServer((q, s) => { s.setHeader("content-type", "text/html"); s.end("<h1>Who's in this week</h1>"); }).listen(process.env.PORT, "127.0.0.1");\n`);
 	write("app/package.json", `{ "name": "whos-in", "private": true }\n`);
-	write(".pios/project.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
+	write(".outpost/mission.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
 	await pm.build.taskDone(pid, await agent("dev-1"), "board page", false);
 	await until("review 1", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewer === "reviewer");
 	await pm.build.verdict(pid, await agent("reviewer"), "T1", "changes", "Set the content type");

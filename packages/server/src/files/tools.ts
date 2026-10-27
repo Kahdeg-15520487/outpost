@@ -1,19 +1,19 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
-import { gadgets as gadgetDb } from "../kernel/system-db.ts";
+import { modules as moduleDb } from "../kernel/system-db.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import type { FileMeta } from "../kernel/docs.ts";
 import { formatBytes, hexdump, inflate, looksLikeText, zipEntries, zipRead, type InflateFormat } from "../files/store.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
-const summary = (f: FileMeta) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: formatBytes(f.size), bytes: f.size, from: `${f.source} by ${f.createdBy}`, ...(f.parent ? { parent: f.parent } : {}), ...(f.gadgets.length ? { gadgets: f.gadgets } : {}) });
+const summary = (f: FileMeta) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: formatBytes(f.size), bytes: f.size, from: `${f.source} by ${f.createdBy}`, ...(f.parent ? { parent: f.parent } : {}), ...(f.modules.length ? { modules: f.modules } : {}) });
 
 const MAX_TEXT = 60_000;
 const MAX_HEX = 4096;
 const MAX_B64 = 48_000;
 
 export const FILES_GUIDE = `# Files
-Workspace files (uploads, your outputs, gadget outputs) are listed in the user's Files panel. An attachment arrives as \`[Attached file f_…: "name" — kind, mime, size]\`; images and small text files are inlined, everything else is a handle.
+Workspace files (uploads, your outputs, module outputs) are listed in the user's Files panel. An attachment arrives as \`[Attached file f_…: "name" — kind, mime, size]\`; images and small text files are inlined, everything else is a handle.
 
 You can make sense of **any** format with byte-level primitives, so never answer "I can't open this":
 - \`file_info\` first: sniffed kind, magic bytes, a text or hex preview, and the entry list for zip containers.
@@ -23,14 +23,14 @@ You can make sense of **any** format with byte-level primitives, so never answer
 - Images → \`file_view\` to look at them.
 - Save what you derive (extracted text, CSV, JSON, reports) with \`file_write\` so the user gets it in Files.
 
-**Build your own tooling.** When a format needs real parsing, repeated access or an interactive view (spreadsheets, logs, datasets, binary records), write a gadget whose server parses the file with \`ctx.files\`, share the file with it (\`file_share_with_gadget\`), and then use \`gadget_call\` as your tool. Its client can visualize the data for the user. Improve the gadget as you learn the format. Inside a gadget server: \`ctx.files.list()\`, \`ctx.files.info(id)\`, \`ctx.files.text(id, offset?, length?)\`, \`ctx.files.bytes(id, offset?, length?)\` → Uint8Array (≤16 MB per read), \`await ctx.files.write(name, stringOrUint8Array, mime?)\` → {id}. A gadget sees only files shared with it, plus files it wrote.`;
+**Build your own tooling.** When a format needs real parsing, repeated access or an interactive view (spreadsheets, logs, datasets, binary records), write a module whose server parses the file with \`ctx.files\`, share the file with it (\`file_share_with_module\`), and then use \`module_call\` as your tool. Its client can visualize the data for the user. Improve the module as you learn the format. Inside a module server: \`ctx.files.list()\`, \`ctx.files.info(id)\`, \`ctx.files.text(id, offset?, length?)\`, \`ctx.files.bytes(id, offset?, length?)\` → Uint8Array (≤16 MB per read), \`await ctx.files.write(name, stringOrUint8Array, mime?)\` → {id}. A module sees only files shared with it, plus files it wrote.`;
 
 export function createFileTools(ws: Workspace) {
 	const get = (ref: string) => ws.files.get(ref);
 	return [
 		defineTool({
 			name: "file_list",
-			description: "List workspace files (uploads, agent and gadget outputs, extracted parts).",
+			description: "List workspace files (uploads, agent and module outputs, extracted parts).",
 			parameters: Type.Object({ query: Type.Optional(Type.String({ description: "substring filter on name or kind" })) }),
 			execute: async (args) => {
 				const q = args.query?.toLowerCase();
@@ -201,15 +201,15 @@ export function createFileTools(ws: Workspace) {
 			},
 		}),
 		defineTool({
-			name: "file_share_with_gadget",
-			description: "Let a gadget's server read a file through ctx.files (files are capabilities, like grants).",
-			parameters: Type.Object({ file: Type.String(), gadget: Type.String({ description: "gadget id or name" }) }),
+			name: "file_share_with_module",
+			description: "Let a module's server read a file through ctx.files (files are capabilities, like grants).",
+			parameters: Type.Object({ file: Type.String(), module: Type.String({ description: "module id or name" }) }),
 			execute: async (args) => {
 				const f = await get(args.file);
-				const g = gadgetDb.get(args.gadget) ?? gadgetDb.inWorkspace(ws.id).find((x) => x.name.toLowerCase() === args.gadget.toLowerCase());
-				if (!g || g.workspaceId !== ws.id) throw new Error(`Unknown gadget ${args.gadget}`);
-				if (!f.gadgets.includes(g.id)) await ws.files.update(f.id, (m) => void m.gadgets.push(g.id));
-				return text({ ok: true, file: f.id, gadget: g.id, note: `In the gadget server: ctx.files.bytes("${f.id}") / ctx.files.text("${f.id}")` });
+				const g = moduleDb.get(args.module) ?? moduleDb.inWorkspace(ws.id).find((x) => x.name.toLowerCase() === args.module.toLowerCase());
+				if (!g || g.workspaceId !== ws.id) throw new Error(`Unknown module ${args.module}`);
+				if (!f.modules.includes(g.id)) await ws.files.update(f.id, (m) => void m.modules.push(g.id));
+				return text({ ok: true, file: f.id, module: g.id, note: `In the module server: ctx.files.bytes("${f.id}") / ctx.files.text("${f.id}")` });
 			},
 		}),
 	];

@@ -1,23 +1,23 @@
 import { useEffect, useState } from "react";
-import { api, type ConnectionInfo, type GatekeeperInfo, type Grant, type Holder, type Policy, type Workspace, type WorkspaceDocs } from "../api";
+import { api, type ConnectionInfo, type AirlockInfo, type Grant, type Holder, type Policy, type Workspace, type WorkspaceDocs } from "../api";
 import { useConnections } from "../store";
 import { Dialog } from "./bits";
 import "../connections.css";
 
-let catalog: Promise<{ gatekeepers: GatekeeperInfo[]; githubToken: boolean }> | undefined;
-export const useGatekeepers = () => {
-	const [list, setList] = useState<GatekeeperInfo[]>([]);
+let catalog: Promise<{ airlocks: AirlockInfo[]; githubToken: boolean }> | undefined;
+export const useAirlocks = () => {
+	const [list, setList] = useState<AirlockInfo[]>([]);
 	useEffect(() => {
-		(catalog ??= api.get("/api/gatekeepers")).then((r) => setList(r.gatekeepers));
+		(catalog ??= api.get("/api/airlocks")).then((r) => setList(r.airlocks));
 	}, []);
 	return list;
 };
 
 type Capability = { methods?: string[]; policy: Record<string, Policy> };
 
-/** Grants held by one chat or gadget, and the form to introduce a new resource. */
+/** Grants held by one chat or module, and the form to introduce a new resource. */
 export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; holder: Holder; grants: WorkspaceDocs["grants"]; roles?: { id: string; title: string }[] }) {
-	const gks = useGatekeepers();
+	const gks = useAirlocks();
 	const { connections } = useConnections(wsId);
 	const [pick, setPick] = useState("gk:github");
 	const [resource, setResource] = useState("");
@@ -26,7 +26,7 @@ export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; 
 	const [cap, setCap] = useState<Capability>({ policy: {} });
 	const [forRoles, setForRoles] = useState<string[]>([]);
 	const [err, setErr] = useState("");
-	const to: Holder = holder.kind === "project" && forRoles.length ? { ...holder, roles: forRoles } : holder;
+	const to: Holder = holder.kind === "mission" && forRoles.length ? { ...holder, roles: forRoles } : holder;
 	const mine = Object.values(grants.grants).filter((g) => g.holder.kind === holder.kind && g.holder.id === holder.id);
 	const [kind, id] = pick.split(/:(.*)/) as ["gk" | "conn", string];
 	const selected = kind === "gk" ? gks.find((g) => g.id === id) : undefined;
@@ -42,7 +42,7 @@ export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; 
 		setErr("");
 		try {
 			if (conn) await api.post(`/api/w/${wsId}/grants`, { connection: conn.id, label: label || undefined, holder: to, autoApprove, methods: cap.methods, policy: cap.policy });
-			else await api.post(`/api/w/${wsId}/grants`, { gatekeeper: id, resource, label: label || undefined, holder: to, autoApprove });
+			else await api.post(`/api/w/${wsId}/grants`, { airlock: id, resource, label: label || undefined, holder: to, autoApprove });
 			setResource("");
 			setLabel("");
 			setCap({ policy: {} });
@@ -56,12 +56,12 @@ export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; 
 			<div>
 				<h3>Introduced resources</h3>
 				<div className="muted" style={{ fontSize: 13 }}>
-					This {holder.kind === "conversation" ? "chat's agent" : holder.kind === "project" ? "project's agents" : "gadget"} can reach exactly these — nothing else.{holder.kind === "project" && " A grant can be for the whole team or only some roles."} {holder.kind === "gadget" && <>Server code uses <code className="mono">ctx.gatekeepers["label"].method(args)</code>.</>}
+					This {holder.kind === "conversation" ? "chat's agent" : holder.kind === "mission" ? "mission's agents" : "module"} can reach exactly these — nothing else.{holder.kind === "mission" && " A grant can be for the whole team or only some roles."} {holder.kind === "module" && <>Server code uses <code className="mono">ctx.airlocks["label"].method(args)</code>.</>}
 				</div>
 			</div>
 			{mine.length === 0 && <div className="muted" style={{ fontSize: 13.5 }}>None yet.</div>}
 			{mine.map((g) => (
-				<GrantCard key={g.id} wsId={wsId} grant={g} info={gks.find((x) => x.id === g.gatekeeper)} conn={g.connection ? connections.find((c) => c.id === g.connection) : undefined} roles={roles} />
+				<GrantCard key={g.id} wsId={wsId} grant={g} info={gks.find((x) => x.id === g.airlock)} conn={g.connection ? connections.find((c) => c.id === g.connection) : undefined} roles={roles} />
 			))}
 			<form onSubmit={introduce} style={{ display: "grid", gap: 10 }}>
 				<div className="label">Introduce a resource</div>
@@ -86,7 +86,7 @@ export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; 
 				{selected?.setup && <div className="muted" style={{ fontSize: 12.5 }}>ⓘ {selected.setup}</div>}
 				{kind === "gk" && <input className="input" placeholder={selected?.resourceHint ?? "resource"} value={resource} onChange={(e) => setResource(e.target.value)} required={id !== "mailbox"} />}
 				{conn && <CapabilityEditor conn={conn} value={cap} onChange={setCap} />}
-				{holder.kind === "project" && roles && (
+				{holder.kind === "mission" && roles && (
 					<div className="row cap-roles">
 						<span className="muted">For</span>
 						<button type="button" className={`chip ${forRoles.length ? "" : "on"}`} onClick={() => setForRoles([])}>
@@ -123,7 +123,7 @@ export function ResourcesPanel({ wsId, holder, grants, roles }: { wsId: string; 
 	);
 }
 
-function GrantCard({ wsId, grant: g, info, conn, roles }: { wsId: string; grant: Grant; info?: GatekeeperInfo; conn?: ConnectionInfo; roles?: { id: string; title: string }[] }) {
+function GrantCard({ wsId, grant: g, info, conn, roles }: { wsId: string; grant: Grant; info?: AirlockInfo; conn?: ConnectionInfo; roles?: { id: string; title: string }[] }) {
 	const [editing, setEditing] = useState(false);
 	const [cap, setCap] = useState<Capability>({ methods: g.methods, policy: g.policy ?? {} });
 	const [err, setErr] = useState("");
@@ -148,7 +148,7 @@ function GrantCard({ wsId, grant: g, info, conn, roles }: { wsId: string; grant:
 						{g.connection ? (conn ? (conn.kind === "mcp" ? "MCP server" : "REST API") : "connection removed") : info?.title} · label “{g.label}” · by {g.createdBy}
 					</div>
 					{summary && <div className="mono muted cap-sum">{summary}</div>}
-					{g.holder.kind === "project" && <div className="mono muted cap-sum">for {g.holder.roles?.length ? g.holder.roles.map((r) => roles?.find((x) => x.id === r)?.title ?? r).join(", ") : "the whole team"}</div>}
+					{g.holder.kind === "mission" && <div className="mono muted cap-sum">for {g.holder.roles?.length ? g.holder.roles.map((r) => roles?.find((x) => x.id === r)?.title ?? r).join(", ") : "the whole team"}</div>}
 				</div>
 				{!byo && (
 					<label className="row mono" style={{ fontSize: 11.5, gap: 4 }} title="Run side effects without asking">

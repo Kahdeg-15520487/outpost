@@ -14,18 +14,18 @@ const STATUS_TEXT: Record<PreviewInfo["status"], string> = {
 };
 
 /**
- * The App tab: pi-os runs the project's app from main (.pios/project.json) and shows it here, with its
+ * The App tab: outpost runs the mission's app from main (.outpost/mission.json) and shows it here, with its
  * logs. It starts when you open the tab and restarts by itself after merges that touch app/.
  */
-export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, backlog }: { wsId: string; projectId: string; preview: PreviewInfo; canEdit: boolean; feedback?: Record<string, Feedback>; backlog?: Backlog }) {
-	const [fbOpen, setFbOpen] = useState(() => localStorage.getItem("pios.preview.feedback") === "1");
+export function PreviewTab({ wsId, missionId, preview, canEdit, feedback = {}, backlog }: { wsId: string; missionId: string; preview: PreviewInfo; canEdit: boolean; feedback?: Record<string, Feedback>; backlog?: Backlog }) {
+	const [fbOpen, setFbOpen] = useState(() => localStorage.getItem("outpost.preview.feedback") === "1");
 	const fbCount = Object.keys(feedback).length;
 	const toggleFb = () => {
 		setFbOpen(!fbOpen);
-		localStorage.setItem("pios.preview.feedback", fbOpen ? "0" : "1");
+		localStorage.setItem("outpost.preview.feedback", fbOpen ? "0" : "1");
 	};
-	const base = `/api/w/${wsId}/projects/${projectId}/preview`;
-	const [logsOpen, setLogsOpen] = useState(() => localStorage.getItem("pios.preview.logs") === "1");
+	const base = `/api/w/${wsId}/missions/${missionId}/preview`;
+	const [logsOpen, setLogsOpen] = useState(() => localStorage.getItem("outpost.preview.logs") === "1");
 	const [lines, setLines] = useState<PreviewLogLine[]>([]);
 	const [busy, setBusy] = useState(false);
 	const seq = useRef(0);
@@ -33,7 +33,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 	const pinned = useRef(true);
 	const p = preview;
 	const running = p.status === "running" && p.port;
-	// The preview is its own server on its own port, so use the host pi-os was reached on (localhost, a
+	// The preview is its own server on its own port, so use the host outpost was reached on (localhost, a
 	// LAN address, a container's published address) rather than the address it bound to.
 	const url = running ? `http://${location.hostname || "127.0.0.1"}:${p.port}/` : "";
 	const showLogs = logsOpen || !running;
@@ -42,7 +42,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 	useEffect(() => {
 		if (canEdit && p.status === "off" && !p.stoppedByUser) void api.post(`${base}/start`, {}).catch(() => {});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [projectId]);
+	}, [missionId]);
 
 	// Pull new log lines when the server says there are some.
 	useEffect(() => {
@@ -74,7 +74,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 	};
 	const toggleLogs = () => {
 		setLogsOpen(!logsOpen);
-		localStorage.setItem("pios.preview.logs", logsOpen ? "0" : "1");
+		localStorage.setItem("outpost.preview.logs", logsOpen ? "0" : "1");
 	};
 
 	return (
@@ -136,7 +136,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 						) : p.status === "no-config" ? (
 							<>
 								<div className="pv-etitle">Nothing to run yet</div>
-								<p className="muted">The app appears here once main has <code>.pios/project.json</code> (the architect writes it with the design) and code in <code>app/</code>. It starts by itself and restarts after every merge.</p>
+								<p className="muted">The app appears here once main has <code>.outpost/mission.json</code> (the architect writes it with the design) and code in <code>app/</code>. It starts by itself and restarts after every merge.</p>
 							</>
 						) : p.status === "failed" || p.status === "crashed" ? (
 							<>
@@ -153,7 +153,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 					</div>
 				)}
 			</div>
-			{fbOpen && <FeedbackPanel wsId={wsId} projectId={projectId} preview={preview} canEdit={canEdit} feedback={feedback} backlog={backlog} />}
+			{fbOpen && <FeedbackPanel wsId={wsId} missionId={missionId} preview={preview} canEdit={canEdit} feedback={feedback} backlog={backlog} />}
 			</div>
 
 			{showLogs && (
@@ -169,7 +169,7 @@ export function PreviewTab({ wsId, projectId, preview, canEdit, feedback = {}, b
 						<span>Logs</span>
 						{p.command && <span className="muted">{p.command}</span>}
 					</div>
-					{lines.length ? lines.map((l) => <div key={l.seq} className={`pl ${l.stream}`}>{l.text || "\u00a0"}</div>) : <div className="pl pi-os">No output yet.</div>}
+					{lines.length ? lines.map((l) => <div key={l.seq} className={`pl ${l.stream}`}>{l.text || "\u00a0"}</div>) : <div className="pl outpost">No output yet.</div>}
 				</div>
 			)}
 		</div>
@@ -191,8 +191,8 @@ function feedbackStatus(fb: Feedback, items: BacklogItem[]): { label: string; to
  * drafts backlog items from it (pending until you approve them on the Backlog tab); you can also make
  * a PBI yourself, or decline it.
  */
-function FeedbackPanel({ wsId, projectId, preview, canEdit, feedback, backlog }: { wsId: string; projectId: string; preview: PreviewInfo; canEdit: boolean; feedback: Record<string, Feedback>; backlog?: Backlog }) {
-	const base = `/api/w/${wsId}/projects/${projectId}/feedback`;
+function FeedbackPanel({ wsId, missionId, preview, canEdit, feedback, backlog }: { wsId: string; missionId: string; preview: PreviewInfo; canEdit: boolean; feedback: Record<string, Feedback>; backlog?: Backlog }) {
+	const base = `/api/w/${wsId}/missions/${missionId}/feedback`;
 	const att = useAttachments(wsId);
 	const [text, setText] = useState("");
 	const [busy, setBusy] = useState(false);

@@ -29,28 +29,26 @@ export function Login({ onAuthed }: { onAuthed: (u: User) => void }) {
 				<div className="orb" />
 				<div className="row" style={{ gap: 12, position: "relative" }}>
 					<div className="brand" style={{ padding: 0 }}>
-						<div className="logo">π</div>
-						<div className="name">
-							pi<em>·</em>os
-						</div>
+						<div className="logo"><img src="/outpost.svg" width="30" height="30" alt="" /></div>
+						<div className="name">Outpost</div>
 					</div>
 				</div>
 				<h1 style={{ position: "relative" }}>
-					An operating system
+					Your workspace.
 					<br />
-					for <em>agent</em> work.
+					Your <em>agents.</em>
 				</h1>
 				<div className="table">
-					<span>kernel</span>
-					<b>pi-durable harness · one SQLite per workspace</b>
-					<span>processes</span>
-					<b>gadgets · QuickJS servers + sandboxed frames</b>
-					<span>drivers</span>
-					<b>gatekeepers · capabilities, deferred approval</b>
-					<span>executables</span>
-					<b>blueprints</b>
-					<span>shell</span>
-					<b>this page</b>
+					<span>missions</span>
+					<b>Give a team a goal. Review what it builds.</b>
+					<span>modules</span>
+					<b>Personal apps you and your agents use together.</b>
+					<span>airlocks</span>
+					<b>Control access. Approve external changes.</b>
+					<span>blueprints</span>
+					<b>Start from a template. Make it your own.</b>
+					<span>your server</span>
+					<b>Self-hosted. Built on pi-durable.</b>
 				</div>
 			</div>
 			<div className="auth-form">

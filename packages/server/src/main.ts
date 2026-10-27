@@ -5,9 +5,9 @@ import { config } from "./config.ts";
 import { createApi } from "./http/api.ts";
 import { sendJson } from "./http/util.ts";
 import { attachSockets } from "./collab/socket.ts";
-import { installBuiltinBlueprints } from "./gadgets/blueprints.ts";
+import { installBuiltinBlueprints } from "./modules/blueprints.ts";
 import { Workspace } from "./kernel/workspace.ts";
-import { closeRenderer } from "./gadgets/render.ts";
+import { closeRenderer } from "./modules/render.ts";
 import { workspaces } from "./kernel/system-db.ts";
 
 process.removeAllListeners("warning");
@@ -37,7 +37,7 @@ const server = createServer(async (req, res) => {
 		if (!file.startsWith(config.webDist) || !existsSync(file) || statSync(file).isDirectory()) file = join(config.webDist, "index.html");
 		if (!existsSync(file)) {
 			res.writeHead(200, { "content-type": "text/plain" });
-			return res.end("pi-os API is running. Build the web app (pnpm build) or run `pnpm dev` and open http://localhost:5173");
+			return res.end("Outpost API is running. Build the web app (pnpm build) or run `pnpm dev` and open http://localhost:5173");
 		}
 		res.writeHead(200, {
 			"content-type": MIME[extname(file)] ?? "application/octet-stream",
@@ -53,8 +53,8 @@ const server = createServer(async (req, res) => {
 attachSockets(server);
 
 server.listen(config.port, config.host, () => {
-	console.log(`pi-os listening on http://${config.host}:${config.port}`);
-	console.log(`  config: ${config.configFound ? config.configPath : `(none — defaults; create ${config.configPath}, see pi-os.config.example.json)`}`);
+	console.log(`Outpost listening on http://${config.host}:${config.port}`);
+	console.log(`  config: ${config.configFound ? config.configPath : `(none — defaults; create ${config.configPath}, see outpost.config.example.json)`}`);
 	console.log(`  data:   ${config.dataDir}`);
 });
 

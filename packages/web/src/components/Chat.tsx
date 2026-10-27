@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
 import { EditableLabel } from "./RowMenu";
-import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Gadget, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Module, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
@@ -11,8 +11,8 @@ const SUGGESTIONS: Suggestion[] = [
 	{ k: "✅", t: "Shared task list", d: "for the team offsite", p: "Make a todo list for the team offsite and add the obvious tasks." },
 	{ k: "⭕", t: "Play a game", d: "tic tac toe against the agent", p: "Make a tic tac toe game. I'll be X and you be O — join the game." },
 	{ k: "🖍️", t: "Whiteboard", d: "draw together in real time", p: "Make a collaborative whiteboard." },
-	{ k: "📊", t: "Build an app", d: "anything — the agent writes it", p: "Build a habit tracker gadget with a weekly grid and streak counts." },
-	{ k: "🐙", t: "Use a Gatekeeper", d: "issues dashboard for a repo", p: "Make an issue dashboard for the GitHub repo earendil-works/pi. Request access to it first." },
+	{ k: "📊", t: "Build an app", d: "anything — the agent writes it", p: "Build a habit tracker module with a weekly grid and streak counts." },
+	{ k: "🐙", t: "Use a Airlock", d: "issues dashboard for a repo", p: "Make an issue dashboard for the GitHub repo earendil-works/pi. Request access to it first." },
 ];
 
 export function ChatView(props: {
@@ -22,9 +22,9 @@ export function ChatView(props: {
 	models: ModelInfo[];
 	defaultModel?: ModelRef;
 	grants: WorkspaceDocs["grants"];
-	openGadget?: string;
-	/** The gadget open beside the chat, when it's in this workspace's list. */
-	gadget?: Gadget;
+	openModule?: string;
+	/** The module open beside the chat, when it's in this workspace's list. */
+	module?: Module;
 	/** This user's model dropdown selection (see ModelPickerDialog). */
 	picker: ModelPicker;
 	onManageModels: () => void;
@@ -40,9 +40,9 @@ export function ChatView(props: {
 	const [dragging, setDragging] = useState(false);
 	// "Ask the agent about this file" from the Files page hands files over through sessionStorage.
 	useEffect(() => {
-		const handoff = sessionStorage.getItem("pios.attach");
+		const handoff = sessionStorage.getItem("outpost.attach");
 		if (handoff) {
-			sessionStorage.removeItem("pios.attach");
+			sessionStorage.removeItem("outpost.attach");
 			att.addExisting(JSON.parse(handoff));
 		}
 	}, []);
@@ -50,12 +50,12 @@ export function ChatView(props: {
 	const stick = useRef(true);
 	const canEdit = ws.role !== "viewer";
 
-	// Open gadgets that tools touch, as they happen.
+	// Open modules that tools touch, as they happen.
 	const lastOpened = useRef(0);
 	useEffect(() => {
 		if (state.opened && state.opened.seq !== lastOpened.current) {
 			lastOpened.current = state.opened.seq;
-			if (props.openGadget !== state.opened.gadget) navigate(chatHref(ws.id, chatId, state.opened.gadget));
+			if (props.openModule !== state.opened.module) navigate(chatHref(ws.id, chatId, state.opened.module));
 		}
 	}, [state.opened]);
 
@@ -69,21 +69,21 @@ export function ChatView(props: {
 		let id = chatId;
 		if (!id) {
 			id = (await api.post(`/api/w/${ws.id}/chats`, { model: pendingModel ?? newChatModel })).id as string;
-			navigate(chatHref(ws.id, id, props.openGadget));
+			navigate(chatHref(ws.id, id, props.openModule));
 		}
 		stick.current = true;
-		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode, files, gadget: props.openGadget });
+		await api.post(`/api/w/${ws.id}/chats/${id}/messages`, { content, mode, files, module: props.openModule });
 		att.clear();
 	};
 
 	const chatGrants = Object.values(props.grants.grants).filter((g) => g.holder.kind === "conversation" && g.holder.id === chatId);
-	const empty = !chatId || (state.ready && state.entries.filter((e) => e.kind === "os.user" || e.kind === "pi.user").length === 0);
+	const empty = !chatId || (state.ready && state.entries.filter((e) => e.kind === "outpost.user" || e.kind === "pi.user").length === 0);
 	// A new chat never starts on a model the user hid: fall back to the first one they kept.
 	const newChatModel = useMemo(() => {
 		const d = props.defaultModel;
 		const shown = (r: ModelRef) => pickerShows(props.picker, { provider: r.provider, id: r.modelId });
 		if (!d || shown(d)) return d;
-		const first = props.models.find((m) => pickerShows(props.picker, m) && m.provider !== "pi-os-demo") ?? props.models.find((m) => pickerShows(props.picker, m));
+		const first = props.models.find((m) => pickerShows(props.picker, m) && m.provider !== "outpost-demo") ?? props.models.find((m) => pickerShows(props.picker, m));
 		return first ? { provider: first.provider, modelId: first.id } : d;
 	}, [props.defaultModel, props.models, props.picker]);
 	const model: ModelRef | undefined = chatId ? state.agent?.model : (pendingModel ?? newChatModel);
@@ -140,15 +140,15 @@ export function ChatView(props: {
 			>
 				<div className="transcript-inner">
 					{empty ? (
-						props.openGadget ? (
-							<GadgetHero gadget={props.gadget} canEdit={canEdit} onPick={(p) => send(p)} />
+						props.openModule ? (
+							<ModuleHero module={props.module} canEdit={canEdit} onPick={(p) => send(p)} />
 						) : (
 							<div className="hero">
 								<h1>
 									What should we <em>make</em>?
 								</h1>
 								<p>
-									Ask for anything. The agent works in code, builds sandboxed apps (<b>gadgets</b>) you can share, and reaches company systems only through <b>Gatekeepers</b> you introduce — with
+									Ask for anything. The agent works in code, builds sandboxed apps (<b>modules</b>) you can share, and reaches company systems only through <b>Airlocks</b> you introduce — with
 									side effects queued for your approval.
 								</p>
 								{canEdit && <Suggestions list={SUGGESTIONS} onPick={(p) => send(p)} />}
@@ -159,7 +159,7 @@ export function ChatView(props: {
 					)}
 				</div>
 			</div>
-			{canEdit && <Composer placeholder={props.openGadget && empty ? `Ask the agent about ${props.gadget?.name ?? "this gadget"}…` : undefined} chatId={chatId} state={state} models={props.models} modelPicker={props.picker} onManageModels={props.onManageModels} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
+			{canEdit && <Composer placeholder={props.openModule && empty ? `Ask the agent about ${props.module?.name ?? "this module"}…` : undefined} chatId={chatId} state={state} models={props.models} modelPicker={props.picker} onManageModels={props.onManageModels} model={model} onModel={chooseModel} onAbort={() => api.post(`/api/w/${ws.id}/chats/${chatId}/abort`)} onSend={send} att={att} />}
 			{resources && chatId && <ResourcesDialog ws={ws} holder={{ kind: "conversation", id: chatId }} grants={props.grants} onClose={() => setResources(false)} />}
 		</div>
 	);
@@ -184,10 +184,10 @@ function Headline({ text }: { text: string }) {
 	return <>{text.split(/(\*[^*]+\*)/).map((part, i) => (part.startsWith("*") && part.endsWith("*") ? <em key={i}>{part.slice(1, -1)}</em> : part))}</>;
 }
 
-/** The empty state of a chat opened beside a gadget: about that gadget, not about pi-os in general. */
-function GadgetHero({ gadget, canEdit, onPick }: { gadget?: Gadget; canEdit: boolean; onPick: (prompt: string) => void }) {
-	const name = gadget?.name ?? "this gadget";
-	const bp = gadget?.blueprint;
+/** The empty state of a chat opened beside a module: about that module, not about outpost in general. */
+function ModuleHero({ module, canEdit, onPick }: { module?: Module; canEdit: boolean; onPick: (prompt: string) => void }) {
+	const name = module?.name ?? "this module";
+	const bp = module?.blueprint;
 	const suggestions: Suggestion[] = bp?.suggestions?.length
 		? bp.suggestions
 		: [
@@ -197,11 +197,11 @@ function GadgetHero({ gadget, canEdit, onPick }: { gadget?: Gadget; canEdit: boo
 				{ k: "🎨", t: "Polish the look", d: "layout, type, spacing", p: `Restyle ${name}: cleaner layout, better typography, consistent spacing. Check it with a screenshot.` },
 			];
 	return (
-		<div className="hero gadget-hero">
+		<div className="hero module-hero">
 			<div className="gh-tag">
-				<span className="gh-icon">{gadget?.icon ?? "◆"}</span>
+				<span className="gh-icon">{module?.icon ?? "◆"}</span>
 				<span className="gh-name">{name}</span>
-				<span className="gh-src">{!bp ? "gadget" : bp.name === name ? "blueprint" : `from ${bp.name} blueprint`}</span>
+				<span className="gh-src">{!bp ? "module" : bp.name === name ? "blueprint" : `from ${bp.name} blueprint`}</span>
 				<span className="gh-arrow" aria-hidden>
 					open on the right →
 				</span>
@@ -259,7 +259,7 @@ export function Transcript({ state, wsId, chatId }: { state: ChatState; wsId: st
 
 function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>; tools: Record<string, LiveTool>; nested: Map<string, LiveTool[]>; wsId: string; chatId: string }) {
 	switch (entry.kind) {
-		case "os.user":
+		case "outpost.user":
 			return (
 				<div className="msg-user">
 					<div className="author">{entry.data?.author ?? "You"}</div>
@@ -276,7 +276,7 @@ function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>
 			);
 		case "pi.assistant":
 			return <AssistantView content={entry.model?.[0]?.content ?? []} error={entry.model?.[0]?.errorMessage} stopReason={entry.model?.[0]?.stopReason} {...rest} />;
-		case "os.notice":
+		case "outpost.notice":
 			return <div className="notice">{entry.data?.text}</div>;
 		case "pi.compaction":
 			return <div className="divider">context compacted — older turns summarized</div>;
@@ -313,8 +313,8 @@ function AssistantView({ content, results, tools, nested, streaming, error, stop
 function argPreview(name: string, args: any): string {
 	if (!args) return "";
 	if (name === "codemode") return String(args.code ?? "").split("\n").find((l: string) => l.trim()) ?? "";
-	if (name === "gadget_write") return `${args.path} (${String(args.content ?? "").length} chars)`;
-	if (name === "gadget_call") return `${args.method}(${JSON.stringify(args.args ?? []).slice(1, -1)})`;
+	if (name === "module_write") return `${args.path} (${String(args.content ?? "").length} chars)`;
+	if (name === "module_call") return `${args.method}(${JSON.stringify(args.args ?? []).slice(1, -1)})`;
 	if (name === "subagent") return args.task;
 	return Object.entries(args)
 		.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
@@ -339,8 +339,8 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 				<span className={`st ${running ? "run" : isError ? "bad" : interrupted ? "" : "ok"}`}>{running ? "●" : isError ? "✕" : interrupted ? "⊘" : "✓"}</span>
 				<span className="name">{call.name}</span>
 				<span className="arg">{argPreview(call.name, args)}</span>
-				{details?.openGadget && (
-					<a className="open" href={chatHref(wsId, chatId, details.openGadget)} onClick={(e) => e.stopPropagation()}>
+				{details?.openModule && (
+					<a className="open" href={chatHref(wsId, chatId, details.openModule)} onClick={(e) => e.stopPropagation()}>
 						open ↗
 					</a>
 				)}

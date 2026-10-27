@@ -47,7 +47,7 @@ export class Router {
 			const match = route.pattern.exec(url.pathname);
 			if (!match) continue;
 			const params = Object.fromEntries(route.keys.map((k, i) => [k, decodeURIComponent(match[i + 1]!)]));
-			const user = sessions.user(parseCookies(raw.headers.cookie).pios_session);
+			const user = sessions.user(parseCookies(raw.headers.cookie).outpost_session);
 			let bodyCache: Promise<any> | undefined;
 			const req: Req = {
 				raw,

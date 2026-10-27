@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
-import { api, type AgentSummary, type ConnectionInfo, type ConnectionProposal, type Backlog, type Gadget, type PreviewInfo, type ProjectMeta, type ProjectState, type WorkspaceDocs } from "./api";
+import { api, type AgentSummary, type ConnectionInfo, type ConnectionProposal, type Backlog, type Module, type PreviewInfo, type MissionMeta, type MissionState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
 
 // ------------------------------------------------------------------ routing (hash)
@@ -7,13 +7,13 @@ import { socket } from "./socket";
 export type Route =
 	| { page: "home" }
 	| { page: "home"; ws: string }
-	| { page: "chat"; ws: string; chat?: string; gadget?: string; /** gadget shown full width, chat hidden */ focus?: boolean }
+	| { page: "chat"; ws: string; chat?: string; module?: string; /** module shown full width, chat hidden */ focus?: boolean }
 	| { page: "blueprints"; ws: string }
 	| { page: "settings"; ws: string }
 	| { page: "connections"; ws: string }
 	| { page: "files"; ws: string }
-	| { page: "project"; ws: string; project: string; tab?: string }
-	| { page: "gadget"; gadget: string }
+	| { page: "mission"; ws: string; mission: string; tab?: string }
+	| { page: "module"; module: string }
 	| { page: "link"; token: string };
 
 function parse(): Route {
@@ -25,14 +25,14 @@ function parse(): Route {
 		if (parts[2] === "settings") return { page: "settings", ws: parts[1] };
 		if (parts[2] === "connections") return { page: "connections", ws: parts[1] };
 		if (parts[2] === "files") return { page: "files", ws: parts[1] };
-		if (parts[2] === "p" && parts[3]) return { page: "project", ws: parts[1], project: parts[3], tab: q.get("tab") ?? undefined };
-		// A gadget with no chat beside it (opened from the sidebar): show it in an empty chat.
-		if (parts[2] === "g" && parts[3]) return { page: "chat", ws: parts[1], gadget: parts[3], focus: q.get("focus") === "1" };
-		if (parts[2] === "c") return { page: "chat", ws: parts[1], chat: parts[3], gadget: q.get("g") ?? undefined, focus: !!q.get("g") && q.get("focus") === "1" };
+		if (parts[2] === "missions" && parts[3]) return { page: "mission", ws: parts[1], mission: parts[3], tab: q.get("tab") ?? undefined };
+		// A module with no chat beside it (opened from the sidebar): show it in an empty chat.
+		if (parts[2] === "modules" && parts[3]) return { page: "chat", ws: parts[1], module: parts[3], focus: q.get("focus") === "1" };
+		if (parts[2] === "c") return { page: "chat", ws: parts[1], chat: parts[3], module: q.get("module") ?? undefined, focus: !!q.get("module") && q.get("focus") === "1" };
 		// The workspace itself: its homepage.
 		return { page: "home", ws: parts[1] };
 	}
-	if (parts[0] === "g" && parts[1]) return { page: "gadget", gadget: parts[1] };
+	if (parts[0] === "modules" && parts[1]) return { page: "module", module: parts[1] };
 	if (parts[0] === "link" && parts[1]) return { page: "link", token: parts[1] };
 	return { page: "home" };
 }
@@ -51,9 +51,9 @@ export const useRoute = () =>
 export const navigate = (hash: string) => {
 	if (location.hash !== hash) location.hash = hash;
 };
-/** `focus`: show the gadget full width with the chat hidden (opening it yourself); the agent opening one keeps the chat visible. */
-export const chatHref = (ws: string, chat?: string, gadget?: string, focus?: boolean) =>
-	chat ? `#/w/${ws}/c/${chat}${gadget ? `?g=${gadget}${focus ? "&focus=1" : ""}` : ""}` : gadget ? `#/w/${ws}/g/${gadget}${focus ? "?focus=1" : ""}` : homeHref(ws);
+/** `focus`: show the module full width with the chat hidden (opening it yourself); the agent opening one keeps the chat visible. */
+export const chatHref = (ws: string, chat?: string, module?: string, focus?: boolean) =>
+	chat ? `#/w/${ws}/c/${chat}${module ? `?module=${module}${focus ? "&focus=1" : ""}` : ""}` : module ? `#/w/${ws}/modules/${module}${focus ? "?focus=1" : ""}` : homeHref(ws);
 /** The workspace homepage: what you were doing last time and what happened while you were away. */
 export const homeHref = (ws: string) => `#/w/${ws}`;
 
@@ -63,10 +63,10 @@ const emptyDocs: WorkspaceDocs = { chats: { chats: {} }, grants: { grants: {}, r
 
 export function useWorkspace(ws: string | undefined) {
 	const [docs, setDocs] = useState<WorkspaceDocs>(emptyDocs);
-	const [gadgets, setGadgets] = useState<Gadget[]>([]);
-	const [gadgetsTick, setTick] = useState(0);
-	const [projects, setProjects] = useState<ProjectMeta[]>([]);
-	const [projectsTick, setProjectsTick] = useState(0);
+	const [modules, setModules] = useState<Module[]>([]);
+	const [modulesTick, setTick] = useState(0);
+	const [missions, setMissions] = useState<MissionMeta[]>([]);
+	const [missionsTick, setMissionsTick] = useState(0);
 	useEffect(() => {
 		if (!ws) return;
 		setDocs(emptyDocs);
@@ -74,8 +74,8 @@ export function useWorkspace(ws: string | undefined) {
 			if (m.ws !== ws) return;
 			if (m.t === "ws.snapshot") setDocs({ chats: m.chats, grants: m.grants, approvals: m.approvals, audit: m.audit, mailbox: m.mailbox, files: m.files });
 			else if (m.t === "ws.doc") setDocs((d) => ({ ...d, [m.name]: m.value }));
-			else if (m.t === "ws.gadgets") setTick((t) => t + 1);
-			else if (m.t === "ws.projects") setProjectsTick((t) => t + 1);
+			else if (m.t === "ws.modules") setTick((t) => t + 1);
+			else if (m.t === "ws.missions") setMissionsTick((t) => t + 1);
 		});
 		const unsub = socket.subscribe(`ws:${ws}`, { kind: "ws", ws });
 		return () => {
@@ -86,52 +86,52 @@ export function useWorkspace(ws: string | undefined) {
 	useEffect(() => {
 		if (!ws) return;
 		let live = true;
-		api.get(`/api/w/${ws}/gadgets`).then((r) => live && setGadgets(r.gadgets)).catch(() => {});
+		api.get(`/api/w/${ws}/modules`).then((r) => live && setModules(r.modules)).catch(() => {});
 		return () => {
 			live = false;
 		};
-	}, [ws, gadgetsTick]);
+	}, [ws, modulesTick]);
 	useEffect(() => {
 		if (!ws) return;
 		let live = true;
-		api.get(`/api/w/${ws}/projects`).then((r) => live && setProjects(r.projects)).catch(() => {});
+		api.get(`/api/w/${ws}/missions`).then((r) => live && setMissions(r.missions)).catch(() => {});
 		return () => {
 			live = false;
 		};
-	}, [ws, projectsTick]);
-	return { docs, gadgets, projects };
+	}, [ws, missionsTick]);
+	return { docs, modules, missions };
 }
 
-export const projectHref = (ws: string, project: string, tab?: string) => `#/w/${ws}/p/${project}${tab ? `?tab=${tab}` : ""}`;
+export const missionHref = (ws: string, mission: string, tab?: string) => `#/w/${ws}/missions/${mission}${tab ? `?tab=${tab}` : ""}`;
 
-// ------------------------------------------------------------------ projects (agent teams)
+// ------------------------------------------------------------------ missions (agent teams)
 
-export type ProjectLive = { project?: ProjectMeta; state: ProjectState; backlog: Backlog; summaries: Record<string, AgentSummary>; head: string; repoTick: number; preview: PreviewInfo };
-const emptyProject: ProjectLive = { state: { agents: {}, order: [], questions: {}, activity: [] }, backlog: { items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 }, summaries: {}, head: "", repoTick: 0, preview: { status: "off", logSeq: 0 } };
+export type MissionLive = { mission?: MissionMeta; state: MissionState; backlog: Backlog; summaries: Record<string, AgentSummary>; head: string; repoTick: number; preview: PreviewInfo };
+const emptyMission: MissionLive = { state: { agents: {}, order: [], questions: {}, activity: [] }, backlog: { items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 }, summaries: {}, head: "", repoTick: 0, preview: { status: "off", logSeq: 0 } };
 
-/** A project's team, agent summaries and repo head, live over the socket. */
-export function useProject(ws: string, project: string): ProjectLive {
-	const [live, setLive] = useState<ProjectLive>(emptyProject);
+/** A mission's team, agent summaries and repo head, live over the socket. */
+export function useMission(ws: string, mission: string): MissionLive {
+	const [live, setLive] = useState<MissionLive>(emptyMission);
 	useEffect(() => {
-		setLive(emptyProject);
+		setLive(emptyMission);
 		const off = socket.on((m) => {
 			if (m.ws !== ws) return;
-			if (m.t === "project.snapshot" && m.projectId === project) setLive((l) => ({ project: m.project, state: m.state, backlog: m.backlog ?? l.backlog, summaries: m.summaries, head: m.head, repoTick: l.repoTick + 1, preview: m.preview ?? l.preview }));
-			else if (m.project !== project) return;
-			else if (m.t === "project.state") setLive((l) => ({ ...l, state: m.state }));
-			else if (m.t === "project.backlog") setLive((l) => ({ ...l, backlog: m.backlog }));
-			else if (m.t === "project.agent") setLive((l) => ({ ...l, summaries: { ...l.summaries, [m.key]: m.summary } }));
-			else if (m.t === "project.repo") setLive((l) => ({ ...l, head: m.head ?? l.head, repoTick: l.repoTick + 1 }));
-			else if (m.t === "project.preview") setLive((l) => ({ ...l, preview: m.preview }));
-			else if (m.t === "project.preview.log") setLive((l) => ({ ...l, preview: { ...l.preview, logSeq: m.seq } }));
-			else if (m.t === "project.meta") api.get(`/api/w/${ws}/projects/${project}`).then((r) => setLive((l) => ({ ...l, project: r.project })));
+			if (m.t === "mission.snapshot" && m.missionId === mission) setLive((l) => ({ mission: m.mission, state: m.state, backlog: m.backlog ?? l.backlog, summaries: m.summaries, head: m.head, repoTick: l.repoTick + 1, preview: m.preview ?? l.preview }));
+			else if (m.mission !== mission) return;
+			else if (m.t === "mission.state") setLive((l) => ({ ...l, state: m.state }));
+			else if (m.t === "mission.backlog") setLive((l) => ({ ...l, backlog: m.backlog }));
+			else if (m.t === "mission.agent") setLive((l) => ({ ...l, summaries: { ...l.summaries, [m.key]: m.summary } }));
+			else if (m.t === "mission.repo") setLive((l) => ({ ...l, head: m.head ?? l.head, repoTick: l.repoTick + 1 }));
+			else if (m.t === "mission.preview") setLive((l) => ({ ...l, preview: m.preview }));
+			else if (m.t === "mission.preview.log") setLive((l) => ({ ...l, preview: { ...l.preview, logSeq: m.seq } }));
+			else if (m.t === "mission.meta") api.get(`/api/w/${ws}/missions/${mission}`).then((r) => setLive((l) => ({ ...l, mission: r.mission })));
 		});
-		const unsub = socket.subscribe(`project:${ws}:${project}`, { kind: "project", ws, project });
+		const unsub = socket.subscribe(`mission:${ws}:${mission}`, { kind: "mission", ws, mission });
 		return () => {
 			off();
 			unsub();
 		};
-	}, [ws, project]);
+	}, [ws, mission]);
 	return live;
 }
 
@@ -160,8 +160,8 @@ export type ChatState = {
 	retry?: { at: number; error: string };
 	error?: string;
 	compacting: boolean;
-	/** gadget ids opened by tools during this session (not on history replay) */
-	opened?: { gadget: string; seq: number };
+	/** module ids opened by tools during this session (not on history replay) */
+	opened?: { module: string; seq: number };
 };
 
 const initialChat: ChatState = { ready: false, entries: [], tools: {}, busy: false, inbox: [], agent: {}, usage: {}, compacting: false };
@@ -258,7 +258,7 @@ function reduce(s: ChatState, events: any[]): ChatState {
 				const details = e.result?.details ?? e.entry?.model?.[0]?.details ?? t.details;
 				next.tools = { ...next.tools, [e.toolCallId]: { ...t, status: "done", isError, details } };
 				if (e.entry && !next.entries.some((x) => x.id === e.entry.id)) next.entries = [...next.entries, e.entry];
-				if (details?.openGadget) next.opened = { gadget: details.openGadget, seq: ++openSeq };
+				if (details?.openModule) next.opened = { module: details.openModule, seq: ++openSeq };
 				break;
 			}
 			case "inbox_update":

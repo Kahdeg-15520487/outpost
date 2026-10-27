@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { api, type ApprovalAction, type Gadget, type Workspace, type WorkspaceDocs } from "../api";
+import { api, type ApprovalAction, type Module, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, timeAgo, useConnections } from "../store";
-import { useGatekeepers } from "./Resources";
+import { useAirlocks } from "./Resources";
 
-export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace; docs: WorkspaceDocs; gadgets: Gadget[]; onClose: () => void }) {
-	const gks = useGatekeepers();
+export function ApprovalsDrawer({ ws, docs, modules, onClose }: { ws: Workspace; docs: WorkspaceDocs; modules: Module[]; onClose: () => void }) {
+	const gks = useAirlocks();
 	const [tab, setTab] = useState<"queue" | "history" | "audit" | "outbox">("queue");
 	const [busy, setBusy] = useState<string>();
 	const actions = Object.values(docs.approvals.actions).sort((a, b) => b.createdAt - a.createdAt);
@@ -16,9 +16,9 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 	const holderName = (h: { kind: string; id: string; roles?: string[] }) =>
 		h.kind === "conversation"
 			? `chat “${docs.chats.chats[h.id]?.title ?? h.id}”`
-			: h.kind === "project"
-				? `project team${h.roles?.length ? ` (${h.roles.join(", ")})` : ""}`
-				: `gadget “${gadgets.find((g) => g.id === h.id)?.name ?? h.id}”`;
+			: h.kind === "mission"
+				? `mission team${h.roles?.length ? ` (${h.roles.join(", ")})` : ""}`
+				: `module “${modules.find((g) => g.id === h.id)?.name ?? h.id}”`;
 
 	const decide = async (a: ApprovalAction, approve: boolean) => {
 		setBusy(a.id);
@@ -65,7 +65,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 					{tab === "queue" && (
 						<>
 							<div className="muted" style={{ fontSize: 13.5 }}>
-								Agents and gadgets don't wait for you: side effects are <b>simulated</b> and queued here, so work continues. Review them when it suits you.
+								Agents and modules don't wait for you: side effects are <b>simulated</b> and queued here, so work continues. Review them when it suits you.
 							</div>
 							{proposals.map((p) => (
 								<div key={p.id} className="action">
@@ -88,15 +88,15 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 								<div key={r.id} className="action">
 									<span className="stamp pending">access?</span>
 									<div className="sum">
-										{icon(r.gatekeeper)} {r.resource}
+										{icon(r.airlock)} {r.resource}
 									</div>
 									<div className="meta">
-										{r.gatekeeper} · requested by {holderName(r.holder)} · {timeAgo(r.createdAt)}
+										{r.airlock} · requested by {holderName(r.holder)} · {timeAgo(r.createdAt)}
 									</div>
 									<pre>{r.reason}</pre>
 									{r.methods?.length ? <div className="mono muted" style={{ fontSize: 11.5 }}>asks for: {r.methods.join(", ")}</div> : null}
 									<div className="row">
-										<button className="btn primary small" onClick={() => api.post(`/api/w/${ws.id}/grants`, r.connection ? { connection: r.connection, methods: r.methods, holder: r.holder, requestId: r.id } : { gatekeeper: r.gatekeeper, resource: r.resource, holder: r.holder, requestId: r.id })}>
+										<button className="btn primary small" onClick={() => api.post(`/api/w/${ws.id}/grants`, r.connection ? { connection: r.connection, methods: r.methods, holder: r.holder, requestId: r.id } : { airlock: r.airlock, resource: r.resource, holder: r.holder, requestId: r.id })}>
 											Introduce
 										</button>
 										<button className="btn small" onClick={() => api.post(`/api/w/${ws.id}/requests/${r.id}/deny`)}>
@@ -114,18 +114,18 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 								</div>
 							)}
 							{pending.map((a) => (
-								<ActionCard key={a.id} a={a} icon={icon(a.gatekeeper)} who={a.requestedBy.name} busy={busy === a.id} onDecide={(ok) => decide(a, ok)} />
+								<ActionCard key={a.id} a={a} icon={icon(a.airlock)} who={a.requestedBy.name} busy={busy === a.id} onDecide={(ok) => decide(a, ok)} />
 							))}
 							{pending.length === 0 && requests.length === 0 && proposals.length === 0 && <div className="empty-state">Nothing waiting on you. ✓</div>}
 						</>
 					)}
-					{tab === "history" && (decided.length ? decided.map((a) => <ActionCard key={a.id} a={a} icon={icon(a.gatekeeper)} who={a.requestedBy.name} />) : <div className="empty-state">No decisions yet.</div>)}
+					{tab === "history" && (decided.length ? decided.map((a) => <ActionCard key={a.id} a={a} icon={icon(a.airlock)} who={a.requestedBy.name} />) : <div className="empty-state">No decisions yet.</div>)}
 					{tab === "audit" && (
 						<div className="card mono" style={{ fontSize: 11.5, padding: 10 }}>
-							{docs.audit.lines.length === 0 && <span className="muted">Every Gatekeeper call is logged here.</span>}
+							{docs.audit.lines.length === 0 && <span className="muted">Every Airlock call is logged here.</span>}
 							{[...docs.audit.lines].reverse().map((l, i) => (
 								<div key={i} style={{ padding: "3px 0", borderBottom: "1px solid var(--paper-2)" }}>
-									<span className="muted">{new Date(l.at).toLocaleTimeString()}</span> {l.gatekeeper}.{l.method} <span className={`pill ${l.outcome === "ok" ? "ok" : l.outcome === "queued" ? "signal" : ""}`}>{l.outcome}</span> <span className="muted">by {l.by}</span>
+									<span className="muted">{new Date(l.at).toLocaleTimeString()}</span> {l.airlock}.{l.method} <span className={`pill ${l.outcome === "ok" ? "ok" : l.outcome === "queued" ? "signal" : ""}`}>{l.outcome}</span> <span className="muted">by {l.by}</span>
 									{l.detail && <div className="muted">{l.detail}</div>}
 								</div>
 							))}
@@ -134,7 +134,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 					{tab === "outbox" && (
 						<>
 							<div className="muted" style={{ fontSize: 13 }}>
-								Messages “delivered” by the local mailbox Gatekeeper after approval.
+								Messages “delivered” by the local mailbox Airlock after approval.
 							</div>
 							{docs.mailbox.sent.length === 0 && <div className="empty-state">Empty.</div>}
 							{[...docs.mailbox.sent].reverse().map((m) => (
@@ -151,7 +151,7 @@ export function ApprovalsDrawer({ ws, docs, gadgets, onClose }: { ws: Workspace;
 				</div>
 				<div style={{ padding: "8px 18px 14px", borderTop: "1px solid var(--line)" }} className="muted">
 					<span style={{ fontSize: 12 }}>
-						Introduce resources from a chat's <b>🔑 Resources</b> button or a gadget's <b>Access</b> tab. <a href={chatHref(ws.id)}>New chat</a>
+						Introduce resources from a chat's <b>🔑 Resources</b> button or a module's <b>Access</b> tab. <a href={chatHref(ws.id)}>New chat</a>
 					</span>
 				</div>
 			</div>
@@ -168,7 +168,7 @@ function ActionCard({ a, icon, who, busy, onDecide }: { a: ApprovalAction; icon:
 				{icon} {a.summary}
 			</div>
 			<div className="meta">
-				{a.gatekeeper}:{a.resource} · {a.method} · by {who} · {timeAgo(a.createdAt)}
+				{a.airlock}:{a.resource} · {a.method} · by {who} · {timeAgo(a.createdAt)}
 				{a.decidedBy ? ` · ${a.status} by ${a.decidedBy}` : ""}
 			</div>
 			<pre>{JSON.stringify(a.args, null, 2)}</pre>

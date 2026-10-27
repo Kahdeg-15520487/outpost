@@ -18,10 +18,10 @@ function App() {
 		if (user) socket.connect();
 	}, [user]);
 
-	// Share links: accept, then open the gadget.
+	// Share links: accept, then open the module.
 	useEffect(() => {
 		if (user && route.page === "link") {
-			api.post(`/api/links/${route.token}/accept`).then((r) => navigate(`#/g/${r.gadgetId}`)).catch((e) => alert(e.message));
+			api.post(`/api/links/${route.token}/accept`).then((r) => navigate(`#/modules/${r.moduleId}`)).catch((e) => alert(e.message));
 		}
 	}, [user, route]);
 

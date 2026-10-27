@@ -45,12 +45,12 @@ function useBacklogCtx(b: Backlog): Ctx {
 	}, [b]);
 }
 
-export function BacklogTab({ wsId, projectId, backlog, agents, canEdit, blockers = [], feedback = {}, gatesLeft = [] }: { wsId: string; projectId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean; blockers?: Question[]; feedback?: Record<string, Feedback>; gatesLeft?: string[] }) {
+export function BacklogTab({ wsId, missionId, backlog, agents, canEdit, blockers = [], feedback = {}, gatesLeft = [] }: { wsId: string; missionId: string; backlog: Backlog; agents: AgentRecord[]; canEdit: boolean; blockers?: Question[]; feedback?: Record<string, Feedback>; gatesLeft?: string[] }) {
 	const ctx = useBacklogCtx(backlog);
 	const [view, setView] = useState<"board" | "structure">("board");
 	const [filter, setFilter] = useState<string>();
 	const [open, setOpen] = useState<string>();
-	const base = `/api/w/${wsId}/projects/${projectId}/backlog`;
+	const base = `/api/w/${wsId}/missions/${missionId}/backlog`;
 	const tasks = Object.values(backlog.items).filter((i) => i.type === "task");
 	const visible = tasks.filter((t) => !filter || ctx.featureOf(t)?.id === filter);
 	const done = tasks.filter((t) => t.status === "done").length;
@@ -232,7 +232,7 @@ function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: st
 
 /**
  * After approval: items the team drafted from feedback (or added since) wait here for the user's
- * approval, grouped by feedback. pi-os builds none of them before that.
+ * approval, grouped by feedback. outpost builds none of them before that.
  */
 function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[]; feedback: Record<string, Feedback>; onOpen: (id: string) => void }) {
 	const [busy, setBusy] = useState(false);
@@ -330,7 +330,7 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 	);
 }
 
-/** After approval: the build's progress and its pause switch (pi-os's scheduler runs it). */
+/** After approval: the build's progress and its pause switch (outpost's scheduler runs it). */
 function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; canEdit: boolean }) {
 	const [busy, setBusy] = useState(false);
 	const a = backlog.approval;
@@ -583,7 +583,7 @@ function ItemPanel({ item, ctx, agents, canEdit, feedback = {}, onPatch, onDelet
 						{feedback[item.feedback]?.head && <span className="mono muted"> · on main @ {feedback[item.feedback]!.head}</span>}
 					</div>
 				)}
-				{item.pending && <div className="ip-pending">Waiting for your approval: pi-os won't build it until you approve it on the board's approval bar.</div>}
+				{item.pending && <div className="ip-pending">Waiting for your approval: Outpost won't build it until you approve it on the board's approval bar.</div>}
 				<textarea className="ip-title" rows={2} value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} onBlur={() => title.trim() && title !== item.title && onPatch({ title: title.trim() })} />
 				<div className="ip-grid">
 					<label>Status</label>

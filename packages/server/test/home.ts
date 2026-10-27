@@ -1,7 +1,7 @@
 /**
  * The workspace homepage: "while you were away" is recorded per finished agent run, and "seen" is
  * what the next visit measures from. Uses the offline demo model, so no API key is needed.
- * Run: pnpm --filter @pi-os/server test:home
+ * Run: pnpm --filter @outpost/server test:home
  */
 import { check, finish, startServer, until } from "./lib/harness.ts";
 
@@ -34,10 +34,10 @@ check("and looks back a week instead of showing nothing", fresh.now - fresh.sinc
 check("nothing happened yet", fresh.away.totals.runs === 0 && fresh.away.chats.length === 0, fresh.away);
 check("no last chat to pick up", !fresh.pickup.lastChat, fresh.pickup);
 
-const chat = (await ana("POST", `/api/w/${ws}/chats`, { title: "Offsite todo", model: { provider: "pi-os-demo", modelId: "demo" } })).id;
+const chat = (await ana("POST", `/api/w/${ws}/chats`, { title: "Offsite todo", model: { provider: "outpost-demo", modelId: "demo" } })).id;
 
 console.log("an agent run while nobody was watching");
-await ana("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "list my gadgets" });
+await ana("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "list my modules" });
 const away = await until("the run to be recorded", async () => {
 	const h = await ana("GET", `/api/w/${ws}/home`);
 	return h.away.totals.runs > 0 ? h : undefined;
@@ -46,7 +46,7 @@ check("the run is in the away digest", away?.away.totals.runs === 1, away?.away.
 const run = away?.away.chats[0];
 check("grouped under its chat, with the chat's title", run?.chatId === chat && run?.title === "Offsite todo", run);
 check("it counts the agent's message", (run?.messages ?? 0) >= 1, run?.messages);
-check("it names the tools the agent used", run?.tools.some((t: any) => t.name === "gadget_list"), run?.tools);
+check("it names the tools the agent used", run?.tools.some((t: any) => t.name === "module_list"), run?.tools);
 check("it keeps the agent's last words as a snippet", !!run?.snippet && run.snippet.length > 0, run?.snippet);
 check("the last chat is offered to pick up", away?.pickup.lastChat?.id === chat, away?.pickup.lastChat);
 
@@ -59,7 +59,7 @@ check("and it isn't a first visit any more", after.firstVisit === false, after.f
 check("the old run is still remembered, just not 'away'", after.since > away!.since, [after.since, away!.since]);
 
 console.log("a second visit only reports what is new");
-await ana("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "list my gadgets" });
+await ana("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "list my modules" });
 const second = await until("the new run", async () => {
 	const h = await ana("GET", `/api/w/${ws}/home`);
 	return h.away.totals.runs > 0 ? h : undefined;

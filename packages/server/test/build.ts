@@ -2,7 +2,7 @@
  * Milestones 4 and 5 without a model: the build scheduler (assign → task_done → review → merge) and
  * the live preview (a tiny Node app run from main, restarted after merges). Agents are scripted: the
  * test writes files into their worktrees and calls the same methods their tools call.
- * Run: pnpm --filter @pi-os/server test:build
+ * Run: pnpm --filter @outpost/server test:build
  */
 import { check, finish, sleep, testDir, until, passDocGates } from "./lib/harness.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -12,20 +12,20 @@ import { join } from "node:path";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
-const { addItems } = await import("../src/projects/backlog.ts");
-const { git } = await import("../src/projects/repo.ts");
-const { DEFAULT_DOD } = await import("../src/projects/checks.ts");
+const { addItems } = await import("../src/missions/backlog.ts");
+const { git } = await import("../src/missions/repo.ts");
+const { DEFAULT_DOD } = await import("../src/missions/checks.ts");
 const dod = DEFAULT_DOD.map((_, i) => ({ item: i + 1, met: true }));
 
 
 const u = users.create("builder", "password123");
 const ws = await Workspace.get(workspaces.create("build", u.id).id);
-const pm = ws.projects;
+const pm = ws.missions;
 pm.build.nudges = false;
-const p = await pm.create(u, { goal: "Build flow regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+const p = await pm.create(u, { goal: "Build flow regression mission", model: { provider: "outpost-demo", modelId: "demo" } });
 await passDocGates(ws, p.id);
 await pm.stopAll(p.id);
-for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(p.id, { role, brief: "wait for pi-os", start: false });
+for (const role of ["worker", "worker", "reviewer"]) await pm.addAgent(p.id, { role, brief: "wait for outpost", start: false });
 const agent = async (key: string) => (await pm.state(p.id)).agents[key]!;
 const repo = pm.repo(p.id);
 const write = (key: string, path: string, content: string) => {
@@ -71,7 +71,7 @@ check("task_done without changes is refused", /no changes compared to main/.test
 
 write("dev-1", "app/server.js", `require("http").createServer((q, s) => s.end("hello v1")).listen(process.env.PORT, "127.0.0.1");\n`);
 write("dev-1", "app/package.json", `{ "name": "hello", "private": true }\n`);
-write("dev-1", ".pios/project.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
+write("dev-1", ".outpost/mission.json", JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
 const reply1 = await pm.build.taskDone(p.id, await agent("dev-1"), "server on $PORT", false);
 check("task_done submits", /^Submitted T1/.test(reply1), reply1);
 await until("review assignment", async () => (await item("T1")).reviewBriefed && (await item("T1")).reviewer === "reviewer");

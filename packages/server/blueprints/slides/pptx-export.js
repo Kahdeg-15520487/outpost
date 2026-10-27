@@ -275,7 +275,7 @@
     const markPng = opts.mark ? svgToPng(opts.mark) : null;
     const pptx = buildDeckPptx(PptxGenJS, deck, { ...opts, markPng });
     const name = String(deck.title || "deck").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 120) || "deck";
-    // A data: URL rather than pptx.writeFile()'s blob URL: gadget frames are sandboxed (opaque origin),
+    // A data: URL rather than pptx.writeFile()'s blob URL: module frames are sandboxed (opaque origin),
     // and Chrome cancels downloads of blob:null URLs made there.
     const b64 = await pptx.write({ outputType: "base64" });
     const a = document.createElement("a");

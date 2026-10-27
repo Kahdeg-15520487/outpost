@@ -1,19 +1,19 @@
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { config } from "../config.ts";
-import { describeGatekeeper, GATEKEEPERS } from "../gatekeepers/catalog.ts";
-import { CONNECTOR_INFO } from "../gatekeepers/connectors/types.ts";
-import { buildFrame, FRAME_CSP } from "../gadgets/frame.ts";
-import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../gadgets/bundle.ts";
-import { capabilities } from "../gadgets/compat.ts";
+import { describeAirlock, AIRLOCKS } from "../airlocks/catalog.ts";
+import { CONNECTOR_INFO } from "../airlocks/connectors/types.ts";
+import { buildFrame, FRAME_CSP } from "../modules/frame.ts";
+import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../modules/bundle.ts";
+import { capabilities } from "../modules/compat.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
 import { home, markSeen, summarize } from "../kernel/home.ts";
 import { oauthLogins } from "../kernel/oauth.ts";
-import { blueprints, gadgets, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
+import { blueprints, modules, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { hub } from "../collab/hub.ts";
 import { readRaw, Router, type Req } from "./util.ts";
 
-const cookie = (token: string, maxAge: number) => `pios_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+const cookie = (token: string, maxAge: number) => `outpost_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 const asRole = (r: unknown): Role => {
 	if (r === "viewer" || r === "editor" || r === "owner") return r;
 	throw new HttpError(400, "role must be viewer|editor|owner");
@@ -27,7 +27,7 @@ async function member(req: Req, min: Role = "viewer") {
 	return { user, role, ws: await Workspace.get(req.params.ws!) };
 }
 
-function gadgetView(g: ReturnType<typeof gadgets.get> & {}, role: Role) {
+function moduleView(g: ReturnType<typeof modules.get> & {}, role: Role) {
 	const ws = workspaces.get(g.workspaceId);
 	const bp = g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
 	const blueprint = bp && { name: bp.name, description: bp.description, ...bp.intro };
@@ -54,7 +54,7 @@ export function createApi(): Router {
 		return signIn(req, users.login(String(username ?? ""), String(password ?? "")));
 	});
 	r.post("/api/auth/logout", (req) => {
-		const token = /pios_session=([^;]+)/.exec(req.raw.headers.cookie ?? "")?.[1];
+		const token = /outpost_session=([^;]+)/.exec(req.raw.headers.cookie ?? "")?.[1];
 		if (token) sessions.delete(token);
 		req.res.setHeader("set-cookie", cookie("", 0));
 		return { ok: true };
@@ -105,7 +105,7 @@ export function createApi(): Router {
 		req.need();
 		const { key } = await req.body();
 		if (!models.getProvider(req.params.id!)) throw new HttpError(404, "Unknown provider");
-		if (credentials.managedByConfig(req.params.id!)) throw new HttpError(409, `The ${req.params.id} key is set in pi-os.config.json; change it there.`);
+		if (credentials.managedByConfig(req.params.id!)) throw new HttpError(409, `The ${req.params.id} key is set in outpost.config.json; change it there.`);
 		if (key) await credentials.modify(req.params.id!, async (current) => ({ ...(current?.type === "api_key" ? current : {}), type: "api_key", key: String(key) }));
 		else await credentials.delete(req.params.id!);
 		return { ok: true };
@@ -177,10 +177,10 @@ export function createApi(): Router {
 	});
 	r.post("/api/w/:ws/chats/:chat/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { content, mode, files, gadget } = await req.body();
+		const { content, mode, files, module } = await req.body();
 		const fileIds = Array.isArray(files) ? files.map(String).slice(0, 20) : [];
 		if (!String(content ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
-		return { submission: await ws.send(req.params.chat!, user, String(content ?? ""), mode === "steer" ? "steer" : "followUp", fileIds, typeof gadget === "string" ? gadget : undefined) };
+		return { submission: await ws.send(req.params.chat!, user, String(content ?? ""), mode === "steer" ? "steer" : "followUp", fileIds, typeof module === "string" ? module : undefined) };
 	});
 	r.post("/api/w/:ws/chats/:chat/abort", async (req) => {
 		const { ws } = await member(req, "editor");
@@ -242,11 +242,11 @@ export function createApi(): Router {
 	});
 	r.patch("/api/w/:ws/files/:id", async (req) => {
 		const { ws } = await member(req, "editor");
-		const { name, gadgets: allow } = await req.body();
+		const { name, modules: allow } = await req.body();
 		await ws.files.get(req.params.id!);
 		await ws.files.update(req.params.id!, (m) => {
 			if (typeof name === "string" && name.trim()) m.name = name.trim().slice(0, 240);
-			if (Array.isArray(allow)) m.gadgets = allow.map(String).filter((g) => gadgets.get(g)?.workspaceId === ws.id);
+			if (Array.isArray(allow)) m.modules = allow.map(String).filter((g) => modules.get(g)?.workspaceId === ws.id);
 		});
 		return { ok: true };
 	});
@@ -256,304 +256,304 @@ export function createApi(): Router {
 		return { ok: true };
 	});
 
-	// ------------------------------------------------------------ projects (agent teams)
-	r.get("/api/w/:ws/projects", async (req) => {
+	// ------------------------------------------------------------ missions (agent teams)
+	r.get("/api/w/:ws/missions", async (req) => {
 		const { ws } = await member(req);
-		return { projects: await ws.projects.list() };
+		return { missions: await ws.missions.list() };
 	});
-	r.post("/api/w/:ws/projects", async (req) => {
+	r.post("/api/w/:ws/missions", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { goal, name, model, files } = await req.body();
 		const chosen = model?.provider && model?.modelId ? { provider: String(model.provider), modelId: String(model.modelId) } : await defaultModel(ws.row.settings.defaultModel, users.prefs(user.id).modelPicker);
-		return { project: await ws.projects.create(user, { goal: String(goal ?? ""), name: name ? String(name).slice(0, 80) : undefined, model: chosen, files: Array.isArray(files) ? files.map(String) : [] }) };
+		return { mission: await ws.missions.create(user, { goal: String(goal ?? ""), name: name ? String(name).slice(0, 80) : undefined, model: chosen, files: Array.isArray(files) ? files.map(String) : [] }) };
 	});
-	r.get("/api/w/:ws/projects/:p", async (req) => {
+	r.get("/api/w/:ws/missions/:p", async (req) => {
 		const { ws } = await member(req);
-		return await ws.projects.snapshot(req.params.p!);
+		return await ws.missions.snapshot(req.params.p!);
 	});
-	r.patch("/api/w/:ws/projects/:p", async (req) => {
+	r.patch("/api/w/:ws/missions/:p", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { model, applyToAgents } = await req.body();
-		if (model) await ws.projects.setProjectModel(req.params.p!, { provider: String(model.provider), modelId: String(model.modelId) }, user, !!applyToAgents);
+		if (model) await ws.missions.setMissionModel(req.params.p!, { provider: String(model.provider), modelId: String(model.modelId) }, user, !!applyToAgents);
 		return { ok: true };
 	});
-	r.patch("/api/w/:ws/projects/:p/agents/:key", async (req) => {
+	r.patch("/api/w/:ws/missions/:p/agents/:key", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { model } = await req.body();
 		if (!model) throw new HttpError(400, "Nothing to change");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.setAgentModel(req.params.p!, req.params.key!, { provider: String(model.provider), modelId: String(model.modelId) }, user);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.setAgentModel(req.params.p!, req.params.key!, { provider: String(model.provider), modelId: String(model.modelId) }, user);
 		return { ok: true };
 	});
-	r.delete("/api/w/:ws/projects/:p", async (req) => {
+	r.delete("/api/w/:ws/missions/:p", async (req) => {
 		const { ws } = await member(req, "editor");
-		await ws.projects.archive(req.params.p!);
+		await ws.missions.archive(req.params.p!);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/stop", async (req) => {
+	r.post("/api/w/:ws/missions/:p/stop", async (req) => {
 		const { ws } = await member(req, "editor");
-		await ws.projects.stopAll(req.params.p!);
+		await ws.missions.stopAll(req.params.p!);
 		return { ok: true };
 	});
 	// Document gates (M2): requirements and design.
-	r.post("/api/w/:ws/projects/:p/gates/:gate/approve", async (req) => {
+	r.post("/api/w/:ws/missions/:p/gates/:gate/approve", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();
-		await ws.projects.meta(req.params.p!);
+		await ws.missions.meta(req.params.p!);
 		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
 		if (!gate) throw new HttpError(404, "No such gate");
-		await ws.projects.approveGate(req.params.p!, gate, user, comment ? String(comment) : undefined);
+		await ws.missions.approveGate(req.params.p!, gate, user, comment ? String(comment) : undefined);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/gates/:gate/changes", async (req) => {
+	r.post("/api/w/:ws/missions/:p/gates/:gate/changes", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();
-		await ws.projects.meta(req.params.p!);
+		await ws.missions.meta(req.params.p!);
 		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
 		if (!gate) throw new HttpError(404, "No such gate");
-		await ws.projects.gateChanges(req.params.p!, gate, user, String(comment ?? ""));
+		await ws.missions.gateChanges(req.params.p!, gate, user, String(comment ?? ""));
 		return { ok: true };
 	});
 	// Questions: blocking flag, dismiss (answering is a message to the agent, above).
-	r.patch("/api/w/:ws/projects/:p/questions/:id", async (req) => {
+	r.patch("/api/w/:ws/missions/:p/questions/:id", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { blocking } = await req.body();
-		await ws.projects.meta(req.params.p!);
+		await ws.missions.meta(req.params.p!);
 		if (typeof blocking !== "boolean") throw new HttpError(400, "blocking: true or false");
-		await ws.projects.setQuestionBlocking(req.params.p!, req.params.id!, blocking, user);
+		await ws.missions.setQuestionBlocking(req.params.p!, req.params.id!, blocking, user);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/questions/:id/dismiss", async (req) => {
+	r.post("/api/w/:ws/missions/:p/questions/:id/dismiss", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { note } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.dismissQuestion(req.params.p!, req.params.id!, user, note ? String(note).slice(0, 2000) : undefined);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.dismissQuestion(req.params.p!, req.params.id!, user, note ? String(note).slice(0, 2000) : undefined);
 		return { ok: true };
 	});
 	// Feedback on the running app, and approval of what the team drafts from it.
-	r.post("/api/w/:ws/projects/:p/feedback", async (req) => {
+	r.post("/api/w/:ws/missions/:p/feedback", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { text, files } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		return { feedback: await ws.projects.addFeedback(req.params.p!, user, String(text ?? "").slice(0, 8000), Array.isArray(files) ? files.map(String) : []) };
+		await ws.missions.meta(req.params.p!);
+		return { feedback: await ws.missions.addFeedback(req.params.p!, user, String(text ?? "").slice(0, 8000), Array.isArray(files) ? files.map(String) : []) };
 	});
-	r.post("/api/w/:ws/projects/:p/feedback/:id/pbi", async (req) => {
+	r.post("/api/w/:ws/missions/:p/feedback/:id/pbi", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { title, description, acceptance, parent } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		return { item: await ws.projects.pbiFromFeedback(req.params.p!, req.params.id!, user, { title: String(title ?? ""), description: description ? String(description) : undefined, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined, parent: parent ? String(parent) : undefined }) };
+		await ws.missions.meta(req.params.p!);
+		return { item: await ws.missions.pbiFromFeedback(req.params.p!, req.params.id!, user, { title: String(title ?? ""), description: description ? String(description) : undefined, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined, parent: parent ? String(parent) : undefined }) };
 	});
-	r.post("/api/w/:ws/projects/:p/feedback/:id/decline", async (req) => {
+	r.post("/api/w/:ws/missions/:p/feedback/:id/decline", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { reason } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		return { removed: await ws.projects.declineFeedback(req.params.p!, req.params.id!, { name: user.displayName, user }, String(reason ?? "")) };
+		await ws.missions.meta(req.params.p!);
+		return { removed: await ws.missions.declineFeedback(req.params.p!, req.params.id!, { name: user.displayName, user }, String(reason ?? "")) };
 	});
-	r.post("/api/w/:ws/projects/:p/feedback/:id/reopen", async (req) => {
+	r.post("/api/w/:ws/missions/:p/feedback/:id/reopen", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.reopenFeedback(req.params.p!, req.params.id!, user);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.reopenFeedback(req.params.p!, req.params.id!, user);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/backlog/approve-pending", async (req) => {
+	r.post("/api/w/:ws/missions/:p/backlog/approve-pending", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { feedback } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		return { approved: await ws.projects.approvePending(req.params.p!, user, feedback ? String(feedback) : undefined) };
+		await ws.missions.meta(req.params.p!);
+		return { approved: await ws.missions.approvePending(req.params.p!, user, feedback ? String(feedback) : undefined) };
 	});
-	r.post("/api/w/:ws/projects/:p/backlog/pending-changes", async (req) => {
+	r.post("/api/w/:ws/missions/:p/backlog/pending-changes", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment, feedback } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.pendingChanges(req.params.p!, user, String(comment ?? ""), feedback ? String(feedback) : undefined);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.pendingChanges(req.params.p!, user, String(comment ?? ""), feedback ? String(feedback) : undefined);
 		return { ok: true };
 	});
 	// Build (milestone 4): pause/resume assignments.
-	r.post("/api/w/:ws/projects/:p/build", async (req) => {
+	r.post("/api/w/:ws/missions/:p/build", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { paused } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.build.setPaused(req.params.p!, !!paused, user.displayName);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.build.setPaused(req.params.p!, !!paused, user.displayName);
 		return { ok: true };
 	});
 	// Live preview (milestone 5).
-	r.get("/api/w/:ws/projects/:p/preview", async (req) => {
+	r.get("/api/w/:ws/missions/:p/preview", async (req) => {
 		const { ws } = await member(req, "viewer");
-		await ws.projects.meta(req.params.p!);
-		return { preview: ws.projects.previews.info(req.params.p!) };
+		await ws.missions.meta(req.params.p!);
+		return { preview: ws.missions.previews.info(req.params.p!) };
 	});
-	r.post("/api/w/:ws/projects/:p/preview/start", async (req) => {
+	r.post("/api/w/:ws/missions/:p/preview/start", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		await ws.projects.meta(req.params.p!);
-		void ws.projects.previews.start(req.params.p!, `started by ${user.displayName}`).catch(() => {});
+		await ws.missions.meta(req.params.p!);
+		void ws.missions.previews.start(req.params.p!, `started by ${user.displayName}`).catch(() => {});
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/preview/stop", async (req) => {
+	r.post("/api/w/:ws/missions/:p/preview/stop", async (req) => {
 		const { ws } = await member(req, "editor");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.previews.stop(req.params.p!, true);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.previews.stop(req.params.p!, true);
 		return { ok: true };
 	});
-	r.get("/api/w/:ws/projects/:p/preview/logs", async (req) => {
+	r.get("/api/w/:ws/missions/:p/preview/logs", async (req) => {
 		const { ws } = await member(req, "viewer");
-		await ws.projects.meta(req.params.p!);
-		return ws.projects.previews.logs(req.params.p!, Number(req.query.get("since") ?? 0) || 0);
+		await ws.missions.meta(req.params.p!);
+		return ws.missions.previews.logs(req.params.p!, Number(req.query.get("since") ?? 0) || 0);
 	});
 	// Backlog: the user's side of the approval gate, and edits from the board.
-	r.post("/api/w/:ws/projects/:p/backlog/approve", async (req) => {
+	r.post("/api/w/:ws/missions/:p/backlog/approve", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.approveBacklog(req.params.p!, user, comment ? String(comment) : undefined);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.approveBacklog(req.params.p!, user, comment ? String(comment) : undefined);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/backlog/changes", async (req) => {
+	r.post("/api/w/:ws/missions/:p/backlog/changes", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();
 		if (!String(comment ?? "").trim()) throw new HttpError(400, "Say what should change");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.requestBacklogChanges(req.params.p!, user, String(comment));
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.requestBacklogChanges(req.params.p!, user, String(comment));
 		return { ok: true };
 	});
-	r.patch("/api/w/:ws/projects/:p/backlog/:id", async (req) => {
+	r.patch("/api/w/:ws/missions/:p/backlog/:id", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { title, description, status, assignee, estimate, area, acceptance } = await req.body();
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.updateItem(req.params.p!, req.params.id!, { title, description, status, assignee, estimate, area, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined }, user);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.updateItem(req.params.p!, req.params.id!, { title, description, status, assignee, estimate, area, acceptance: Array.isArray(acceptance) ? acceptance.map(String) : undefined }, user);
 		return { ok: true };
 	});
-	r.delete("/api/w/:ws/projects/:p/backlog/:id", async (req) => {
+	r.delete("/api/w/:ws/missions/:p/backlog/:id", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.removeItem(req.params.p!, req.params.id!, user);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.removeItem(req.params.p!, req.params.id!, user);
 		return { ok: true };
 	});
-	r.post("/api/w/:ws/projects/:p/agents/:key/messages", async (req) => {
+	r.post("/api/w/:ws/missions/:p/agents/:key/messages", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { text, files, questionId } = await req.body();
 		const fileIds = Array.isArray(files) ? files.map(String) : [];
 		if (!String(text ?? "").trim() && !fileIds.length) throw new HttpError(400, "Empty message");
-		await ws.projects.meta(req.params.p!);
-		await ws.projects.userMessage(req.params.p!, req.params.key!, user, String(text ?? ""), fileIds, questionId ? String(questionId) : undefined);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.userMessage(req.params.p!, req.params.key!, user, String(text ?? ""), fileIds, questionId ? String(questionId) : undefined);
 		return { ok: true };
 	});
-	r.get("/api/w/:ws/projects/:p/files", async (req) => {
+	r.get("/api/w/:ws/missions/:p/files", async (req) => {
 		const { ws } = await member(req);
-		await ws.projects.meta(req.params.p!);
-		const repo = ws.projects.repo(req.params.p!);
+		await ws.missions.meta(req.params.p!);
+		const repo = ws.missions.repo(req.params.p!);
 		return { files: await repo.files(), head: await repo.head() };
 	});
-	r.get("/api/w/:ws/projects/:p/file", async (req) => {
+	r.get("/api/w/:ws/missions/:p/file", async (req) => {
 		const { ws } = await member(req);
-		await ws.projects.meta(req.params.p!);
-		const file = await ws.projects.repo(req.params.p!).read(String(req.query.get("path") ?? ""));
+		await ws.missions.meta(req.params.p!);
+		const file = await ws.missions.repo(req.params.p!).read(String(req.query.get("path") ?? ""));
 		if (!file) throw new HttpError(404, "Not on main yet");
 		return file;
 	});
-	r.get("/api/w/:ws/projects/:p/log", async (req) => {
+	r.get("/api/w/:ws/missions/:p/log", async (req) => {
 		const { ws } = await member(req);
-		await ws.projects.meta(req.params.p!);
-		return { log: await ws.projects.repo(req.params.p!).log() };
+		await ws.missions.meta(req.params.p!);
+		return { log: await ws.missions.repo(req.params.p!).log() };
 	});
 
-	// ------------------------------------------------------------ gadgets
-	r.get("/api/w/:ws/gadgets", async (req) => {
+	// ------------------------------------------------------------ modules
+	r.get("/api/w/:ws/modules", async (req) => {
 		const { role } = await member(req);
-		return { gadgets: gadgets.inWorkspace(req.params.ws!).map((g) => gadgetView(g, role)) };
+		return { modules: modules.inWorkspace(req.params.ws!).map((g) => moduleView(g, role)) };
 	});
-	r.post("/api/w/:ws/gadgets", async (req) => {
+	r.post("/api/w/:ws/modules", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { name, blueprintId, icon } = await req.body();
-		const g = await ws.createGadget({ name: String(name || "Untitled").slice(0, 80), blueprintId, icon, ownerId: user.id });
-		return { gadget: gadgetView(g, "owner") };
+		const g = await ws.createModule({ name: String(name || "Untitled").slice(0, 80), blueprintId, icon, ownerId: user.id });
+		return { module: moduleView(g, "owner") };
 	});
-	r.get("/api/shared", (req) => ({ gadgets: gadgets.sharedWith(req.need().id).map((g) => gadgetView(g, g.role)) }));
-	r.get("/api/gadgets/:id", async (req) => {
+	r.get("/api/shared", (req) => ({ modules: modules.sharedWith(req.need().id).map((g) => moduleView(g, g.role)) }));
+	r.get("/api/modules/:id", async (req) => {
 		const user = req.need();
-		const { gadget, role, ws } = await Workspace.gadgetFor(req.params.id!, user);
+		const { module, role, ws } = await Workspace.moduleFor(req.params.id!, user);
 		const isEditor = ROLE_RANK[role] >= 2;
 		return {
-			gadget: gadgetView(gadget, role),
-			files: isEditor ? await ws.gadgetFiles(gadget.id) : undefined,
-			server: await ws.host(gadget.id).describe(),
-			shares: role === "owner" ? gadgets.shares(gadget.id) : undefined,
-			links: role === "owner" ? gadgets.links(gadget.id) : undefined,
+			module: moduleView(module, role),
+			files: isEditor ? await ws.moduleFiles(module.id) : undefined,
+			server: await ws.host(module.id).describe(),
+			shares: role === "owner" ? modules.shares(module.id) : undefined,
+			links: role === "owner" ? modules.links(module.id) : undefined,
 		};
 	});
-	r.patch("/api/gadgets/:id", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
+	r.patch("/api/modules/:id", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
 		const { name, icon } = await req.body();
-		gadgets.touch(gadget.id, { name, icon });
-		ws.publishGadgets();
+		modules.touch(module.id, { name, icon });
+		ws.publishModules();
 		return { ok: true };
 	});
-	r.put("/api/gadgets/:id/files", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
+	r.put("/api/modules/:id/files", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
 		const { path, content } = await req.body();
-		await ws.writeGadgetFiles(gadget.id, { [String(path)]: content === null ? null : String(content) });
-		return { server: await ws.host(gadget.id).describe() };
+		await ws.writeModuleFiles(module.id, { [String(path)]: content === null ? null : String(content) });
+		return { server: await ws.host(module.id).describe() };
 	});
-	r.delete("/api/gadgets/:id", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "owner");
-		await ws.deleteGadget(gadget.id);
+	r.delete("/api/modules/:id", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "owner");
+		await ws.deleteModule(module.id);
 		return { ok: true };
 	});
-	r.get("/api/gadgets/:id/logs", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
-		return { lines: await ws.gadgetLogs(gadget.id) };
+	r.get("/api/modules/:id/logs", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
+		return { lines: await ws.moduleLogs(module.id) };
 	});
-	r.get("/api/gadgets/:id/state", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
-		return { kv: await ws.gadgetState(gadget.id) };
+	r.get("/api/modules/:id/state", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
+		return { kv: await ws.moduleState(module.id) };
 	});
-	r.post("/api/gadgets/:id/frame-token", async (req) => {
+	r.post("/api/modules/:id/frame-token", async (req) => {
 		const user = req.need();
-		const { gadget, role } = await Workspace.gadgetFor(req.params.id!, user);
-		return { token: sign({ g: gadget.id, u: user.id, n: user.displayName, r: role }, 10 * 60_000) };
+		const { module, role } = await Workspace.moduleFor(req.params.id!, user);
+		return { token: sign({ g: module.id, u: user.id, n: user.displayName, r: role }, 10 * 60_000) };
 	});
-	r.post("/api/gadgets/:id/shares", async (req) => {
-		const { gadget } = await Workspace.gadgetFor(req.params.id!, req.need(), "owner");
+	r.post("/api/modules/:id/shares", async (req) => {
+		const { module } = await Workspace.moduleFor(req.params.id!, req.need(), "owner");
 		const { username, role } = await req.body();
 		const target = users.byUsername(String(username));
 		if (!target) throw new HttpError(404, `No user "${username}"`);
-		gadgets.share(gadget.id, target.id, role === null ? null : asRole(role));
+		modules.share(module.id, target.id, role === null ? null : asRole(role));
 		hub.publish(`user:${target.id}`, { t: "shared.changed" });
-		return { shares: gadgets.shares(gadget.id) };
+		return { shares: modules.shares(module.id) };
 	});
-	r.post("/api/gadgets/:id/links", async (req) => {
+	r.post("/api/modules/:id/links", async (req) => {
 		const user = req.need();
-		const { gadget } = await Workspace.gadgetFor(req.params.id!, user, "owner");
+		const { module } = await Workspace.moduleFor(req.params.id!, user, "owner");
 		const { role } = await req.body();
-		gadgets.createLink(gadget.id, asRole(role ?? "viewer") === "owner" ? "editor" : asRole(role ?? "viewer"), user.id);
-		return { links: gadgets.links(gadget.id) };
+		modules.createLink(module.id, asRole(role ?? "viewer") === "owner" ? "editor" : asRole(role ?? "viewer"), user.id);
+		return { links: modules.links(module.id) };
 	});
-	r.delete("/api/gadgets/:id/links/:token", async (req) => {
-		const { gadget } = await Workspace.gadgetFor(req.params.id!, req.need(), "owner");
-		gadgets.deleteLink(req.params.token!);
-		return { links: gadgets.links(gadget.id) };
+	r.delete("/api/modules/:id/links/:token", async (req) => {
+		const { module } = await Workspace.moduleFor(req.params.id!, req.need(), "owner");
+		modules.deleteLink(req.params.token!);
+		return { links: modules.links(module.id) };
 	});
 	r.post("/api/links/:token/accept", async (req) => {
 		const user = req.need();
-		const link = gadgets.link(req.params.token!);
+		const link = modules.link(req.params.token!);
 		if (!link) throw new HttpError(404, "This link is no longer valid");
-		const g = gadgets.get(link.gadgetId)!;
-		const current = gadgets.role(g, user.id);
-		if (!current || ROLE_RANK[current] < ROLE_RANK[link.role]) gadgets.share(g.id, user.id, link.role);
-		return { gadgetId: g.id };
+		const g = modules.get(link.moduleId)!;
+		const current = modules.role(g, user.id);
+		if (!current || ROLE_RANK[current] < ROLE_RANK[link.role]) modules.share(g.id, user.id, link.role);
+		return { moduleId: g.id };
 	});
 
 	// ------------------------------------------------------------ blueprints
 	r.get("/api/blueprints", (req) => {
 		const user = req.need();
 		return {
-			blueprints: blueprints.visibleTo(user.id).map(({ files, ...b }) => ({ ...b, author: b.authorId ? users.get(b.authorId)?.displayName : "pi-os", fileCount: Object.keys(files).length, mine: b.authorId === user.id })),
+			blueprints: blueprints.visibleTo(user.id).map(({ files, ...b }) => ({ ...b, author: b.authorId ? users.get(b.authorId)?.displayName : "outpost", fileCount: Object.keys(files).length, mine: b.authorId === user.id })),
 		};
 	});
 	r.post("/api/blueprints", async (req) => {
 		const user = req.need();
-		const { gadgetId, name, description, visibility } = await req.body();
-		const { gadget, ws } = await Workspace.gadgetFor(String(gadgetId), user, "editor");
-		const bp = await ws.publishBlueprint(gadget.id, { name: String(name || gadget.name), description: String(description ?? ""), visibility: visibility === "private" ? "private" : "public", authorId: user.id });
+		const { moduleId, name, description, visibility } = await req.body();
+		const { module, ws } = await Workspace.moduleFor(String(moduleId), user, "editor");
+		const bp = await ws.publishBlueprint(module.id, { name: String(name || module.name), description: String(description ?? ""), visibility: visibility === "private" ? "private" : "public", authorId: user.id });
 		return { blueprint: { id: bp.id } };
 	});
 	// ------------------------------------------------------------ export / import (move between instances)
@@ -564,23 +564,23 @@ export function createApi(): Router {
 		const bundle = makeBundle({ blueprints: [bp] });
 		return { fileName: bundleFileName(bundle), bundle };
 	});
-	r.get("/api/gadgets/:id/export", async (req) => {
-		const { gadget, ws } = await Workspace.gadgetFor(req.params.id!, req.need(), "editor");
+	r.get("/api/modules/:id/export", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
 		const withData = req.query.get("data") === "1";
-		const bundle = makeBundle({ gadgets: [{ row: gadget, files: await ws.gadgetFiles(gadget.id), data: withData ? await ws.gadgetState(gadget.id) : undefined, grants: await ws.gadgetGrants(gadget.id) }] });
+		const bundle = makeBundle({ modules: [{ row: module, files: await ws.moduleFiles(module.id), data: withData ? await ws.moduleState(module.id) : undefined, grants: await ws.moduleGrants(module.id) }] });
 		return { fileName: bundleFileName(bundle), bundle };
 	});
-	/** Bulk: ?blueprints=mine and/or ?gadgets=all (this workspace), &data=1 for gadget data. */
+	/** Bulk: ?blueprints=mine and/or ?modules=all (this workspace), &data=1 for module data. */
 	r.get("/api/w/:ws/export", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const withData = req.query.get("data") === "1";
 		const bps = req.query.get("blueprints") === "mine" ? blueprints.visibleTo(user.id).filter((b) => b.authorId === user.id) : [];
-		const gs = req.query.get("gadgets") === "all" ? gadgets.inWorkspace(ws.id) : [];
+		const gs = req.query.get("modules") === "all" ? modules.inWorkspace(ws.id) : [];
 		if (!bps.length && !gs.length) throw new HttpError(400, "Nothing to export");
-		const bundle = makeBundle({ blueprints: bps, gadgets: await Promise.all(gs.map(async (g) => ({ row: g, files: await ws.gadgetFiles(g.id), data: withData ? await ws.gadgetState(g.id) : undefined, grants: await ws.gadgetGrants(g.id) }))) });
+		const bundle = makeBundle({ blueprints: bps, modules: await Promise.all(gs.map(async (g) => ({ row: g, files: await ws.moduleFiles(g.id), data: withData ? await ws.moduleState(g.id) : undefined, grants: await ws.moduleGrants(g.id) }))) });
 		return { fileName: bundleFileName(bundle), bundle };
 	});
-	/** What this instance can run: its version, the gadget runtime, features and Gatekeepers. */
+	/** What this instance can run: its version, the module runtime, features and Airlocks. */
 	r.get("/api/capabilities", (req) => (req.need(), capabilities()));
 	const readBundle = async (req: Req) => {
 		const raw = await readRaw(req, config.maxUploadBytes);
@@ -588,7 +588,7 @@ export function createApi(): Router {
 			return parseBundle(JSON.parse(raw.toString("utf8")));
 		} catch (e) {
 			if (e instanceof HttpError) throw e;
-			throw new HttpError(400, "Not a pi-os export file (it isn't JSON)");
+			throw new HttpError(400, "Not a outpost export file (it isn't JSON)");
 		}
 	};
 	/** Body: a bundle. Reports, per item, whether it can run here (ok / warn / blocked) without importing. */
@@ -596,7 +596,7 @@ export function createApi(): Router {
 		await member(req, "editor");
 		return checkBundle(await readBundle(req));
 	});
-	/** Body: a bundle. Blueprints go to the user's library, gadgets into this workspace; items that can't run here are skipped. ?visibility=public shares imported blueprints. */
+	/** Body: a bundle. Blueprints go to the user's library, modules into this workspace; items that can't run here are skipped. ?visibility=public shares imported blueprints. */
 	r.post("/api/w/:ws/import", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const result = await importBundle(ws, user.id, await readBundle(req), { visibility: req.query.get("visibility") === "public" ? "public" : "private" });
@@ -611,19 +611,19 @@ export function createApi(): Router {
 		return { ok: true };
 	});
 
-	// ------------------------------------------------------------ gatekeepers
-	r.get("/api/gatekeepers", (req) => {
+	// ------------------------------------------------------------ airlocks
+	r.get("/api/airlocks", (req) => {
 		req.need();
-		return { gatekeepers: Object.values(GATEKEEPERS).map(describeGatekeeper), githubToken: !!config.githubToken() };
+		return { airlocks: Object.values(AIRLOCKS).map(describeAirlock), githubToken: !!config.githubToken() };
 	});
 	r.post("/api/w/:ws/grants", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { gatekeeper, connection, resource, label, holder, autoApprove, methods, policy, requestId } = await req.body();
-		if (!holder || !["conversation", "gadget", "project"].includes(holder.kind) || typeof holder.id !== "string") throw new HttpError(400, "holder must be {kind: conversation|gadget|project, id, roles?}");
-		if (holder.roles !== undefined && !(holder.kind === "project" && Array.isArray(holder.roles) && holder.roles.every((r: unknown) => typeof r === "string"))) throw new HttpError(400, "roles: a list of role ids, for project holders only");
-		if (holder.kind === "project" && !(await ws.projects.list()).some((p) => p.id === holder.id)) throw new HttpError(404, "No such project");
+		const { airlock, connection, resource, label, holder, autoApprove, methods, policy, requestId } = await req.body();
+		if (!holder || !["conversation", "module", "mission"].includes(holder.kind) || typeof holder.id !== "string") throw new HttpError(400, "holder must be {kind: conversation|module|mission, id, roles?}");
+		if (holder.roles !== undefined && !(holder.kind === "mission" && Array.isArray(holder.roles) && holder.roles.every((r: unknown) => typeof r === "string"))) throw new HttpError(400, "roles: a list of role ids, for mission holders only");
+		if (holder.kind === "mission" && !(await ws.missions.list()).some((p) => p.id === holder.id)) throw new HttpError(404, "No such mission");
 		if (methods !== undefined && !(Array.isArray(methods) && methods.every((m: unknown) => typeof m === "string"))) throw new HttpError(400, "methods must be a list of names");
-		return { grant: await ws.grant({ gatekeeper, connection, resource: String(resource ?? ""), label, holder, autoApprove, methods, policy, by: user.displayName, requestId }) };
+		return { grant: await ws.grant({ airlock, connection, resource: String(resource ?? ""), label, holder, autoApprove, methods, policy, by: user.displayName, requestId }) };
 	});
 	r.patch("/api/w/:ws/grants/:id", async (req) => {
 		const { ws } = await member(req, "editor");
@@ -687,14 +687,14 @@ export function createApi(): Router {
 		return await ws.decide(req.params.id!, approve, user.displayName);
 	});
 
-	// ------------------------------------------------------------ gadget frame (sandboxed origin)
+	// ------------------------------------------------------------ module frame (sandboxed origin)
 	r.get("/frame/:id", async (req) => {
 		const claims = verify<{ g: string; u: string; n: string; r: Role }>(req.query.get("t") ?? undefined);
-		if (!claims || claims.g !== req.params.id) throw new HttpError(403, "Frame token expired — reload the gadget");
-		const g = gadgets.get(claims.g);
-		if (!g) throw new HttpError(404, "No such gadget");
+		if (!claims || claims.g !== req.params.id) throw new HttpError(403, "Frame token expired — reload the module");
+		const g = modules.get(claims.g);
+		if (!g) throw new HttpError(404, "No such module");
 		const ws = await Workspace.get(g.workspaceId);
-		const html = buildFrame(await ws.gadgetFiles(g.id), { gadgetId: g.id, user: { id: claims.u, name: claims.n, role: claims.r } });
+		const html = buildFrame(await ws.moduleFiles(g.id), { moduleId: g.id, user: { id: claims.u, name: claims.n, role: claims.r } });
 		req.res.writeHead(200, {
 			"content-type": "text/html; charset=utf-8",
 			"content-security-policy": `${FRAME_CSP}; sandbox allow-scripts allow-forms allow-modals allow-downloads allow-popups`,

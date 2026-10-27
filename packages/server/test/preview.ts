@@ -1,9 +1,9 @@
 /**
- * Live previews behind a published port range — the container case. With `preview.ports` set, pi-os
+ * Live previews behind a published port range — the container case. With `preview.ports` set, outpost
  * doesn't hand the browser the dev server's own loopback port (unreachable from outside a container):
  * it takes a port from the range, listens on `preview.bind` and pipes to the app. The app keeps
- * listening on 127.0.0.1, exactly as before, so nothing about the projects changes.
- * Run: pnpm --filter @pi-os/server test:preview
+ * listening on 127.0.0.1, exactly as before, so nothing about the missions changes.
+ * Run: pnpm --filter @outpost/server test:preview
  */
 import { check, finish, freePort, testDir } from "./lib/harness.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -12,12 +12,12 @@ import { join } from "node:path";
 // A free port right now starts the range. Chosen before src/config.ts is imported (it reads the env),
 // hence the dynamic imports below.
 const start = await freePort();
-process.env.PI_OS_PREVIEW_PORTS = `${start}-${start + 9}`;
-process.env.PI_OS_PREVIEW_BIND = "127.0.0.1";
+process.env.OUTPOST_PREVIEW_PORTS = `${start}-${start + 9}`;
+process.env.OUTPOST_PREVIEW_BIND = "127.0.0.1";
 
 const { config } = await import("../src/config.ts");
-const { PreviewManager } = await import("../src/projects/preview.ts");
-import type { ProjectManager } from "../src/projects/manager.ts";
+const { PreviewManager } = await import("../src/missions/preview.ts");
+import type { MissionManager } from "../src/missions/manager.ts";
 
 const APP = `
 const http = require("http");
@@ -25,28 +25,28 @@ http.createServer((req, res) => res.end("hello from " + require("fs").readFileSy
   .listen(Number(process.env.PORT), process.env.HOST);
 `;
 
-/** A stand-in for a project checkout: preview.ts only needs these three things from the manager. */
-function fakeProject(name: string, body: string): { root: string; previewDir: string; updatePreview(): Promise<string> } {
-	const root = join(testDir, "projects", name);
+/** A stand-in for a mission checkout: preview.ts only needs these three things from the manager. */
+function fakeMission(name: string, body: string): { root: string; previewDir: string; updatePreview(): Promise<string> } {
+	const root = join(testDir, "missions", name);
 	const previewDir = join(root, "preview");
 	mkdirSync(join(previewDir, "app"), { recursive: true });
-	mkdirSync(join(previewDir, ".pios"), { recursive: true });
-	writeFileSync(join(previewDir, ".pios", "project.json"), JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
+	mkdirSync(join(previewDir, ".outpost"), { recursive: true });
+	writeFileSync(join(previewDir, ".outpost", "mission.json"), JSON.stringify({ dev: { command: "node server.js", readyPath: "/" } }));
 	writeFileSync(join(previewDir, "app", "server.js"), APP);
 	writeFileSync(join(previewDir, "app", "name.txt"), body);
 	return { root, previewDir, updatePreview: async () => "c0ffee" + name };
 }
 
-const repos = new Map<string, ReturnType<typeof fakeProject>>();
+const repos = new Map<string, ReturnType<typeof fakeMission>>();
 const manager = {
 	ws: { id: "ws-preview" },
 	channel: () => "preview-test",
 	repo: (id: string) => repos.get(id)!,
-} as unknown as ProjectManager;
+} as unknown as MissionManager;
 const previews = new PreviewManager(manager);
 
 const start1 = Date.now();
-repos.set("p1", fakeProject("p1", "one"));
+repos.set("p1", fakeMission("p1", "one"));
 const one = await previews.start("p1", "test");
 check("preview.ports: the browser port comes from the range", one.status === "running" && one.port === start, one);
 check("preview.ports: the dev server itself stays on loopback", !!one.appPort && one.appPort !== one.port, one);
@@ -55,11 +55,11 @@ check("preview.ports: the range port serves the app", body1 === "hello from one\
 check("preview.ports: ready without waiting for the timeout", Date.now() - start1 < 30000, Date.now() - start1);
 check("preview.ports: the log says where it is", /public preview on http:\/\/127\.0\.0\.1:\d+ → 127\.0\.0\.1:\d+/.test(previews.tail("p1")), previews.tail("p1"));
 
-repos.set("p2", fakeProject("p2", "two"));
+repos.set("p2", fakeMission("p2", "two"));
 const two = await previews.start("p2", "test");
 // Not necessarily start + 1: on Windows the OS hands out loopback ports sequentially, so the first
 // dev server's own port can land inside this test range. What matters: another port, from the range.
-check("preview.ports: a second project takes another port from the range", !!two.port && two.port !== one.port && two.port > start && two.port <= start + 9, [one.port, two.port]);
+check("preview.ports: a second mission takes another port from the range", !!two.port && two.port !== one.port && two.port > start && two.port <= start + 9, [one.port, two.port]);
 check("preview.ports: both run at once", (await fetch(`http://127.0.0.1:${two.port}/`).then((r) => r.text())) === "hello from two\n");
 
 await previews.stop("p1", true);

@@ -2,9 +2,9 @@ import type { User } from "../kernel/system-db.ts";
 
 /**
  * Fan-out of realtime messages to WebSocket clients, by channel:
- *   ws:<workspaceId>        workspace documents (chats, grants, approvals, gadgets)
+ *   ws:<workspaceId>        workspace documents (chats, grants, approvals, modules)
  *   conv:<ws>:<conv>        agent events of one conversation (shared by everyone watching it)
- *   gadget:<gadgetId>       gadget server broadcasts, reloads, presence
+ *   module:<moduleId>       module server broadcasts, reloads, presence
  */
 export type HubClient = { id: string; user: User; send(message: unknown): void };
 

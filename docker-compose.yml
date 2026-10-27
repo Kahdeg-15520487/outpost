@@ -1,28 +1,28 @@
-# pi-os in Docker:  docker compose up -d --build   then http://localhost:8787
+# outpost in Docker:  docker compose up -d --build   then http://localhost:8787
 #
 # Keys are read from the environment ($VAR in docker/config.json), so either export them or put them
 # in a .env file next to this one (compose reads it; it's gitignored).
-name: pi-os
+name: outpost
 
 services:
-  pi-os:
+  outpost:
     build: .
-    image: pi-os:0.7.0
-    container_name: pi-os
+    image: outpost:0.8.0
+    container_name: outpost
     init: true
     restart: unless-stopped
     ports:
-      # The app. Bound to localhost by default — pi-os has no TLS, so put a reverse proxy in front
-      # (or set PI_OS_BIND=0.0.0.0) before opening it to a network.
-      - "${PI_OS_BIND:-127.0.0.1}:${PI_OS_PORT:-8787}:8787"
+      # The app. Bound to localhost by default — outpost has no TLS, so put a reverse proxy in front
+      # (or set OUTPOST_BIND=0.0.0.0) before opening it to a network.
+      - "${OUTPOST_BIND:-127.0.0.1}:${OUTPOST_PORT:-8787}:8787"
       # Live previews (the App tab). Must match "preview.ports" in docker/config.json; narrow both to
-      # 3100-3109 if you'd rather publish fewer ports than one per running project.
-      - "${PI_OS_BIND:-127.0.0.1}:3100-3199:3100-3199"
+      # 3100-3109 if you'd rather publish fewer ports than one per running mission.
+      - "${OUTPOST_BIND:-127.0.0.1}:3100-3199:3100-3199"
     volumes:
-      # Workspaces, projects, uploads, the instance secret and stored model keys.
-      - pi-os-data:/data
+      # Workspaces, missions, uploads, the instance secret and stored model keys.
+      - outpost-data:/data
       # Your own config instead of the shipped one (edit a copy of docker/config.json):
-      # - ./pi-os.config.json:/app/docker/config.json:ro
+      # - ./outpost.config.json:/app/docker/config.json:ro
     environment:
       # Anything set here wins over .env for compose's own substitution; empty values just mean "no key".
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -31,7 +31,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       # Keep sessions valid across `docker compose down`/`up` even if you re-create the volume:
-      # PI_OS_SECRET: ${PI_OS_SECRET:-}
+      # OUTPOST_SECRET: ${OUTPOST_SECRET:-}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 30s
@@ -40,4 +40,4 @@ services:
       retries: 3
 
 volumes:
-  pi-os-data:
+  outpost-data:

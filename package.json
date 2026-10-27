@@ -1,17 +1,17 @@
 {
-  "name": "pi-os",
-  "version": "0.7.0",
+  "name": "outpost",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
-  "description": "A self-hosted AI workspace on pi-durable: durable agents, sandboxed gadgets, capability Gatekeepers.",
+  "description": "A self-hosted AI workspace on pi-durable: durable agents, sandboxed modules, capability Airlocks.",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
-    "dev:server": "pnpm --filter @pi-os/server dev",
-    "dev:web": "pnpm --filter @pi-os/web dev",
-    "build": "pnpm --filter @pi-os/web build",
-    "start": "pnpm build && pnpm --filter @pi-os/server start",
+    "dev:server": "pnpm --filter @outpost/server dev",
+    "dev:web": "pnpm --filter @outpost/web dev",
+    "build": "pnpm --filter @outpost/web build",
+    "start": "pnpm build && pnpm --filter @outpost/server start",
     "typecheck": "pnpm -r typecheck",
-    "smoke": "pnpm --filter @pi-os/server smoke",
-    "test": "pnpm build && pnpm typecheck && pnpm --filter @pi-os/server test"
+    "smoke": "pnpm --filter @outpost/server smoke",
+    "test": "pnpm build && pnpm typecheck && pnpm --filter @outpost/server test"
   }
 }

@@ -3,13 +3,13 @@ import { complete } from "@earendil-works/pi-ai/compat";
 import type { AgentEventStream } from "@earendil-works/pi-durable";
 import { ACTIVITY_RUNS, ActivityDoc, ApprovalsDoc, AuditDoc, ChatsDoc, FilesDoc, type ChatMeta, type ChatSummary, type RunRecord } from "./docs.ts";
 import { DEMO_MODEL, defaultModel, models } from "./models.ts";
-import { gadgets, users, type User } from "./system-db.ts";
+import { modules, users, type User } from "./system-db.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
  * The workspace homepage: what you were doing last time, and what happened while you were away.
  *
- * Most of it needs no new records — approvals, audit lines, files and gadgets already carry
+ * Most of it needs no new records — approvals, audit lines, files and modules already carry
  * timestamps. Chat transcripts do not (a `pi.durable` entry has no wall-clock time), so the one thing
  * this module writes is a line per finished agent run, recorded from the run's own event stream. That
  * is why the recorder follows a chat as soon as work is submitted instead of when someone opens it:
@@ -55,7 +55,7 @@ export async function recordRun(ws: Workspace, run: RunRecord): Promise<void> {
 
 /**
  * Follow one chat's runs and record a line for each when it settles. Called when work is submitted and
- * when a restarted pi-os resumes unfinished runs, so the record doesn't depend on a browser watching.
+ * when a restarted outpost resumes unfinished runs, so the record doesn't depend on a browser watching.
  */
 export async function watchRuns(ws: Workspace, chatId: string): Promise<void> {
 	let map = watching.get(ws);
@@ -118,7 +118,7 @@ export async function watchRuns(ws: Workspace, chatId: string): Promise<void> {
 	});
 }
 
-/** After a restart, follow the conversations pi-os is resuming so their runs still land in the log. */
+/** After a restart, follow the conversations outpost is resuming so their runs still land in the log. */
 export async function watchRunning(ws: Workspace): Promise<void> {
 	const inspection = await ws.harness.inspect(ctx).catch(() => undefined);
 	for (const task of inspection?.tasks ?? []) {
@@ -142,7 +142,7 @@ export type HomeChatActivity = {
 	/** A model-written line about it, when one has been asked for and is still current. */
 	summary?: string;
 };
-export type HomeProjectActivity = { id: string; name: string; stage: string; open: number; changes: number; lastAt?: number };
+export type HomeMissionActivity = { id: string; name: string; stage: string; open: number; changes: number; lastAt?: number };
 export type Home = {
 	/** Everything after `since` counts as "while you were away". */
 	since: number;
@@ -150,8 +150,8 @@ export type Home = {
 	firstVisit: boolean;
 	away: {
 		chats: HomeChatActivity[];
-		gadgets: { id: string; name: string; icon: string; at: number }[];
-		projects: HomeProjectActivity[];
+		modules: { id: string; name: string; icon: string; at: number }[];
+		missions: HomeMissionActivity[];
 		approvals: { pending: number; decided: number };
 		files: number;
 		audit: number;
@@ -159,10 +159,10 @@ export type Home = {
 	};
 	pickup: {
 		lastChat?: { id: string; title: string; at: number };
-		approvals: { id: string; summary: string; gatekeeper: string; at: number; requestedBy: string }[];
-		questions: { projectId: string; project: string; agent: string; text: string; at: number }[];
+		approvals: { id: string; summary: string; airlock: string; at: number; requestedBy: string }[];
+		questions: { missionId: string; mission: string; agent: string; text: string; at: number }[];
 	};
-	projects: { id: string; name: string; stage: string; open: number; lastAt?: number }[];
+	missions: { id: string; name: string; stage: string; open: number; lastAt?: number }[];
 };
 
 const toolList = (tools: Record<string, number>) => Object.entries(tools).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
@@ -215,8 +215,8 @@ export async function home(ws: Workspace, user: User): Promise<Home> {
 		if (summary && summary.upTo >= chat.lastAt) chat.summary = summary.text;
 	}
 
-	// Gadgets, files, approvals, audit: already timestamped where they are written.
-	const touchedGadgets = gadgets
+	// Modules, files, approvals, audit: already timestamped where they are written.
+	const touchedModules = modules
 		.inWorkspace(ws.id)
 		.filter((g) => g.updatedAt > since)
 		.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -228,17 +228,17 @@ export async function home(ws: Workspace, user: User): Promise<Home> {
 	const newFiles = Object.values(files?.files ?? {}).filter((f) => f.createdAt > since).length;
 	const newAudit = (audit?.lines ?? []).filter((l) => l.at > since).length;
 
-	// Projects: their own activity feed already has timestamps and names the agent that did it.
-	const projects = await ws.projects.list();
-	const projectRows: HomeProjectActivity[] = [];
+	// Missions: their own activity feed already has timestamps and names the agent that did it.
+	const missions = await ws.missions.list();
+	const missionRows: HomeMissionActivity[] = [];
 	const questions: Home["pickup"]["questions"] = [];
-	for (const meta of projects.filter((p) => !p.archived)) {
-		const state = await ws.projects.state(meta.id);
+	for (const meta of missions.filter((p) => !p.archived)) {
+		const state = await ws.missions.state(meta.id);
 		const open = Object.values(state.questions ?? {}).filter((q) => !q.answeredAt);
 		const changes = (state.activity ?? []).filter((a) => a.at > since);
 		const last = (state.activity ?? []).at(-1);
-		projectRows.push({ id: meta.id, name: meta.name, stage: meta.stage, open: open.length, changes: changes.length, ...(last ? { lastAt: last.at } : {}) });
-		for (const q of open) questions.push({ projectId: meta.id, project: meta.name, agent: q.agent, text: clip(q.text, 160), at: q.at });
+		missionRows.push({ id: meta.id, name: meta.name, stage: meta.stage, open: open.length, changes: changes.length, ...(last ? { lastAt: last.at } : {}) });
+		for (const q of open) questions.push({ missionId: meta.id, mission: meta.name, agent: q.agent, text: clip(q.text, 160), at: q.at });
 	}
 	questions.sort((a, b) => b.at - a.at);
 
@@ -252,8 +252,8 @@ export async function home(ws: Workspace, user: User): Promise<Home> {
 		firstVisit: typeof seen !== "number",
 		away: {
 			chats: chatActivity,
-			gadgets: touchedGadgets,
-			projects: projectRows.filter((p) => p.changes > 0),
+			modules: touchedModules,
+			missions: missionRows.filter((p) => p.changes > 0),
 			approvals: { pending: pendingApprovals.length, decided: decidedApprovals },
 			files: newFiles,
 			audit: newAudit,
@@ -265,10 +265,10 @@ export async function home(ws: Workspace, user: User): Promise<Home> {
 		},
 		pickup: {
 			...(lastChatMeta ? { lastChat: { id: lastChatMeta.id, title: lastChatMeta.title, at: lastChatMeta.updatedAt } } : {}),
-			approvals: pendingApprovals.slice(0, 10).map((a) => ({ id: a.id, summary: clip(a.summary, 140), gatekeeper: a.gatekeeper, at: a.createdAt, requestedBy: a.requestedBy?.name ?? "Agent" })),
+			approvals: pendingApprovals.slice(0, 10).map((a) => ({ id: a.id, summary: clip(a.summary, 140), airlock: a.airlock, at: a.createdAt, requestedBy: a.requestedBy?.name ?? "Agent" })),
 			questions: questions.slice(0, 10),
 		},
-		projects: projectRows.sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0)),
+		missions: missionRows.sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0)),
 	};
 }
 

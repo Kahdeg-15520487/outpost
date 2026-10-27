@@ -9,12 +9,13 @@ node_modules
 **/*.tsbuildinfo
 coverage
 data
+outpost-data
 *.sqlite
 *.sqlite-*
 *.db
-pi-os.config.json
-pi-os.config.*.json
-!pi-os.config.example.json
+outpost.config.json
+outpost.config.*.json
+!outpost.config.example.json
 .env
 .env.*
 *.log

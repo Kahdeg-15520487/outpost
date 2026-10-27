@@ -7,23 +7,23 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { config } from "../config.ts";
 import { hub } from "../collab/hub.ts";
-import { createOsExtension } from "../agent/extension.ts";
-import { GadgetHost, type Caller } from "../gadgets/host.ts";
-import { GATEKEEPERS, type Gatekeeper } from "../gatekeepers/catalog.ts";
-import { Connections } from "../gatekeepers/connectors/index.ts";
-import { holds } from "../gatekeepers/prompt.ts";
+import { createOutpostExtension } from "../agent/extension.ts";
+import { ModuleHost, type Caller } from "../modules/host.ts";
+import { AIRLOCKS, type Airlock } from "../airlocks/catalog.ts";
+import { Connections } from "../airlocks/connectors/index.ts";
+import { holds } from "../airlocks/prompt.ts";
 import { FileStore, formatBytes, imageProcessor, looksLikeText } from "../files/store.ts";
-import { buildFrame } from "../gadgets/frame.ts";
-import { renderGadget, type RenderAction } from "../gadgets/render.ts";
+import { buildFrame } from "../modules/frame.ts";
+import { renderModule, type RenderAction } from "../modules/render.ts";
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
 import {
 	ApprovalsDoc,
 	AuditDoc,
 	ChatsDoc,
 	FilesDoc,
-	GadgetLogsDoc,
-	GadgetSourceDoc,
-	GadgetStateDoc,
+	ModuleLogsDoc,
+	ModuleSourceDoc,
+	ModuleStateDoc,
 	GrantsDoc,
 	MailboxDoc,
 	type AccessRequest,
@@ -35,24 +35,24 @@ import {
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
 import { watchRuns, watchRunning } from "./home.ts";
-import { ProjectManager } from "../projects/manager.ts";
-import { agentEnv } from "../projects/env.ts";
-import { blueprints, gadgets, HttpError, newId, users, workspaces, type BlueprintRow, type GadgetRow, type User, type WorkspaceRow } from "./system-db.ts";
+import { MissionManager } from "../missions/manager.ts";
+import { agentEnv } from "../missions/env.ts";
+import { blueprints, modules, HttpError, newId, users, workspaces, type BlueprintRow, type ModuleRow, type User, type WorkspaceRow } from "./system-db.ts";
 
 const open = new Map<string, Promise<Workspace>>();
 const codemodeSandbox = new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 1024 });
 
 /**
- * One workspace = one pi-durable Harness over its own SQLite file. Chats are conversations, gadget
- * code/state/logs and Gatekeeper grants/approvals are documents in it. Everything is committed
+ * One workspace = one pi-durable Harness over its own SQLite file. Chats are conversations, module
+ * code/state/logs and Airlock grants/approvals are documents in it. Everything is committed
  * before it is shown, and unfinished agent runs continue after a restart (`harness.resume()`).
  */
 export class Workspace {
-	readonly hosts = new Map<string, GadgetHost>();
+	readonly hosts = new Map<string, ModuleHost>();
 	readonly channel: string;
 	readonly files: FileStore;
-	/** Agent teams (projects) in this workspace. */
-	projects!: ProjectManager;
+	/** Agent teams (missions) in this workspace. */
+	missions!: MissionManager;
 	/** Third-party services (MCP servers, REST APIs) this workspace can grant access to. */
 	connections!: Connections;
 	private constructor(
@@ -83,7 +83,7 @@ export class Workspace {
 		const p = open.get(id);
 		open.delete(id);
 		const ws = await p?.catch(() => undefined);
-		ws?.projects?.stop();
+		ws?.missions?.stop();
 		await ws?.connections?.close().catch(() => {});
 		await ws?.harness.close(ctx).catch(() => {});
 	}
@@ -91,7 +91,7 @@ export class Workspace {
 	static async closeAll() {
 		for (const p of open.values()) {
 			const ws = await p.catch(() => undefined);
-			ws?.projects?.stop();
+			ws?.missions?.stop();
 			await ws?.connections?.close().catch(() => {});
 			await ws?.harness.close(ctx).catch(() => {});
 		}
@@ -101,16 +101,16 @@ export class Workspace {
 		const registry = createRegistry();
 		const storage = await openNodeSqliteStorage(join(config.workspaceDir, `${id}.sqlite`));
 		let self: Workspace | undefined;
-		// Chats keep exactly the OS + code mode extensions; project agents select coding tools + project tools.
+		// Chats keep exactly the OS + code mode extensions; mission agents select coding tools + mission tools.
 		let chatExtensions: Extension[] | undefined;
 		const harness = await Harness.open(
 			storage,
 			{
 				models,
 				registry,
-				identity: { attribution: { name: "pi-os", url: "https://pi.dev" } },
-				// Project agents' file/bash tools run in their own worktree (their agent `cwd`).
-				// (Git Bash paths translated; file writes confined to the worktree — see projects/env.ts.)
+				identity: { attribution: { name: "Outpost", url: "https://github.com/Kahdeg-15520487/outpost" } },
+				// Mission agents' file/bash tools run in their own worktree (their agent `cwd`).
+				// (Git Bash paths translated; file writes confined to the worktree — see missions/env.ts.)
 				env: ({ cwd }) => (cwd ? agentEnv(cwd) : new NodeExecutionEnv({ cwd: config.dataDir })),
 				settings: () => ({
 					extensions: chatExtensions,
@@ -126,16 +126,16 @@ export class Workspace {
 		);
 		const ws = (self = new Workspace(id, harness));
 		ws.connections = new Connections(id, harness, () => hub.publish(ws.channel, { t: "ws.connections", ws: id }));
-		const osExtension = createOsExtension(ws);
+		const outpostExtension = createOutpostExtension(ws);
 		const codemode = createCodemodeExtension({ sandbox: codemodeSandbox, models: false });
-		registry.install(osExtension);
+		registry.install(outpostExtension);
 		registry.install(codemode);
-		chatExtensions = [osExtension, codemode];
-		ws.projects = new ProjectManager(ws);
-		registry.install(ws.projects.coding);
-		registry.install(ws.projects.extension);
+		chatExtensions = [outpostExtension, codemode];
+		ws.missions = new MissionManager(ws);
+		registry.install(ws.missions.coding);
+		registry.install(ws.missions.extension);
 		await ws.#watchDocs();
-		await ws.projects.init();
+		await ws.missions.init();
 		harness.closed.then((end) => {
 			if (end.reason === "failed") {
 				console.error(`[ws ${id}] harness failed, will reopen on next use`, end.error);
@@ -178,8 +178,8 @@ export class Workspace {
 		};
 	}
 
-	publishGadgets() {
-		hub.publish(this.channel, { t: "ws.gadgets", ws: this.id });
+	publishModules() {
+		hub.publish(this.channel, { t: "ws.modules", ws: this.id });
 	}
 
 	// ------------------------------------------------------------------ chats
@@ -205,7 +205,7 @@ export class Workspace {
 	async #codemodeOnly(conversation: Conversation) {
 		const agent = await conversation.agent(ctx);
 		const codemode = agent.tools.find((t) => t.name === "codemode");
-		const keep = agent.tools.filter((t) => ["codemode", "gadget_write", "gadget_edit", "subagent"].includes(t.name));
+		const keep = agent.tools.filter((t) => ["codemode", "module_write", "module_edit", "subagent"].includes(t.name));
 		if (codemode) await conversation.configure({ modelTools: keep }, ctx);
 	}
 
@@ -215,7 +215,7 @@ export class Workspace {
 		return c;
 	}
 
-	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = [], gadgetId?: string) {
+	async send(chatId: string, user: User, content: string, mode: "followUp" | "steer" = "followUp", fileIds: string[] = [], moduleId?: string) {
 		const c = await this.conversation(chatId);
 		// Follow the run from the start — and before submitting, so a fast run can't end unrecorded. It may
 		// well finish while nobody has the chat open; that is exactly what the homepage reports on.
@@ -224,9 +224,9 @@ export class Workspace {
 		for (const id of fileIds) attached.push(await this.files.get(id));
 		for (const f of attached) if (!f.chatId) await this.files.update(f.id, (m) => void (m.chatId = chatId));
 		if (!content.trim() && attached.length) content = attached.length === 1 ? `(attached ${attached[0]!.name})` : `(attached ${attached.length} files)`;
-		// The user typed this with a gadget open beside the chat: "this deck", "the board", "it" mean that gadget.
-		const open = gadgetId ? gadgets.get(gadgetId) : undefined;
-		const focus = open?.workspaceId === this.id ? `[pi-os: the user has gadget ${open.id} "${open.name}"${open.blueprintId ? ` (from blueprint ${open.blueprintId})` : ""} open next to this chat. Unless they say otherwise, "this", "it" and the like refer to that gadget — use the gadget tools on it, and read its API first.]\n\n` : "";
+		// The user typed this with a module open beside the chat: "this deck", "the board", "it" mean that module.
+		const open = moduleId ? modules.get(moduleId) : undefined;
+		const focus = open?.workspaceId === this.id ? `[outpost: the user has module ${open.id} "${open.name}"${open.blueprintId ? ` (from blueprint ${open.blueprintId})` : ""} open next to this chat. Unless they say otherwise, "this", "it" and the like refer to that module — use the module tools on it, and read its API first.]\n\n` : "";
 		await this.harness.commit(async (tx) => {
 			const chats = await tx.doc(ChatsDoc);
 			const chat = chats.chats[chatId];
@@ -242,7 +242,7 @@ export class Workspace {
 				content: attached.length ? [{ type: "text", text: focus + content }, ...(await this.#attachmentParts(attached))] : focus + content,
 				whenBusy: mode === "steer" ? "steer" : "followUp",
 				entry: {
-					kind: "os.user",
+					kind: "outpost.user",
 					data: { author: user.displayName, authorId: user.id, text: content, files: attached.map((f) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: f.size })) },
 				},
 			},
@@ -287,33 +287,33 @@ export class Workspace {
 		return watchEvents(this.harness, Number(chatId) as any, ctx);
 	}
 
-	// ------------------------------------------------------------------ gadgets
+	// ------------------------------------------------------------------ modules
 
-	host(gadgetId: string): GadgetHost {
-		let host = this.hosts.get(gadgetId);
+	host(moduleId: string): ModuleHost {
+		let host = this.hosts.get(moduleId);
 		if (!host) {
-			host = new GadgetHost(gadgetId, {
+			host = new ModuleHost(moduleId, {
 				harness: this.harness,
 				files: this.files,
-				name: () => gadgets.get(gadgetId)?.name ?? gadgetId,
-				gatekeeper: (gid, grant, method, args, caller) =>
-					this.gatekeeperCall({ kind: "gadget", id: gid }, grant, method, args, { kind: "gadget", id: gid, name: `${gadgets.get(gid)?.name ?? gid} (${caller.name})` }),
+				name: () => modules.get(moduleId)?.name ?? moduleId,
+				airlock: (gid, grant, method, args, caller) =>
+					this.airlockCall({ kind: "module", id: gid }, grant, method, args, { kind: "module", id: gid, name: `${modules.get(gid)?.name ?? gid} (${caller.name})` }),
 			});
-			this.hosts.set(gadgetId, host);
+			this.hosts.set(moduleId, host);
 		}
 		return host;
 	}
 
-	/** Render a gadget's client headlessly as `caller` (whose RPC calls run against the real server). */
-	async renderGadget(gadgetId: string, caller: Caller, opts: { width: number; height: number; fullPage: boolean; waitMs: number; actions: RenderAction[]; persist?: boolean }) {
-		if (!config.render.enabled) throw new Error("Rendering is disabled (render.enabled = false in pi-os.config.json)");
-		const html = buildFrame(await this.gadgetFiles(gadgetId), { gadgetId, user: { id: caller.id, name: caller.name, role: caller.role } });
+	/** Render a module's client headlessly as `caller` (whose RPC calls run against the real server). */
+	async renderModule(moduleId: string, caller: Caller, opts: { width: number; height: number; fullPage: boolean; waitMs: number; actions: RenderAction[]; persist?: boolean }) {
+		if (!config.render.enabled) throw new Error("Rendering is disabled (render.enabled = false in outpost.config.json)");
+		const html = buildFrame(await this.moduleFiles(moduleId), { moduleId, user: { id: caller.id, name: caller.name, role: caller.role } });
 		// By default the render talks to a scratch copy of the server, so clicking through the UI to
 		// check it never changes the user's data. persist: true uses the live instance.
-		const host = opts.persist ? this.host(gadgetId) : this.#scratchHost(gadgetId);
+		const host = opts.persist ? this.host(moduleId) : this.#scratchHost(moduleId);
 		let result;
 		try {
-			result = await renderGadget({ ...opts, html, call: (method, args) => host.call(method, args, caller) });
+			result = await renderModule({ ...opts, html, call: (method, args) => host.call(method, args, caller) });
 		} finally {
 			if (!opts.persist) await host.dispose();
 		}
@@ -325,12 +325,12 @@ export class Workspace {
 		return { ...result, image, note };
 	}
 
-	#scratchHost(gadgetId: string) {
-		const live = this.host(gadgetId);
-		return new GadgetHost(gadgetId, live.env, true);
+	#scratchHost(moduleId: string) {
+		const live = this.host(moduleId);
+		return new ModuleHost(moduleId, live.env, true);
 	}
 
-	async createGadget(opts: { name: string; icon?: string; blueprintId?: string; ownerId: string; files?: Record<string, string> }): Promise<GadgetRow> {
+	async createModule(opts: { name: string; icon?: string; blueprintId?: string; ownerId: string; files?: Record<string, string> }): Promise<ModuleRow> {
 		let files = opts.files ?? {};
 		let icon = opts.icon;
 		if (opts.blueprintId) {
@@ -340,101 +340,101 @@ export class Workspace {
 			icon ??= bp.icon;
 		}
 		if (!files["index.html"]) files["index.html"] = STARTER_HTML(opts.name);
-		const row = gadgets.create(this.id, opts.ownerId, opts.name, icon ?? "◆", opts.blueprintId ?? null);
+		const row = modules.create(this.id, opts.ownerId, opts.name, icon ?? "◆", opts.blueprintId ?? null);
 		await this.harness.commit(async (tx) => {
-			const src = await tx.doc(GadgetSourceDoc, row.id, null);
+			const src = await tx.doc(ModuleSourceDoc, row.id, null);
 			src.files = files;
 			src.revision = 1;
 		}, ctx);
-		this.publishGadgets();
+		this.publishModules();
 		return row;
 	}
 
-	async gadgetFiles(gadgetId: string): Promise<Record<string, string>> {
-		return { ...((await this.harness.snapshot(GadgetSourceDoc, gadgetId, ctx))?.files ?? {}) };
+	async moduleFiles(moduleId: string): Promise<Record<string, string>> {
+		return { ...((await this.harness.snapshot(ModuleSourceDoc, moduleId, ctx))?.files ?? {}) };
 	}
 
-	async gadgetLogs(gadgetId: string) {
-		return [...((await this.harness.snapshot(GadgetLogsDoc, gadgetId, ctx))?.lines ?? [])];
+	async moduleLogs(moduleId: string) {
+		return [...((await this.harness.snapshot(ModuleLogsDoc, moduleId, ctx))?.lines ?? [])];
 	}
 
-	async gadgetState(gadgetId: string) {
-		return { ...((await this.harness.snapshot(GadgetStateDoc, gadgetId, ctx))?.kv ?? {}) };
+	async moduleState(moduleId: string) {
+		return { ...((await this.harness.snapshot(ModuleStateDoc, moduleId, ctx))?.kv ?? {}) };
 	}
 
-	/** The Gatekeeper grants a gadget holds (export records which Gatekeepers it needs). */
-	async gadgetGrants(gadgetId: string) {
+	/** The Airlock grants a module holds (export records which Airlocks it needs). */
+	async moduleGrants(moduleId: string) {
 		const doc = await this.harness.snapshot(GrantsDoc, ctx);
 		return Object.values(doc?.grants ?? {})
-			.filter((g) => g.holder.kind === "gadget" && g.holder.id === gadgetId)
-			.map((g) => ({ id: g.id, label: g.label, gatekeeper: g.gatekeeper }));
+			.filter((g) => g.holder.kind === "module" && g.holder.id === moduleId)
+			.map((g) => ({ id: g.id, label: g.label, airlock: g.airlock }));
 	}
 
-	/** Replace a gadget's stored data (import). */
-	async setGadgetState(gadgetId: string, kv: Record<string, unknown>) {
+	/** Replace a module's stored data (import). */
+	async setModuleState(moduleId: string, kv: Record<string, unknown>) {
 		await this.harness.commit(async (tx) => {
-			const st = await tx.doc(GadgetStateDoc, gadgetId, null);
+			const st = await tx.doc(ModuleStateDoc, moduleId, null);
 			st.kv = JSON.parse(JSON.stringify(kv));
 		}, ctx);
-		this.hosts.get(gadgetId)?.reload();
+		this.hosts.get(moduleId)?.reload();
 	}
 
 	/** Apply file changes (null deletes) as one revision, then reload the server and every client. */
-	async writeGadgetFiles(gadgetId: string, changes: Record<string, string | null>) {
+	async writeModuleFiles(moduleId: string, changes: Record<string, string | null>) {
 		for (const path of Object.keys(changes)) {
 			if (!/^[\w./-]{1,120}$/.test(path) || path.includes("..")) throw new Error(`Invalid path: ${path}`);
 		}
 		await this.harness.commit(async (tx) => {
-			const src = await tx.doc(GadgetSourceDoc, gadgetId, null);
+			const src = await tx.doc(ModuleSourceDoc, moduleId, null);
 			for (const [path, content] of Object.entries(changes)) {
 				if (content === null) delete src.files[path];
 				else src.files[path] = content;
 			}
 			src.revision++;
 		}, ctx);
-		gadgets.touch(gadgetId);
-		this.host(gadgetId).reload();
-		this.publishGadgets();
+		modules.touch(moduleId);
+		this.host(moduleId).reload();
+		this.publishModules();
 	}
 
-	async deleteGadget(gadgetId: string) {
-		await this.hosts.get(gadgetId)?.dispose();
-		this.hosts.delete(gadgetId);
+	async deleteModule(moduleId: string) {
+		await this.hosts.get(moduleId)?.dispose();
+		this.hosts.delete(moduleId);
 		await this.harness.commit(async (tx) => {
-			await tx.retireDoc(GadgetSourceDoc, gadgetId);
-			await tx.retireDoc(GadgetStateDoc, gadgetId);
-			await tx.retireDoc(GadgetLogsDoc, gadgetId);
+			await tx.retireDoc(ModuleSourceDoc, moduleId);
+			await tx.retireDoc(ModuleStateDoc, moduleId);
+			await tx.retireDoc(ModuleLogsDoc, moduleId);
 			const grants = await tx.doc(GrantsDoc);
-			for (const [id, g] of Object.entries(grants.grants)) if (g.holder.kind === "gadget" && g.holder.id === gadgetId) delete grants.grants[id];
+			for (const [id, g] of Object.entries(grants.grants)) if (g.holder.kind === "module" && g.holder.id === moduleId) delete grants.grants[id];
 			const files = await tx.doc(FilesDoc);
-			for (const f of Object.values(files.files)) if (f.gadgets.includes(gadgetId)) f.gadgets = f.gadgets.filter((g) => g !== gadgetId);
+			for (const f of Object.values(files.files)) if (f.modules.includes(moduleId)) f.modules = f.modules.filter((g) => g !== moduleId);
 		}, ctx).catch(() => {});
-		gadgets.delete(gadgetId);
-		hub.publish(`gadget:${gadgetId}`, { t: "gadget.deleted", gadgetId });
-		this.publishGadgets();
+		modules.delete(moduleId);
+		hub.publish(`module:${moduleId}`, { t: "module.deleted", moduleId });
+		this.publishModules();
 	}
 
-	async publishBlueprint(gadgetId: string, meta: { name: string; description: string; visibility: "public" | "private"; authorId: string }): Promise<BlueprintRow> {
-		const g = gadgets.get(gadgetId)!;
-		// A gadget made from a blueprint keeps greeting people the same way once republished.
+	async publishBlueprint(moduleId: string, meta: { name: string; description: string; visibility: "public" | "private"; authorId: string }): Promise<BlueprintRow> {
+		const g = modules.get(moduleId)!;
+		// A module made from a blueprint keeps greeting people the same way once republished.
 		const intro = g.blueprintId ? blueprints.get(g.blueprintId)?.intro : undefined;
-		const bp: BlueprintRow = { id: newId("bp"), name: meta.name, description: meta.description, icon: g.icon, authorId: meta.authorId, visibility: meta.visibility, files: await this.gadgetFiles(gadgetId), createdAt: Date.now(), intro };
+		const bp: BlueprintRow = { id: newId("bp"), name: meta.name, description: meta.description, icon: g.icon, authorId: meta.authorId, visibility: meta.visibility, files: await this.moduleFiles(moduleId), createdAt: Date.now(), intro };
 		blueprints.upsert(bp);
 		hub.publish("blueprints", { t: "blueprints.changed" });
 		return bp;
 	}
 
-	// ------------------------------------------------------------------ gatekeepers
+	// ------------------------------------------------------------------ airlocks
 
-	/** The Gatekeeper behind a grant: a built-in one, or the workspace connection it points at. */
-	async gatekeeperFor(grant: { gatekeeper: string; connection?: string }): Promise<Gatekeeper | undefined> {
-		if (!grant.connection) return GATEKEEPERS[grant.gatekeeper];
+	/** The Airlock behind a grant: a built-in one, or the workspace connection it points at. */
+	async airlockFor(grant: { airlock: string; connection?: string }): Promise<Airlock | undefined> {
+		if (!grant.connection) return AIRLOCKS[grant.airlock];
 		const conn = await this.connections.get(grant.connection);
-		return conn && this.connections.gatekeeper(conn);
+		return conn && this.connections.airlock(conn);
 	}
 
 	async grant(opts: {
-		gatekeeper?: string;
+		airlock?: string;
 		connection?: string;
 		resource?: string;
 		label?: string;
@@ -445,16 +445,16 @@ export class Workspace {
 		by: string;
 		requestId?: string;
 	}): Promise<Grant> {
-		let gk: Gatekeeper | undefined;
+		let gk: Airlock | undefined;
 		let resource: string;
 		if (opts.connection) {
 			const conn = await this.connections.get(opts.connection);
 			if (!conn) throw new HttpError(400, `No connection "${opts.connection}"`);
-			gk = this.connections.gatekeeper(conn);
+			gk = this.connections.airlock(conn);
 			resource = conn.label;
 		} else {
-			gk = GATEKEEPERS[opts.gatekeeper ?? ""];
-			if (!gk) throw new HttpError(400, `Unknown gatekeeper ${opts.gatekeeper}`);
+			gk = AIRLOCKS[opts.airlock ?? ""];
+			if (!gk) throw new HttpError(400, `Unknown airlock ${opts.airlock}`);
 			resource = gk.normalizeResource(opts.resource ?? "");
 		}
 		const methods = opts.methods?.length ? [...new Set(opts.methods)] : undefined;
@@ -464,7 +464,7 @@ export class Workspace {
 		const grant: Grant = JSON.parse(
 			JSON.stringify({
 				id: newId("gr"),
-				gatekeeper: gk.id,
+				airlock: gk.id,
 				resource,
 				label: (opts.label?.trim() || (opts.connection ? resource : `${gk.id}:${resource}`)).slice(0, 80),
 				holder: opts.holder,
@@ -489,10 +489,10 @@ export class Workspace {
 	async updateGrant(grantId: string, patch: { autoApprove?: boolean; methods?: string[] | null; policy?: Record<string, "ask" | "auto" | "deny"> | null }) {
 		const current = (await this.harness.snapshot(GrantsDoc, ctx))?.grants[grantId];
 		if (!current) throw new HttpError(404, "No such grant");
-		const gk = await this.gatekeeperFor(current);
-		if (!gk) throw new HttpError(409, "The Gatekeeper or connection behind this grant is gone");
+		const gk = await this.airlockFor(current);
+		if (!gk) throw new HttpError(409, "The Airlock or connection behind this grant is gone");
 		const autoApprove = patch.autoApprove ?? current.autoApprove;
-		if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in pi-os.config.json to vet it.");
+		if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in outpost.config.json to vet it.");
 		const policy = patch.policy === null ? undefined : patch.policy ? checkPolicy(gk, patch.policy, autoApprove) : current.policy;
 		await this.harness.commit(async (tx) => {
 			const g = (await tx.doc(GrantsDoc)).grants[grantId];
@@ -509,7 +509,7 @@ export class Workspace {
 		await this.harness.commit(async (tx) => {
 			delete (await tx.doc(GrantsDoc)).grants[grantId];
 			// Its queued actions can't run any more.
-			for (const a of Object.values((await tx.doc(ApprovalsDoc)).actions)) if (a.grantId === grantId && a.status === "pending") Object.assign(a, { status: "rejected", error: "grant was revoked", decidedAt: Date.now(), decidedBy: "pi-os" });
+			for (const a of Object.values((await tx.doc(ApprovalsDoc)).actions)) if (a.grantId === grantId && a.status === "pending") Object.assign(a, { status: "rejected", error: "grant was revoked", decidedAt: Date.now(), decidedBy: "outpost" });
 		}, ctx);
 	}
 
@@ -535,17 +535,17 @@ export class Workspace {
 		return proposal;
 	}
 
-	async requestAccess(holder: Holder, gatekeeper: string, resource: string, reason: string, methods?: string[]) {
-		const conn = GATEKEEPERS[gatekeeper] ? undefined : await this.connections.get(gatekeeper);
-		const gk = GATEKEEPERS[gatekeeper] ?? (conn && this.connections.gatekeeper(conn));
+	async requestAccess(holder: Holder, airlock: string, resource: string, reason: string, methods?: string[]) {
+		const conn = AIRLOCKS[airlock] ? undefined : await this.connections.get(airlock);
+		const gk = AIRLOCKS[airlock] ?? (conn && this.connections.airlock(conn));
 		if (!gk) {
-			const available = [...Object.keys(GATEKEEPERS), ...(await this.connections.list()).map((c) => c.label)];
-			throw new Error(`Unknown gatekeeper or connection "${gatekeeper}". Available: ${available.join(", ")}`);
+			const available = [...Object.keys(AIRLOCKS), ...(await this.connections.list()).map((c) => c.label)];
+			throw new Error(`Unknown airlock or connection "${airlock}". Available: ${available.join(", ")}`);
 		}
 		const req: AccessRequest = JSON.parse(
 			JSON.stringify({
 				id: newId("rq"),
-				gatekeeper: gk.id,
+				airlock: gk.id,
 				resource: conn ? conn.label : gk.normalizeResource(resource),
 				reason,
 				holder,
@@ -581,12 +581,12 @@ export class Workspace {
 		}, ctx);
 	}
 
-	/** The grant a holder means by `grantRef` (id, label, or a Gatekeeper id it holds exactly one grant of). */
+	/** The grant a holder means by `grantRef` (id, label, or a Airlock id it holds exactly one grant of). */
 	async grantFor(holder: Holder, grantRef: string): Promise<Grant> {
 		const doc = await this.harness.snapshot(GrantsDoc, ctx);
 		const held = Object.values(doc?.grants ?? {}).filter((g) => holds(g.holder, holder));
-		const byGatekeeper = held.filter((g) => g.gatekeeper === grantRef);
-		const grant = held.find((g) => g.id === grantRef || g.label === grantRef) ?? (byGatekeeper.length === 1 ? byGatekeeper[0] : undefined);
+		const byAirlock = held.filter((g) => g.airlock === grantRef);
+		const grant = held.find((g) => g.id === grantRef || g.label === grantRef) ?? (byAirlock.length === 1 ? byAirlock[0] : undefined);
 		if (!grant) throw new Error(`No grant "${grantRef}" for this ${holder.kind}. Ask the user to introduce the resource (request_access).`);
 		return JSON.parse(JSON.stringify(grant));
 	}
@@ -596,20 +596,20 @@ export class Workspace {
 	 * writes run when the grant's policy auto-approves them (never for byo connections or alwaysAsk
 	 * methods), are refused when it denies them, and otherwise are simulated and queued for a human.
 	 */
-	async gatekeeperCall(holder: Holder, grantRef: string, method: string, args: any, requester: Holder & { name: string }) {
+	async airlockCall(holder: Holder, grantRef: string, method: string, args: any, requester: Holder & { name: string }) {
 		const grant = await this.grantFor(holder, grantRef);
-		const gk = await this.gatekeeperFor(grant);
+		const gk = await this.airlockFor(grant);
 		if (!gk) throw new Error(`The connection behind grant "${grant.label}" was removed.`);
 		if (grant.methods && !grant.methods.includes(method)) throw new Error(`Grant "${grant.label}" doesn't include ${method}. It allows: ${grant.methods.join(", ")}. Ask the user (request_access) if you need more.`);
 		const m = gk.methods[method];
 		if (!m) {
 			const names = Object.keys(gk.methods);
-			throw new Error(`${gk.title} has no method ${method}. Methods: ${names.slice(0, 60).join(", ")}${names.length > 60 ? ` … (${names.length}; use gatekeeper_tools to search)` : ""}`);
+			throw new Error(`${gk.title} has no method ${method}. Methods: ${names.slice(0, 60).join(", ")}${names.length > 60 ? ` … (${names.length}; use airlock_tools to search)` : ""}`);
 		}
 		const missing = ((m.inputSchema?.required as string[] | undefined) ?? []).filter((k) => args?.[k] === undefined || args?.[k] === null || args?.[k] === "");
 		if (missing.length) throw new Error(`${method} needs ${missing.join(", ")}. Arguments: ${JSON.stringify(m.inputSchema?.properties ? Object.keys(m.inputSchema.properties as object) : Object.keys(m.params))}`);
 		const io = { harness: this.harness };
-		const base = { at: Date.now(), grantId: grant.id, gatekeeper: gk.id, method, by: requester.name };
+		const base = { at: Date.now(), grantId: grant.id, airlock: gk.id, method, by: requester.name };
 		const runNow = async (detail?: string) => {
 			try {
 				const result = await m.run(grant.resource, args, io);
@@ -638,7 +638,7 @@ export class Workspace {
 			JSON.stringify({
 				id,
 				grantId: grant.id,
-				gatekeeper: gk.id,
+				airlock: gk.id,
 				resource: grant.resource,
 				method,
 				args: args ?? {},
@@ -656,7 +656,7 @@ export class Workspace {
 		return { queuedForApproval: id, note: "Simulated result. The action runs when the user approves it.", result: simulated };
 	}
 
-	/** A queued action's state, for whoever asked for it (a chat, a gadget, a project agent's conversation). */
+	/** A queued action's state, for whoever asked for it (a chat, a module, a mission agent's conversation). */
 	async actionResult(requester: { kind: string; id: string }, actionId: string) {
 		const action = (await this.harness.snapshot(ApprovalsDoc, ctx))?.actions[actionId];
 		if (!action || action.requestedBy.kind !== requester.kind || action.requestedBy.id !== requester.id) throw new Error(`No action ${actionId} of yours`);
@@ -680,7 +680,7 @@ export class Workspace {
 			blocked = r.failedOn;
 		}
 		const grant = (await this.harness.snapshot(GrantsDoc, ctx))?.grants[action.grantId];
-		const gk = grant && (await this.gatekeeperFor(grant));
+		const gk = grant && (await this.airlockFor(grant));
 		let patch: Partial<ApprovalAction>;
 		if (!approve) patch = { status: "rejected" };
 		else if (!grant) patch = { status: "failed", error: "grant was revoked" };
@@ -697,7 +697,7 @@ export class Workspace {
 			const a = (await tx.doc(ApprovalsDoc)).actions[actionId];
 			if (a) Object.assign(a, patch, { decidedAt: Date.now(), decidedBy: by });
 		}, ctx);
-		await this.#audit({ at: Date.now(), grantId: action.grantId, gatekeeper: action.gatekeeper, method: action.method, by, outcome: patch.status === "approved" ? "ok" : "error", detail: `${patch.status}: ${action.summary}` });
+		await this.#audit({ at: Date.now(), grantId: action.grantId, airlock: action.airlock, method: action.method, by, outcome: patch.status === "approved" ? "ok" : "error", detail: `${patch.status}: ${action.summary}` });
 		if (action.requestedBy.kind === "conversation") {
 			const outcome = patch.status === "approved" ? `was approved and executed${patch.result !== null && patch.result !== undefined ? `; result: ${JSON.stringify(patch.result).slice(0, 1500)}` : ""}` : patch.status === "rejected" ? `was rejected by ${by}` : `failed: ${patch.error}`;
 			await this.#notify(action.requestedBy.id, `Queued action ${actionId} (${action.summary}) ${outcome}.`, true);
@@ -711,23 +711,23 @@ export class Workspace {
 		await c?.submit(
 			{
 				type: "write",
-				entry: { kind: "os.notice", data: { text: message, quiet }, model: [{ role: "user", content: `[pi-os notice] ${message}`, timestamp: Date.now() }] },
+				entry: { kind: "outpost.notice", data: { text: message, quiet }, model: [{ role: "user", content: `[outpost notice] ${message}`, timestamp: Date.now() }] },
 			},
 			ctx,
 		);
 	}
 
-	/** Gadget access for a signed-in user, or a 404/403. */
-	static async gadgetFor(gadgetId: string, user: User, minRole: "viewer" | "editor" | "owner" = "viewer") {
-		const g = gadgets.get(gadgetId);
-		if (!g) throw new HttpError(404, "No such gadget");
-		const role = gadgets.role(g, user.id);
+	/** Module access for a signed-in user, or a 404/403. */
+	static async moduleFor(moduleId: string, user: User, minRole: "viewer" | "editor" | "owner" = "viewer") {
+		const g = modules.get(moduleId);
+		if (!g) throw new HttpError(404, "No such module");
+		const role = modules.role(g, user.id);
 		const rank = { viewer: 1, editor: 2, owner: 3 };
-		if (!role) throw new HttpError(404, "No such gadget");
+		if (!role) throw new HttpError(404, "No such module");
 		if (rank[role] < rank[minRole]) throw new HttpError(403, `Requires ${minRole} access`);
 		const ws = await Workspace.get(g.workspaceId);
 		const caller: Caller = { kind: "user", id: user.id, name: user.displayName, role };
-		return { gadget: g, role, ws, caller };
+		return { module: g, role, ws, caller };
 	}
 }
 
@@ -739,15 +739,15 @@ const STARTER_HTML = (name: string) => `<!doctype html>
   h1 { font-weight: 650; letter-spacing: -0.02em; margin: 0 0 .25rem; }
   p { color: #777; margin: 0; }
 </style></head>
-<body><div class="card"><h1>${name.replace(/[<>&]/g, "")}</h1><p>An empty gadget. Ask the agent to build it.</p></div></body>
+<body><div class="card"><h1>${name.replace(/[<>&]/g, "")}</h1><p>An empty module. Ask the agent to build it.</p></div></body>
 </html>`;
 
 /**
  * A grant's per-method policy, checked: only write methods, "auto" only where it can apply (never for
  * byo connections or alwaysAsk methods).
  */
-function checkPolicy(gk: Gatekeeper, policy: Record<string, string> | undefined, autoApprove: boolean): Record<string, "ask" | "auto" | "deny"> | undefined {
-	if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in pi-os.config.json to vet it.");
+function checkPolicy(gk: Airlock, policy: Record<string, string> | undefined, autoApprove: boolean): Record<string, "ask" | "auto" | "deny"> | undefined {
+	if (autoApprove && gk.trust === "byo") throw new HttpError(400, "Writes on connections added in the UI can't be auto-approved. An admin can declare the connection in outpost.config.json to vet it.");
 	if (!policy || !Object.keys(policy).length) return undefined;
 	const out: Record<string, "ask" | "auto" | "deny"> = {};
 	for (const [name, value] of Object.entries(policy)) {

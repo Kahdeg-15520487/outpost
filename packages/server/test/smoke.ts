@@ -1,7 +1,7 @@
 /**
- * End-to-end smoke test over HTTP and WebSocket: accounts, chat → gadget, gadget RPC, sharing, live
- * sync, Gatekeepers, files, blueprints. Boots its own throwaway server (or uses $BASE). Uses the
- * offline demo model, so no API key is needed. Run: pnpm --filter @pi-os/server test:smoke
+ * End-to-end smoke test over HTTP and WebSocket: accounts, chat → module, module RPC, sharing, live
+ * sync, Airlocks, files, blueprints. Boots its own throwaway server (or uses $BASE). Uses the
+ * offline demo model, so no API key is needed. Run: pnpm --filter @outpost/server test:smoke
  */
 import { finish, must, startServer } from "./lib/harness.ts";
 import WebSocket from "ws";
@@ -60,87 +60,87 @@ const { workspaces } = await ana.call("GET", "/api/workspaces");
 assert(workspaces.length === 1, "signup creates a personal workspace");
 const ws = workspaces[0].id;
 
-console.log("chat with the demo model creates a gadget from a blueprint");
-const { id: chat } = await ana.call("POST", `/api/w/${ws}/chats`, { model: { provider: "pi-os-demo", modelId: "demo" } });
+console.log("chat with the demo model creates a module from a blueprint");
+const { id: chat } = await ana.call("POST", `/api/w/${ws}/chats`, { model: { provider: "outpost-demo", modelId: "demo" } });
 const sock = await ana.socket();
 sock.send({ t: "sub", kind: "chat", ws, chat });
 await sock.next((m) => m.t === "chat.events" && m.events[0]?.type === "snapshot");
 await ana.call("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "make a todo list for the offsite" });
-const toolEnd = await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.type === "tool_execution_end" && e.toolName === "gadget_create"), 30000);
-assert(toolEnd, "agent ran gadget_create");
+const toolEnd = await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.type === "tool_execution_end" && e.toolName === "module_create"), 30000);
+assert(toolEnd, "agent ran module_create");
 await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.type === "run_end"), 30000);
-const { gadgets } = await ana.call("GET", `/api/w/${ws}/gadgets`);
-assert(gadgets.length === 1 && gadgets[0].blueprintId === "bp_todo", "todo gadget exists");
-const gadgetId = gadgets[0].id;
+const { modules } = await ana.call("GET", `/api/w/${ws}/modules`);
+assert(modules.length === 1 && modules[0].blueprintId === "bp_todo", "todo module exists");
+const moduleId = modules[0].id;
 
-console.log("gadget RPC, durable state, broadcasts");
-const detail = await ana.call("GET", `/api/gadgets/${gadgetId}`);
+console.log("module RPC, durable state, broadcasts");
+const detail = await ana.call("GET", `/api/modules/${moduleId}`);
 assert(detail.server.methods.includes("add") && !detail.server.error, `server started with methods ${detail.server.methods.join(",")}`);
-sock.send({ t: "sub", kind: "gadget", gadgetId });
-await sock.next((m) => m.t === "gadget.subscribed");
-sock.send({ t: "call", id: 1, gadgetId, method: "add", args: ["Book venue", "ana"] });
+sock.send({ t: "sub", kind: "module", moduleId });
+await sock.next((m) => m.t === "module.subscribed");
+sock.send({ t: "call", id: 1, moduleId, method: "add", args: ["Book venue", "ana"] });
 const r1 = await sock.next((m) => m.t === "call.result" && m.id === 1);
 assert(r1.ok && r1.value.length === 1, "add() returned the list");
-const ev = await sock.next((m) => m.t === "gadget.event" && m.event === "changed");
+const ev = await sock.next((m) => m.t === "module.event" && m.event === "changed");
 assert(ev.data[0].text === "Book venue", "broadcast delivered after commit");
-sock.send({ t: "call", id: 2, gadgetId, method: "toggle", args: ["nope"] });
+sock.send({ t: "call", id: 2, moduleId, method: "toggle", args: ["nope"] });
 const r2 = await sock.next((m) => m.t === "call.result" && m.id === 2);
 assert(!r2.ok && /No such task/.test(r2.error), "a throwing call returns its error");
-const state = await ana.call("GET", `/api/gadgets/${gadgetId}/state`);
+const state = await ana.call("GET", `/api/modules/${moduleId}/state`);
 assert(state.kv.items.length === 1, "state is durable in the workspace harness");
 
 console.log("frame is sandboxed");
-const { token } = await ana.call("POST", `/api/gadgets/${gadgetId}/frame-token`);
-const frame = await fetch(`${base}/frame/${gadgetId}?t=${token}`);
+const { token } = await ana.call("POST", `/api/modules/${moduleId}/frame-token`);
+const frame = await fetch(`${base}/frame/${moduleId}?t=${token}`);
 const csp = frame.headers.get("content-security-policy") ?? "";
 assert(csp.includes("connect-src 'none'") && csp.includes("sandbox allow-scripts"), "frame CSP forbids network and sandboxes");
-assert((await frame.text()).includes("window.gadget"), "bootstrap injected");
+assert((await frame.text()).includes("window.module"), "bootstrap injected");
 
 console.log("sharing: links + viewer role + multiplayer");
-await ana.call("POST", `/api/gadgets/${gadgetId}/links`, { role: "viewer" });
-const links = (await ana.call("GET", `/api/gadgets/${gadgetId}`)).links;
+await ana.call("POST", `/api/modules/${moduleId}/links`, { role: "viewer" });
+const links = (await ana.call("GET", `/api/modules/${moduleId}`)).links;
 await ben.call("POST", `/api/links/${links[0].token}/accept`);
 const shared = await ben.call("GET", "/api/shared");
-assert(shared.gadgets.length === 1 && shared.gadgets[0].role === "viewer", "Ben sees the shared gadget as viewer");
+assert(shared.modules.length === 1 && shared.modules[0].role === "viewer", "Ben sees the shared module as viewer");
 const bsock = await ben.socket();
-bsock.send({ t: "sub", kind: "gadget", gadgetId });
-await bsock.next((m) => m.t === "gadget.subscribed");
-const pres = await sock.next((m) => m.t === "gadget.presence" && m.users.length === 2);
+bsock.send({ t: "sub", kind: "module", moduleId });
+await bsock.next((m) => m.t === "module.subscribed");
+const pres = await sock.next((m) => m.t === "module.presence" && m.users.length === 2);
 assert(pres, "presence shows both users");
-bsock.send({ t: "call", id: 1, gadgetId, method: "list", args: [] });
+bsock.send({ t: "call", id: 1, moduleId, method: "list", args: [] });
 assert((await bsock.next((m) => m.t === "call.result" && m.id === 1)).ok, "viewer may call readonly list()");
-bsock.send({ t: "call", id: 2, gadgetId, method: "add", args: ["hack"] });
+bsock.send({ t: "call", id: 2, moduleId, method: "add", args: ["hack"] });
 assert(!(await bsock.next((m) => m.t === "call.result" && m.id === 2)).ok, "viewer may not call add()");
-sock.send({ t: "call", id: 3, gadgetId, method: "add", args: ["Order snacks"] });
-const live = await bsock.next((m) => m.t === "gadget.event" && m.event === "changed");
+sock.send({ t: "call", id: 3, moduleId, method: "add", args: ["Order snacks"] });
+const live = await bsock.next((m) => m.t === "module.event" && m.event === "changed");
 assert(live.data.length === 2, "Ben receives Ana's change live");
 
-console.log("gatekeepers: introduction, deferred approval, simulation, overlay");
-const { grant } = await ana.call("POST", `/api/w/${ws}/grants`, { gatekeeper: "mailbox", resource: "ana@corp.example", label: "mail", holder: { kind: "gadget", id: gadgetId } });
-await ana.call("PUT", `/api/gadgets/${gadgetId}/files`, {
+console.log("airlocks: introduction, deferred approval, simulation, overlay");
+const { grant } = await ana.call("POST", `/api/w/${ws}/grants`, { airlock: "mailbox", resource: "ana@corp.example", label: "mail", holder: { kind: "module", id: moduleId } });
+await ana.call("PUT", `/api/modules/${moduleId}/files`, {
 	path: "server.js",
-	content: `export default class { async send(to) { return await ctx.gatekeepers.mail.send({ to, subject: "Hi", body: "From a gadget" }); } async sent() { return await ctx.gatekeepers.mail.list_sent({}); } async sneaky() { return await ctx.gatekeepers.github.repo_info({}); } }`,
+	content: `export default class { async send(to) { return await ctx.airlocks.mail.send({ to, subject: "Hi", body: "From a module" }); } async sent() { return await ctx.airlocks.mail.list_sent({}); } async sneaky() { return await ctx.airlocks.github.repo_info({}); } }`,
 });
-sock.send({ t: "call", id: 4, gadgetId, method: "send", args: ["ben@corp.example"] });
+sock.send({ t: "call", id: 4, moduleId, method: "send", args: ["ben@corp.example"] });
 const sent = await sock.next((m) => m.t === "call.result" && m.id === 4);
 assert(sent.ok && sent.value.queuedForApproval, "write is queued, simulated result returned");
-sock.send({ t: "call", id: 5, gadgetId, method: "sent", args: [] });
+sock.send({ t: "call", id: 5, moduleId, method: "sent", args: [] });
 const overlay = await sock.next((m) => m.t === "call.result" && m.id === 5);
 assert(overlay.value[0]?.status === "pending approval", "pending write overlaid on later read");
-sock.send({ t: "call", id: 6, gadgetId, method: "sneaky", args: [] });
+sock.send({ t: "call", id: 6, moduleId, method: "sneaky", args: [] });
 const denied = await sock.next((m) => m.t === "call.result" && m.id === 6);
-assert(!denied.ok && /No grant/.test(denied.error), "no ambient authority: un-introduced gatekeeper refused");
+assert(!denied.ok && /No grant/.test(denied.error), "no ambient authority: un-introduced airlock refused");
 const decision = await ana.call("POST", `/api/w/${ws}/approvals/${sent.value.queuedForApproval}/approve`);
 assert(decision.status === "approved" && decision.result.status === "delivered", "approval executes the real action");
 void grant;
 
-console.log("agent-side gatekeeper: request_access + chat grant");
+console.log("agent-side airlock: request_access + chat grant");
 const wsSock = await ana.socket();
 wsSock.send({ t: "sub", kind: "ws", ws });
 const snap = await wsSock.next((m) => m.t === "ws.snapshot");
 assert(snap.approvals.actions[sent.value.queuedForApproval].status === "approved", "workspace snapshot carries approvals");
 
-console.log("files: upload, attachments, gadget ctx.files capability, safe download");
+console.log("files: upload, attachments, module ctx.files capability, safe download");
 const upload = async (c: ReturnType<typeof client>, name: string, body: Uint8Array | string, type: string) => {
 	const res = await fetch(`${base}/api/w/${ws}/files`, { method: "POST", headers: { "content-type": type, "x-file-name": encodeURIComponent(name), cookie: (c as any).cookie() }, body: body as BodyInit });
 	if (!res.ok) throw new Error(`upload ${res.status} ${await res.text()}`);
@@ -156,36 +156,36 @@ const html = await upload(ana, "evil.html", "<script>alert(1)</script>", "text/h
 const dl = await fetch(`${base}/api/w/${ws}/files/${html.id}?inline`, { headers: { cookie: (ana as any).cookie() } });
 assert(dl.headers.get("content-type") === "application/octet-stream" && /attachment/.test(dl.headers.get("content-disposition") ?? "") && /sandbox/.test(dl.headers.get("content-security-policy") ?? ""), "untrusted html is never served inline");
 await ana.call("POST", `/api/w/${ws}/chats/${chat}/messages`, { content: "what's in these?", files: [csv.id, img.id] });
-const userEntry = await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.entry?.kind === "os.user" && e.entry.data?.files?.length === 2), 20000);
-const entry = userEntry.events.find((e: any) => e.entry?.kind === "os.user" && e.entry.data?.files?.length === 2).entry;
+const userEntry = await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.entry?.kind === "outpost.user" && e.entry.data?.files?.length === 2), 20000);
+const entry = userEntry.events.find((e: any) => e.entry?.kind === "outpost.user" && e.entry.data?.files?.length === 2).entry;
 const parts = entry.model[0].content;
 assert(parts.some((p: any) => p.type === "image") && parts.some((p: any) => p.type === "text" && p.text.includes("north,10")), "model sees the image inline and the csv text");
 await sock.next((m) => m.t === "chat.events" && m.events.some((e: any) => e.type === "run_end"), 30000);
 
-const { gadget: fg } = await ana.call("POST", `/api/w/${ws}/gadgets`, { name: "CSV reader" });
-await ana.call("PUT", `/api/gadgets/${fg.id}/files`, {
+const { module: fg } = await ana.call("POST", `/api/w/${ws}/modules`, { name: "CSV reader" });
+await ana.call("PUT", `/api/modules/${fg.id}/files`, {
 	path: "server.js",
 	content: `export default class { rows(id) { return ctx.files.text(id).trim().split("\\n").map((l) => l.split(",")); } size(id) { return ctx.files.bytes(id).length; } async total(id) { const rows = this.rows(id).slice(1); const sum = rows.reduce((a, r) => a + Number(r[1]), 0); const f = await ctx.files.write("total.txt", "total=" + sum); return { sum, file: f.id }; } }`,
 });
-sock.send({ t: "call", id: 30, gadgetId: fg.id, method: "rows", args: [csv.id] });
+sock.send({ t: "call", id: 30, moduleId: fg.id, method: "rows", args: [csv.id] });
 const denied2 = await sock.next((m) => m.t === "call.result" && m.id === 30);
-assert(!denied2.ok && /No access to file/.test(denied2.error), "gadget cannot read an unshared file");
-await ana.call("PATCH", `/api/w/${ws}/files/${csv.id}`, { gadgets: [fg.id] });
-sock.send({ t: "call", id: 31, gadgetId: fg.id, method: "size", args: [csv.id] });
+assert(!denied2.ok && /No access to file/.test(denied2.error), "module cannot read an unshared file");
+await ana.call("PATCH", `/api/w/${ws}/files/${csv.id}`, { modules: [fg.id] });
+sock.send({ t: "call", id: 31, moduleId: fg.id, method: "size", args: [csv.id] });
 assert((await sock.next((m) => m.t === "call.result" && m.id === 31)).value === 32, "ctx.files.bytes returns a Uint8Array of the file");
-sock.send({ t: "call", id: 32, gadgetId: fg.id, method: "total", args: [csv.id] });
+sock.send({ t: "call", id: 32, moduleId: fg.id, method: "total", args: [csv.id] });
 const tot = await sock.next((m) => m.t === "call.result" && m.id === 32);
-assert(tot.ok && tot.value.sum === 42, "gadget parsed the shared csv");
+assert(tot.ok && tot.value.sum === 42, "module parsed the shared csv");
 const listed = (await ana.call("GET", `/api/w/${ws}/files`)).files;
 const out = listed.find((f: any) => f.id === tot.value.file);
-assert(out?.source === "gadget" && out.gadgets.includes(fg.id), "gadget output appears in workspace files");
+assert(out?.source === "module" && out.modules.includes(fg.id), "module output appears in workspace files");
 const outBody = await (await fetch(`${base}/api/w/${ws}/files/${out.id}`, { headers: { cookie: (ana as any).cookie() } })).text();
-assert(outBody === "total=42", "downloaded gadget output");
+assert(outBody === "total=42", "downloaded module output");
 await ana.call("DELETE", `/api/w/${ws}/files/${html.id}`);
 assert(!(await ana.call("GET", `/api/w/${ws}/files`)).files.some((f: any) => f.id === html.id), "file deleted");
 
 console.log("blueprints");
-await ana.call("POST", "/api/blueprints", { gadgetId, name: `Mail list ${suffix}`, description: "test", visibility: "public" });
+await ana.call("POST", "/api/blueprints", { moduleId, name: `Mail list ${suffix}`, description: "test", visibility: "public" });
 const bps = await ben.call("GET", "/api/blueprints");
 assert(bps.blueprints.some((b: any) => b.name === `Mail list ${suffix}`), "published blueprint visible to others");
 assert(bps.blueprints.filter((b: any) => b.id.startsWith("bp_") && !b.authorId).length >= 5, "built-in blueprints installed");

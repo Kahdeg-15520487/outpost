@@ -13,7 +13,7 @@ const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
 const KIND_LABEL: Record<string, string> = { mcp: "MCP server", openapi: "REST API", "azure-devops": "Azure DevOps" };
 const SECRET_LABEL: Record<string, string> = { token: "Token", value: "Key", username: "Username", password: "Password", pat: "Personal access token" };
 
-/** Workspace connections: third-party services (MCP servers, REST APIs) agents and gadgets can be granted. */
+/** Workspace connections: third-party services (MCP servers, REST APIs) agents and modules can be granted. */
 export function ConnectionsPage({ ws }: { ws: Workspace }) {
 	const { connections, proposals, reload } = useConnections(ws.id);
 	const [editing, setEditing] = useState<ConnectionInfo | "new">();
@@ -33,7 +33,7 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 						)}
 					</div>
 					<p className="lede">
-						Services this workspace's agents and gadgets can be given access to. pi-os calls each one as the workspace's account and keeps the credentials to itself. A connection gives nobody access by itself: you introduce it to a chat or gadget, choosing which methods it may use. Reads run straight away; writes wait for approval.
+						Services this workspace's agents and modules can be given access to. Outpost calls each one as the workspace's account and keeps the credentials to itself. A connection gives nobody access by itself: you introduce it to a chat or module, choosing which methods it may use. Reads run straight away; writes wait for approval.
 					</p>
 					{editing && (
 						<ConnectionForm
@@ -131,7 +131,7 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 						<code className="mono conn-label">{conn.label}</code>
 						<span className="pill">{KIND_LABEL[conn.kind]}</span>
 						{conn.source === "config" ? (
-							<span className="pill ok" title="Declared by an admin in pi-os.config.json: may reach private hosts, and its writes may be auto-approved">
+							<span className="pill ok" title="Declared by an admin in outpost.config.json: may reach private hosts, and its writes may be auto-approved">
 								admin · vetted
 							</span>
 						) : (
@@ -338,7 +338,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 							<b>Getting the key:</b> {proposal.setup}
 						</div>
 					)}
-					<div className="muted">Check the address before connecting: it's what pi-os will call with the key you enter.</div>
+					<div className="muted">Check the address before connecting: it's what Outpost will call with the key you enter.</div>
 				</div>
 			)}
 			{!conn && !proposal && (
@@ -364,7 +364,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 				<label className="label">Label</label>
 				<div>
 					<input className="input mono" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={kind === "azure-devops" ? "ado" : kind === "openapi" ? "inventory" : "linear"} required pattern="[A-Za-z][A-Za-z0-9_\-]{0,39}" />
-					<div className="hint">What agents and gadgets call it: ctx.gatekeepers["{label || "label"}"]</div>
+					<div className="hint">What agents and modules call it: ctx.airlocks["{label || "label"}"]</div>
 				</div>
 				<label className="label">Name</label>
 				<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === "mcp" ? "Linear" : kind === "azure-devops" ? "Azure DevOps" : "Inventory API"} />
@@ -438,7 +438,7 @@ function ConnectionForm({ wsId, conn, proposal, onDone }: { wsId: string; conn?:
 				))}
 			</div>
 			<div className="muted conn-note">
-				pi-os calls the service as this account for everyone in the workspace. Secrets are stored encrypted on the server and never shown again. Connections added here reach public hosts only, and their writes always need approval; an admin can declare trusted ones in pi-os.config.json.
+				Outpost calls the service as this account for everyone in the workspace. Secrets are stored encrypted on the server and never shown again. Connections added here reach public hosts only, and their writes always need approval; an admin can declare trusted ones in outpost.config.json.
 			</div>
 			{err && <div className="err">{err}</div>}
 			<div className="row" style={{ gap: 8 }}>

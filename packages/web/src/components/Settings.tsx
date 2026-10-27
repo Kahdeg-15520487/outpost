@@ -3,7 +3,7 @@ import { api, type ModelInfo, type Workspace } from "../api";
 import { OAuthSignIn, type LoginView } from "./OAuthSignIn";
 
 type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number;
-	/** Present when pi-os offers a sign-in flow for this provider (GitHub Copilot). */
+	/** Present when outpost offers a sign-in flow for this provider (GitHub Copilot). */
 	oauth?: { button: string; signedIn: boolean; account?: string; login?: LoginView | null };
 };
 
@@ -129,7 +129,7 @@ export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace;
 									</form>
 								)}
 								<div className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
-									Members share every chat (live, like a channel) and gadget in this workspace.
+									Members share every chat (live, like a channel) and module in this workspace.
 								</div>
 							</div>
 						</div>

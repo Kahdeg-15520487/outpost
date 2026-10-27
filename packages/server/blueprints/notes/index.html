@@ -29,7 +29,7 @@
 <main id="main"><div class="empty">No page selected.</div></main>
 <script>
   const $ = (id) => document.getElementById(id);
-  const canEdit = gadget.user.role !== "viewer";
+  const canEdit = module.user.role !== "viewer";
   let pages = [], current = null, dirty = false, timer = null;
   const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : new Date(t).toLocaleDateString(); };
 
@@ -45,27 +45,27 @@
     meta();
     const edit = () => { dirty = true; $("saving").textContent = "editing…"; clearTimeout(timer); timer = setTimeout(save, 600); };
     $("title").oninput = edit; $("body").oninput = edit;
-    if (canEdit) $("del").onclick = () => confirm("Delete this page?") && gadget.api.remove(current.id);
+    if (canEdit) $("del").onclick = () => confirm("Delete this page?") && module.api.remove(current.id);
   }
   function meta() { if ($("by")) $("by").textContent = `Edited ${ago(current.updatedAt)} by ${current.updatedBy}`; }
   async function save() {
     if (!current || !dirty) return;
     dirty = false;
-    const r = await gadget.api.save(current.id, { title: $("title").value, body: $("body").value }, current.version);
+    const r = await module.api.save(current.id, { title: $("title").value, body: $("body").value }, current.version);
     if (r.conflict) { current = r.page; renderPage(); $("saving").textContent = `Reloaded — ${r.page.updatedBy} changed this page`; return; }
     current = r.page; $("saving").textContent = ""; meta();
   }
-  async function open(id) { await save(); current = await gadget.api.page(id); renderNav(); renderPage(); }
+  async function open(id) { await save(); current = await module.api.page(id); renderNav(); renderPage(); }
   $("new").hidden = !canEdit;
-  $("new").onclick = async () => { const p = await gadget.api.create("Untitled", ""); await refresh(); open(p.id); };
-  async function refresh() { pages = await gadget.api.pages(); renderNav(); }
+  $("new").onclick = async () => { const p = await module.api.create("Untitled", ""); await refresh(); open(p.id); };
+  async function refresh() { pages = await module.api.pages(); renderNav(); }
 
-  gadget.on("page", (p) => {
+  module.on("page", (p) => {
     refresh();
     if (current && p.id === current.id && !dirty && document.activeElement?.id !== "body" && document.activeElement?.id !== "title") { current = p; renderPage(); }
     else if (current && p.id === current.id) { current.version = Math.max(current.version, p.version - 1); }
   });
-  gadget.on("removed", (id) => { if (current && current.id === id) { current = null; renderPage(); } refresh(); });
+  module.on("removed", (id) => { if (current && current.id === id) { current = null; renderPage(); } refresh(); });
   refresh().then(() => pages[0] ? open(pages[0].id) : renderPage());
   addEventListener("blur", save);
 </script>

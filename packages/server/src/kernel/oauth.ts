@@ -128,7 +128,7 @@ function githubAccount(token: string, enterpriseUrl?: string): Promise<string | 
 	let p = accounts.get(token);
 	if (!p) {
 		const api = enterpriseUrl ? `https://api.${enterpriseUrl}` : "https://api.github.com";
-		p = fetch(`${api}/user`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": "pi-os" }, signal: AbortSignal.timeout(5000) })
+		p = fetch(`${api}/user`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": "outpost" }, signal: AbortSignal.timeout(5000) })
 			.then((r) => (r.ok ? r.json() : undefined))
 			.then((u: any) => (typeof u?.login === "string" ? `@${u.login}${enterpriseUrl ? ` (${enterpriseUrl})` : ""}` : undefined))
 			.catch(() => undefined);

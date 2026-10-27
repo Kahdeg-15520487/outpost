@@ -96,11 +96,11 @@ class Socket {
 		};
 	}
 
-	call(gadgetId: string, method: string, args: unknown[]): Promise<any> {
+	call(moduleId: string, method: string, args: unknown[]): Promise<any> {
 		const id = ++this.#seq;
 		return new Promise((resolve, reject) => {
 			this.#calls.set(id, { resolve, reject });
-			this.send({ t: "call", id, gadgetId, method, args });
+			this.send({ t: "call", id, moduleId, method, args });
 		});
 	}
 }

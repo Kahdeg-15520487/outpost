@@ -1,5 +1,5 @@
 import { defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
-import type { Connection, ConnectionProposal } from "../gatekeepers/connectors/types.ts";
+import type { Connection, ConnectionProposal } from "../airlocks/connectors/types.ts";
 
 /**
  * Workspace state lives in pi-durable documents inside the workspace's Harness, so every change is
@@ -11,17 +11,17 @@ const every = (n: number) => ({ checkpointWhen: (_v: unknown, _ops: unknown, inf
 
 export type ChatMeta = { id: string; title: string; createdAt: number; createdBy: string; updatedAt: number; archived?: boolean };
 export const ChatsDoc = defineDoc<{ chats: Record<string, ChatMeta> }>({
-	kind: "os.chats",
+	kind: "outpost.chats",
 	version: 1,
 	scope: "session",
 	initial: () => ({ chats: {} }),
 	...latest,
 });
 
-/** Gadget source: one document per gadget. */
-export type GadgetSource = { files: Record<string, string>; revision: number };
-export const GadgetSourceDoc = defineDocFamily<GadgetSource, null>({
-	kind: "os.gadget.source",
+/** Module source: one document per module. */
+export type ModuleSource = { files: Record<string, string>; revision: number };
+export const ModuleSourceDoc = defineDocFamily<ModuleSource, null>({
+	kind: "outpost.module.source",
 	version: 1,
 	scope: "session",
 	family: true,
@@ -29,9 +29,9 @@ export const GadgetSourceDoc = defineDocFamily<GadgetSource, null>({
 	...every(20),
 });
 
-/** Gadget server storage (the KV its `ctx.storage` sees). Each RPC call commits its writes at once. */
-export const GadgetStateDoc = defineDocFamily<{ kv: Record<string, any> }, null>({
-	kind: "os.gadget.state",
+/** Module server storage (the KV its `ctx.storage` sees). Each RPC call commits its writes at once. */
+export const ModuleStateDoc = defineDocFamily<{ kv: Record<string, any> }, null>({
+	kind: "outpost.module.state",
 	version: 1,
 	scope: "session",
 	family: true,
@@ -39,10 +39,10 @@ export const GadgetStateDoc = defineDocFamily<{ kv: Record<string, any> }, null>
 	...every(50),
 });
 
-/** Gadget console output and errors, newest last, bounded. */
+/** Module console output and errors, newest last, bounded. */
 export type LogLine = { at: number; level: "log" | "warn" | "error" | "call"; text: string };
-export const GadgetLogsDoc = defineDocFamily<{ lines: LogLine[] }, null>({
-	kind: "os.gadget.logs",
+export const ModuleLogsDoc = defineDocFamily<{ lines: LogLine[] }, null>({
+	kind: "outpost.module.logs",
 	version: 1,
 	scope: "session",
 	family: true,
@@ -50,19 +50,19 @@ export const GadgetLogsDoc = defineDocFamily<{ lines: LogLine[] }, null>({
 	...every(50),
 });
 
-// ---------------------------------------------------------------- gatekeepers
+// ---------------------------------------------------------------- airlocks
 
-/** Who holds a grant: a chat, a gadget, or a project team (optionally only some roles: lead, worker, …). */
-export type Holder = { kind: "conversation" | "gadget" | "project"; id: string; roles?: string[] };
+/** Who holds a grant: a chat, a module, or a mission team (optionally only some roles: lead, worker, …). */
+export type Holder = { kind: "conversation" | "module" | "mission"; id: string; roles?: string[] };
 export type Grant = {
 	id: string;
-	gatekeeper: string;
+	airlock: string;
 	resource: string;
 	label: string;
 	holder: Holder;
 	/** Side-effecting calls run immediately instead of queuing for approval (unless `policy` says otherwise for a method). */
 	autoApprove: boolean;
-	/** A capability on a workspace connection (MCP server, REST API): its id. `gatekeeper` is then the connector kind. */
+	/** A capability on a workspace connection (MCP server, REST API): its id. `airlock` is then the connector kind. */
 	connection?: string;
 	/** Only these methods; absent = all of them. */
 	methods?: string[];
@@ -73,7 +73,7 @@ export type Grant = {
 };
 export type AccessRequest = {
 	id: string;
-	gatekeeper: string;
+	airlock: string;
 	resource: string;
 	reason: string;
 	holder: Holder;
@@ -85,7 +85,7 @@ export type AccessRequest = {
 	createdAt: number;
 };
 export const GrantsDoc = defineDoc<{ grants: Record<string, Grant>; requests: Record<string, AccessRequest> }>({
-	kind: "os.grants",
+	kind: "outpost.grants",
 	version: 1,
 	scope: "session",
 	initial: () => ({ grants: {}, requests: {} }),
@@ -95,7 +95,7 @@ export const GrantsDoc = defineDoc<{ grants: Record<string, Grant>; requests: Re
 export type ApprovalAction = {
 	id: string;
 	grantId: string;
-	gatekeeper: string;
+	airlock: string;
 	resource: string;
 	method: string;
 	args: any;
@@ -110,7 +110,7 @@ export type ApprovalAction = {
 	decidedBy?: string;
 };
 export const ApprovalsDoc = defineDoc<{ actions: Record<string, ApprovalAction> }>({
-	kind: "os.approvals",
+	kind: "outpost.approvals",
 	version: 1,
 	scope: "session",
 	initial: () => ({ actions: {} }),
@@ -119,29 +119,29 @@ export const ApprovalsDoc = defineDoc<{ actions: Record<string, ApprovalAction> 
 
 /** Third-party services added to this workspace (generic connectors: MCP servers, OpenAPI REST APIs). Secrets are stored apart, encrypted. */
 export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection>; proposals?: Record<string, ConnectionProposal> }>({
-	kind: "os.connections",
+	kind: "outpost.connections",
 	version: 1,
 	scope: "session",
 	initial: () => ({ connections: {} }),
 	...every(20),
 });
 
-export type AuditLine = { at: number; grantId: string; gatekeeper: string; method: string; by: string; outcome: "ok" | "error" | "queued" | "simulated"; detail?: string };
+export type AuditLine = { at: number; grantId: string; airlock: string; method: string; by: string; outcome: "ok" | "error" | "queued" | "simulated"; detail?: string };
 export const AuditDoc = defineDoc<{ lines: AuditLine[] }>({
-	kind: "os.audit",
+	kind: "outpost.audit",
 	version: 1,
 	scope: "session",
 	initial: () => ({ lines: [] }),
 	...every(50),
 });
 
-/** Built-in `mailbox` gatekeeper: a local outbox, so approvals can be tried without any external account. */
+/** Built-in `mailbox` airlock: a local outbox, so approvals can be tried without any external account. */
 export type Mail = { id: string; to: string; subject: string; body: string; sentAt: number };
 // ---------------------------------------------------------------- files
 
 /**
  * Workspace files. Bytes live content-addressed on disk next to the workspace database; this
- * durable document is the index (so uploads, agent outputs and gadget outputs are committed and
+ * durable document is the index (so uploads, agent outputs and module outputs are committed and
  * watched like everything else).
  */
 export type FileMeta = {
@@ -154,23 +154,23 @@ export type FileMeta = {
 	kind: string;
 	createdAt: number;
 	createdBy: string;
-	source: "upload" | "agent" | "gadget" | "extract";
+	source: "upload" | "agent" | "module" | "extract";
 	/** The file this one was extracted or derived from. */
 	parent?: string;
 	/** Chat it was attached in, if any. */
 	chatId?: string;
-	/** Gadgets allowed to read it through ctx.files (a capability, like a grant). */
-	gadgets: string[];
+	/** Modules allowed to read it through ctx.files (a capability, like a grant). */
+	modules: string[];
 };
 export const FilesDoc = defineDoc<{ files: Record<string, FileMeta> }>({
-	kind: "os.files",
+	kind: "outpost.files",
 	version: 1,
 	scope: "session",
 	initial: () => ({ files: {} }),
 	...every(50),
 });
 export const MailboxDoc = defineDoc<{ sent: Mail[] }>({
-	kind: "os.mailbox",
+	kind: "outpost.mailbox",
 	version: 1,
 	scope: "session",
 	initial: () => ({ sent: [] }),
@@ -204,7 +204,7 @@ export type ChatSummary = { upTo: number; text: string; at: number; model: strin
 
 /** Newest last, bounded. `summaries` is keyed by chat id. */
 export const ActivityDoc = defineDoc<{ runs: RunRecord[]; summaries: Record<string, ChatSummary> }>({
-	kind: "os.activity",
+	kind: "outpost.activity",
 	version: 1,
 	scope: "session",
 	initial: () => ({ runs: [], summaries: {} }),

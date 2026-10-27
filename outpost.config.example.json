@@ -1,0 +1,47 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+  "dataDir": "./data",
+  "models": {
+    "default": "anthropic/claude-sonnet-4-5",
+    "providers": {
+      "anthropic": {
+        "apiKey": "$ANTHROPIC_API_KEY"
+      },
+      "openai": {
+        "apiKey": "$OPENAI_API_KEY"
+      },
+      "openrouter": {
+        "apiKey": "$OPENROUTER_API_KEY"
+      },
+      "azure": {
+        "apiKey": "$AZURE_OPENAI_API_KEY",
+        "env": {
+          "AZURE_OPENAI_BASE_URL": "https://my-resource.openai.azure.com"
+        }
+      },
+      "groq": {
+        "enabled": false
+      }
+    },
+    "ambientEnv": true,
+    "demo": true
+  },
+  "connectors": [
+    { "id": "linear", "kind": "mcp", "url": "https://mcp.linear.app/mcp", "auth": { "kind": "bearer", "token": "$LINEAR_TOKEN" } },
+    { "id": "inventory", "kind": "openapi", "spec": "https://inventory.example.internal/openapi.json", "auth": { "kind": "header", "name": "x-api-key", "value": "$INVENTORY_KEY" } }
+  ],
+  "airlocks": {
+    "github": {
+      "token": "$GITHUB_TOKEN"
+    }
+  },
+  "files": {
+    "maxUploadMB": 100
+  },
+  "render": {
+    "enabled": true
+  }
+}

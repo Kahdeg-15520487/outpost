@@ -5,7 +5,7 @@ import { config, resolveSecret, type ProviderConfig } from "../config.ts";
 
 /**
  * Where a provider's key comes from, highest priority first:
- *   1. pi-os.config.json  models.providers.<id>.apiKey  (literal or $ENV_VAR) — read-only from the UI
+ *   1. outpost.config.json  models.providers.<id>.apiKey  (literal or $ENV_VAR) — read-only from the UI
  *   2. keys entered in Settings, or an OAuth sign-in (GitHub Copilot), stored in data/credentials.enc.json (AES-256-GCM)
  *   3. the provider's standard env vars (ANTHROPIC_API_KEY, …), resolved by pi-ai — unless models.ambientEnv is false
  * `env` settings (base URLs, account ids) from the config are merged over stored ones.
@@ -27,7 +27,7 @@ export class EncryptedFileStore<T = Credential> {
 		try {
 			return JSON.parse(Buffer.concat([decipher.update(Buffer.from(sealed.data, "base64")), decipher.final()]).toString("utf8"));
 		} catch {
-			throw new Error(`Cannot decrypt ${this.path}: the instance secret (data/secret.key or PI_OS_SECRET) changed`);
+			throw new Error(`Cannot decrypt ${this.path}: the instance secret (data/secret.key or OUTPOST_SECRET) changed`);
 		}
 	}
 	save(all: Record<string, T>) {
@@ -54,14 +54,14 @@ function fromConfig(entry: ProviderConfig | undefined) {
 	return { key: key.value, keyFrom: key.from, env };
 }
 
-export class OsCredentialStore implements CredentialStore {
+export class OutpostCredentialStore implements CredentialStore {
 	readonly #file = new EncryptedFileStore(config.credentialsFile, config.secret);
 	#chain: Promise<unknown> = Promise.resolve();
 
 	/** The config file sets this provider's key (so the UI must not change it). */
 	managedByConfig(providerId: string): string | undefined {
 		const c = fromConfig(config.providers[providerId]);
-		return c?.key !== undefined ? `pi-os.config.json (${c.keyFrom === "literal" ? "literal key" : c.keyFrom})` : undefined;
+		return c?.key !== undefined ? `outpost.config.json (${c.keyFrom === "literal" ? "literal key" : c.keyFrom})` : undefined;
 	}
 
 	stored(providerId: string): boolean {

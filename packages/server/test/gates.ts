@@ -3,27 +3,27 @@
  *  - blocking questions: the agent stops, nothing can be approved to build while one is open;
  *    non-blocking questions carry an assumption and don't block; answer, dismiss and re-flag.
  *  - feedback on the running app: stored with the version seen, sent to the planner; items drafted
- *    from it (and anything added after approval) wait as pending, pi-os doesn't build them until the
+ *    from it (and anything added after approval) wait as pending, outpost doesn't build them until the
  *    user approves; the user can make a PBI themselves, decline and reopen.
- * Agents are scripted: the test calls their real tools. Run: pnpm --filter @pi-os/server test -- gates
+ * Agents are scripted: the test calls their real tools. Run: pnpm --filter @outpost/server test -- gates
  */
 import { check, finish, until, passDocGates } from "./lib/harness.ts";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
-const { addItems, isPending } = await import("../src/projects/backlog.ts");
+const { addItems, isPending } = await import("../src/missions/backlog.ts");
 
 const u = users.create("gates", "password123");
 const ws = await Workspace.get(workspaces.create("gates", u.id).id);
-const pm = ws.projects;
+const pm = ws.missions;
 pm.build.nudges = false;
-const p = await pm.create(u, { goal: "Approval gates regression project", model: { provider: "pi-os-demo", modelId: "demo" } });
+const p = await pm.create(u, { goal: "Approval gates regression mission", model: { provider: "outpost-demo", modelId: "demo" } });
 await passDocGates(ws, p.id);
 await pm.stopAll(p.id);
 for (const role of ["planner", "worker"]) await pm.addAgent(p.id, { role, brief: "wait", start: false });
 const agent = async (k: string) => (await pm.state(p.id)).agents[k]!;
 let taskSeq = 1000;
-/** Call a project tool as agent `key` would. */
+/** Call a mission tool as agent `key` would. */
 async function tool(key: string, name: string, args: unknown) {
 	const a = await agent(key);
 	return pm.tools.get(name)!.execute(args, { conversationId: Number(a.conversationId), taskId: ++taskSeq } as any) as Promise<any>;
@@ -84,7 +84,7 @@ check("anything added after approval is pending too", untagged.pending === true)
 await pm.updateItem(p.id, "T1", { status: "done" }, u);
 await pm.build.run(p.id);
 b = await pm.backlog(p.id);
-check("pi-os doesn't build pending items", b.items.T2!.status === "todo" && !b.items.T2!.assignee && isPending(b, b.items.T2!), b.items.T2);
+check("outpost doesn't build pending items", b.items.T2!.status === "todo" && !b.items.T2!.assignee && isPending(b, b.items.T2!), b.items.T2);
 
 const req = await tool("planner", "backlog_request_approval", { summary: "FB-1: week number" });
 b = await pm.backlog(p.id);

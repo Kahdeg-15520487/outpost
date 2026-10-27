@@ -4,8 +4,8 @@ import { config } from "../config.ts";
 
 /**
  * The system database holds what crosses workspace boundaries: users, sessions, workspace
- * membership, the gadget index with its ACLs and share links, and blueprints. Everything that
- * belongs to one workspace (chats, agent runs, gadget code and state, grants, approvals) lives
+ * membership, the module index with its ACLs and share links, and blueprints. Everything that
+ * belongs to one workspace (chats, agent runs, module code and state, grants, approvals) lives
  * in that workspace's pi-durable Harness.
  */
 export type Role = "owner" | "editor" | "viewer";
@@ -18,7 +18,7 @@ export type WorkspaceSettings = {
 	defaultModel?: { provider: string; modelId: string };
 	toolMode?: "hybrid" | "codemode";
 };
-export type GadgetRow = {
+export type ModuleRow = {
 	id: string;
 	workspaceId: string;
 	ownerId: string;
@@ -38,7 +38,7 @@ export type BlueprintRow = {
 	files: Record<string, string>;
 	createdAt: number;
 	builtin?: boolean;
-	/** How a fresh chat next to a gadget made from this blueprint greets the user. */
+	/** How a fresh chat next to a module made from this blueprint greets the user. */
 	intro?: BlueprintIntro;
 };
 
@@ -46,15 +46,19 @@ export type BlueprintSuggestion = { k: string; t: string; d: string; p: string }
 export type BlueprintIntro = { headline?: string; intro?: string; suggestions?: BlueprintSuggestion[] };
 
 const db = new DatabaseSync(config.systemDb);
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gadgets'").get()) {
+	db.close();
+	throw new Error("This data directory needs the offline Outpost migration. See docs/upgrading-to-outpost.md. Do not start the old and new servers together.");
+}
 db.exec(`
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, pw_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, settings TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id));
-CREATE TABLE IF NOT EXISTS gadgets (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_id TEXT NOT NULL, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', blueprint_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS gadget_shares (gadget_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY (gadget_id, user_id));
-CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, gadget_id TEXT NOT NULL, role TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS modules (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_id TEXT NOT NULL, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', blueprint_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS module_shares (module_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY (module_id, user_id));
+CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, module_id TEXT NOT NULL, role TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS blueprints (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '◆', author_id TEXT, visibility TEXT NOT NULL, files TEXT NOT NULL, created_at INTEGER NOT NULL);
 `);
 // Added after the first release; existing databases get the columns on startup.
@@ -194,9 +198,9 @@ export const workspaces = {
 	},
 };
 
-// ---------------------------------------------------------------- gadgets index, ACL, links
+// ---------------------------------------------------------------- modules index, ACL, links
 
-const toGadget = (row: any): GadgetRow => ({
+const toModule = (row: any): ModuleRow => ({
 	id: row.id,
 	workspaceId: row.workspace_id,
 	ownerId: row.owner_id,
@@ -207,65 +211,65 @@ const toGadget = (row: any): GadgetRow => ({
 	updatedAt: row.updated_at,
 });
 
-export const gadgets = {
-	create(workspaceId: string, ownerId: string, name: string, icon: string, blueprintId: string | null): GadgetRow {
+export const modules = {
+	create(workspaceId: string, ownerId: string, name: string, icon: string, blueprintId: string | null): ModuleRow {
 		const now = Date.now();
-		const row = { id: newId("g"), workspaceId, ownerId, name, icon, blueprintId, createdAt: now, updatedAt: now };
-		db.prepare("INSERT INTO gadgets VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(row.id, workspaceId, ownerId, name, icon, blueprintId, now, now);
+		const row = { id: newId("mod"), workspaceId, ownerId, name, icon, blueprintId, createdAt: now, updatedAt: now };
+		db.prepare("INSERT INTO modules VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(row.id, workspaceId, ownerId, name, icon, blueprintId, now, now);
 		return row;
 	},
-	get(id: string): GadgetRow | undefined {
-		const row = db.prepare("SELECT * FROM gadgets WHERE id = ?").get(id);
-		return row ? toGadget(row) : undefined;
+	get(id: string): ModuleRow | undefined {
+		const row = db.prepare("SELECT * FROM modules WHERE id = ?").get(id);
+		return row ? toModule(row) : undefined;
 	},
-	inWorkspace(workspaceId: string): GadgetRow[] {
-		return db.prepare("SELECT * FROM gadgets WHERE workspace_id = ? ORDER BY updated_at DESC").all(workspaceId).map(toGadget);
+	inWorkspace(workspaceId: string): ModuleRow[] {
+		return db.prepare("SELECT * FROM modules WHERE workspace_id = ? ORDER BY updated_at DESC").all(workspaceId).map(toModule);
 	},
-	sharedWith(userId: string): (GadgetRow & { role: Role })[] {
+	sharedWith(userId: string): (ModuleRow & { role: Role })[] {
 		return db
-			.prepare("SELECT g.*, s.role FROM gadgets g JOIN gadget_shares s ON s.gadget_id = g.id WHERE s.user_id = ? ORDER BY g.updated_at DESC")
+			.prepare("SELECT g.*, s.role FROM modules g JOIN module_shares s ON s.module_id = g.id WHERE s.user_id = ? ORDER BY g.updated_at DESC")
 			.all(userId)
-			.map((r: any) => ({ ...toGadget(r), role: r.role }));
+			.map((r: any) => ({ ...toModule(r), role: r.role }));
 	},
 	touch(id: string, patch: { name?: string; icon?: string } = {}) {
-		const g = gadgets.get(id);
+		const g = modules.get(id);
 		if (!g) return;
-		db.prepare("UPDATE gadgets SET name = ?, icon = ?, updated_at = ? WHERE id = ?").run(patch.name ?? g.name, patch.icon ?? g.icon, Date.now(), id);
+		db.prepare("UPDATE modules SET name = ?, icon = ?, updated_at = ? WHERE id = ?").run(patch.name ?? g.name, patch.icon ?? g.icon, Date.now(), id);
 	},
 	delete(id: string) {
-		db.prepare("DELETE FROM gadgets WHERE id = ?").run(id);
-		db.prepare("DELETE FROM gadget_shares WHERE gadget_id = ?").run(id);
-		db.prepare("DELETE FROM share_links WHERE gadget_id = ?").run(id);
+		db.prepare("DELETE FROM modules WHERE id = ?").run(id);
+		db.prepare("DELETE FROM module_shares WHERE module_id = ?").run(id);
+		db.prepare("DELETE FROM share_links WHERE module_id = ?").run(id);
 	},
 	/** Effective role: workspace membership first, then a direct share. */
-	role(gadget: GadgetRow, userId: string): Role | undefined {
-		const wsRole = workspaces.role(gadget.workspaceId, userId);
-		const share = (db.prepare("SELECT role FROM gadget_shares WHERE gadget_id = ? AND user_id = ?").get(gadget.id, userId) as any)?.role as Role | undefined;
+	role(module: ModuleRow, userId: string): Role | undefined {
+		const wsRole = workspaces.role(module.workspaceId, userId);
+		const share = (db.prepare("SELECT role FROM module_shares WHERE module_id = ? AND user_id = ?").get(module.id, userId) as any)?.role as Role | undefined;
 		if (!wsRole) return share;
 		if (!share) return wsRole;
 		return ROLE_RANK[wsRole] >= ROLE_RANK[share] ? wsRole : share;
 	},
-	shares(gadgetId: string) {
+	shares(moduleId: string) {
 		return db
-			.prepare("SELECT u.id, u.username, u.display_name, s.role FROM gadget_shares s JOIN users u ON u.id = s.user_id WHERE s.gadget_id = ?")
-			.all(gadgetId)
+			.prepare("SELECT u.id, u.username, u.display_name, s.role FROM module_shares s JOIN users u ON u.id = s.user_id WHERE s.module_id = ?")
+			.all(moduleId)
 			.map((r: any) => ({ id: r.id, username: r.username, displayName: r.display_name, role: r.role as Role }));
 	},
-	share(gadgetId: string, userId: string, role: Role | null) {
-		if (role === null) db.prepare("DELETE FROM gadget_shares WHERE gadget_id = ? AND user_id = ?").run(gadgetId, userId);
-		else db.prepare("INSERT INTO gadget_shares VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET role = excluded.role").run(gadgetId, userId, role);
+	share(moduleId: string, userId: string, role: Role | null) {
+		if (role === null) db.prepare("DELETE FROM module_shares WHERE module_id = ? AND user_id = ?").run(moduleId, userId);
+		else db.prepare("INSERT INTO module_shares VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET role = excluded.role").run(moduleId, userId, role);
 	},
-	createLink(gadgetId: string, role: Role, createdBy: string): string {
+	createLink(moduleId: string, role: Role, createdBy: string): string {
 		const token = randomBytes(12).toString("base64url");
-		db.prepare("INSERT INTO share_links VALUES (?, ?, ?, ?, ?)").run(token, gadgetId, role, createdBy, Date.now());
+		db.prepare("INSERT INTO share_links VALUES (?, ?, ?, ?, ?)").run(token, moduleId, role, createdBy, Date.now());
 		return token;
 	},
-	links(gadgetId: string) {
-		return db.prepare("SELECT token, role, created_at FROM share_links WHERE gadget_id = ?").all(gadgetId) as { token: string; role: Role; created_at: number }[];
+	links(moduleId: string) {
+		return db.prepare("SELECT token, role, created_at FROM share_links WHERE module_id = ?").all(moduleId) as { token: string; role: Role; created_at: number }[];
 	},
-	link(token: string): { gadgetId: string; role: Role } | undefined {
-		const r: any = db.prepare("SELECT gadget_id, role FROM share_links WHERE token = ?").get(token);
-		return r ? { gadgetId: r.gadget_id, role: r.role } : undefined;
+	link(token: string): { moduleId: string; role: Role } | undefined {
+		const r: any = db.prepare("SELECT module_id, role FROM share_links WHERE token = ?").get(token);
+		return r ? { moduleId: r.module_id, role: r.role } : undefined;
 	},
 	deleteLink(token: string) {
 		db.prepare("DELETE FROM share_links WHERE token = ?").run(token);
@@ -307,7 +311,7 @@ export const blueprints = {
 	},
 };
 
-// ---------------------------------------------------------------- signed tokens (gadget frames)
+// ---------------------------------------------------------------- signed tokens (module frames)
 
 export function sign(payload: object, ttlMs: number): string {
 	const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + ttlMs })).toString("base64url");

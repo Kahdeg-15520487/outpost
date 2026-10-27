@@ -5,7 +5,7 @@
  * Covers discovery (reads/writes/always-ask), secrets never leaving the server, the private-address
  * guard, capabilities (method subsets, per-method policy, byo never auto-approved), the approval
  * queue with action_result, revoking, removing, and the export/import note.
- * Run: pnpm --filter @pi-os/server test -- connectors
+ * Run: pnpm --filter @outpost/server test -- connectors
  */
 import { check, finish, must, testDir } from "./lib/harness.ts";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -16,8 +16,8 @@ const { MCP_TOKEN, API_KEY, notes, items, SPEC, apiHits, startServices } = await
 const services = await startServices();
 const { mcpUrl, apiOrigin } = services;
 
-// Admin-declared (vetted) connections, read from the config file pi-os loads at startup.
-const configPath = join(testDir, "pi-os.config.json");
+// Admin-declared (vetted) connections, read from the config file outpost loads at startup.
+const configPath = join(testDir, "outpost.config.json");
 process.env.TEST_API_KEY = API_KEY;
 process.env.FIXTURE_SECRET_SRC = "from-env-42";
 writeFileSync(
@@ -29,22 +29,22 @@ writeFileSync(
 		],
 	}),
 );
-process.env.PI_OS_CONFIG = configPath;
+process.env.OUTPOST_CONFIG = configPath;
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { GrantsDoc, ConnectionsDoc, ApprovalsDoc, AuditDoc } = await import("../src/kernel/docs.ts");
-const { isPrivateAddress } = await import("../src/gatekeepers/net.ts");
-const { assess, GADGET_RUNTIME } = await import("../src/gadgets/compat.ts");
+const { isPrivateAddress } = await import("../src/airlocks/net.ts");
+const { assess, MODULE_RUNTIME } = await import("../src/modules/compat.ts");
 const { config } = await import("../src/config.ts");
-const { connectionSecrets } = await import("../src/gatekeepers/connectors/types.ts");
+const { connectionSecrets } = await import("../src/airlocks/connectors/types.ts");
 const { BACKGROUND_CONTEXT: ctx } = await import("@earendil-works/chord/context");
 
 const u = users.create("connectors", "password123");
 const ws = await Workspace.get(workspaces.create("connectors", u.id).id);
-const holder = { kind: "gadget" as const, id: "g_conn_test" };
-const as = { ...holder, name: "test gadget" };
-const call = (grant: string, method: string, args: any = {}) => ws.gatekeeperCall(holder, grant, method, args, as);
+const holder = { kind: "module" as const, id: "g_conn_test" };
+const as = { ...holder, name: "test module" };
+const call = (grant: string, method: string, args: any = {}) => ws.airlockCall(holder, grant, method, args, as);
 const fails = async (p: Promise<unknown>) => {
 	try {
 		await p;
@@ -55,7 +55,7 @@ const fails = async (p: Promise<unknown>) => {
 };
 
 // ------------------------------------------------------------------ auth
-const { applyAuth } = await import("../src/gatekeepers/connectors/types.ts");
+const { applyAuth } = await import("../src/airlocks/connectors/types.ts");
 check("basic auth with an empty username (personal access tokens)", applyAuth({ kind: "basic" }, { password: "pat123" }).headers.authorization === `Basic ${Buffer.from(":pat123").toString("base64")}`);
 
 // ------------------------------------------------------------------ address guard
@@ -64,7 +64,7 @@ check("private, loopback, link-local and metadata addresses are private", ["127.
 check("public addresses aren't", !isPrivateAddress("8.8.8.8") && !isPrivateAddress("2606:4700:4700::1111"));
 const blocked = await ws.connections.create({ kind: "mcp", label: "notes", url: mcpUrl, auth: { kind: "bearer" }, secrets: { token: MCP_TOKEN } }, "owner");
 check("a connection added in the UI can't reach a local address", blocked.status === "error" && /private or local/.test(blocked.error ?? ""), blocked.error);
-process.env.PI_OS_ALLOW_PRIVATE_HOSTS = "1";
+process.env.OUTPOST_ALLOW_PRIVATE_HOSTS = "1";
 
 // ------------------------------------------------------------------ MCP over HTTP
 console.log("MCP server (HTTP)");
@@ -80,7 +80,7 @@ check("the token never leaves the server: not in the API view, the workspace doc
 check("byo connections can't be auto-approved", /can't be auto-approved/.test(await fails(ws.grant({ connection: notesConn.id, holder, autoApprove: true, by: "owner" }))));
 check("…not even one method", /can't be auto-approved/.test(await fails(ws.grant({ connection: notesConn.id, holder, policy: { add_note: "auto" }, by: "owner" }))));
 const g = await ws.grant({ connection: notesConn.id, holder, policy: { delete_note: "deny" }, by: "owner" });
-check("a capability on a connection: gatekeeper is the connector, resource the label", g.gatekeeper === "mcp" && g.connection === notesConn.id && g.label === "notes");
+check("a capability on a connection: airlock is the connector, resource the label", g.airlock === "mcp" && g.connection === notesConn.id && g.label === "notes");
 const found = (await call("notes", "search_notes", { query: "hello" })) as any[];
 check("reads run and return the tool's JSON", Array.isArray(found) && found[0]?.text === "hello world", found);
 const audit = (await ws.harness.snapshot(AuditDoc, ctx))!.lines.at(-1)!;
@@ -154,15 +154,15 @@ await ws.updateGrant(gv.id, { autoApprove: true });
 const autoCreate = (await call("inv", "createItem", { body: { name: "Chisel" } })) as any;
 const autoDelete = (await call("inv", "deleteItem", { id: "a1" })) as any;
 check("auto-approve runs writes but not always-ask ones", autoCreate?.status === 201 && typeof autoDelete?.queuedForApproval === "string", [autoCreate, autoDelete]);
-check("config connections can't be edited or removed in the UI", /pi-os.config.json/.test(await fails(ws.connections.update("cfg.local", { title: "x" }))) && /pi-os.config.json/.test(await fails(ws.removeConnection("cfg.local"))));
+check("config connections can't be edited or removed in the UI", /outpost.config.json/.test(await fails(ws.connections.update("cfg.local", { title: "x" }))) && /outpost.config.json/.test(await fails(ws.removeConnection("cfg.local"))));
 check("UI connections can't run local commands", /http\(s\)/.test(await fails(ws.connections.create({ kind: "mcp", label: "cmd", url: "file:///bin/sh" }, "o"))));
 void gl;
 
-// ------------------------------------------------------------------ project teams
-console.log("project teams");
-const pm = ws.projects;
+// ------------------------------------------------------------------ mission teams
+console.log("mission teams");
+const pm = ws.missions;
 pm.build.nudges = false;
-const proj = await pm.create(u, { goal: "Connector project", model: { provider: "pi-os-demo", modelId: "demo" } });
+const proj = await pm.create(u, { goal: "Connector mission", model: { provider: "outpost-demo", modelId: "demo" } });
 await pm.stopAll(proj.id);
 for (const role of ["worker", "planner"]) await pm.addAgent(proj.id, { role, brief: "wait", start: false });
 const keyOf = async (role: string) => Object.values((await pm.state(proj.id)).agents).find((x) => x.role === role)!.key;
@@ -172,28 +172,28 @@ const asAgent = async (role: string, name: string, args: unknown) => {
 	return pm.tools.get(name)!.execute(args, { conversationId: Number(ag.conversationId), taskId: ++seq } as any) as Promise<any>;
 };
 const out = (r: any) => (r?.output ?? []).map((o: any) => o.text).join("");
-await ws.grant({ connection: notesConn.id, holder: { kind: "project", id: proj.id, roles: ["worker"] }, by: "owner" });
-const dev = out(await asAgent("worker", "gatekeeper_call", { grant: "notes", method: "search_notes", args: { query: "hello" } }));
-check("a grant for a project's developers: a developer calls it", dev.includes("hello world"), dev);
-check("…other roles on the team can't", /No grant "notes"/.test(await fails(asAgent("planner", "gatekeeper_call", { grant: "notes", method: "search_notes", args: {} }))));
-const devWrite = JSON.parse(out(await asAgent("worker", "gatekeeper_call", { grant: "notes", method: "add_note", args: { text: "from a developer" } })));
+await ws.grant({ connection: notesConn.id, holder: { kind: "mission", id: proj.id, roles: ["worker"] }, by: "owner" });
+const dev = out(await asAgent("worker", "airlock_call", { grant: "notes", method: "search_notes", args: { query: "hello" } }));
+check("a grant for a mission's developers: a developer calls it", dev.includes("hello world"), dev);
+check("…other roles on the team can't", /No grant "notes"/.test(await fails(asAgent("planner", "airlock_call", { grant: "notes", method: "search_notes", args: {} }))));
+const devWrite = JSON.parse(out(await asAgent("worker", "airlock_call", { grant: "notes", method: "add_note", args: { text: "from a developer" } })));
 check("a developer's write queues for approval", typeof devWrite.queuedForApproval === "string" && !notes.some((n) => n.text === "from a developer"));
-check("action_result works for project agents", JSON.parse(out(await asAgent("worker", "action_result", { actionId: devWrite.queuedForApproval }))).status === "pending");
-const tools = JSON.parse(out(await asAgent("worker", "gatekeeper_tools", { grant: "notes", search: "delete" })));
-check("gatekeeper_tools finds methods with their schemas", tools[0]?.name === "delete_note" && tools[0]?.arguments?.properties?.id?.type === "number" && tools[0]?.runs === "write, needs approval", tools);
-const { resourcesSection } = await import("../src/gatekeepers/prompt.ts");
-const held = Object.values((await ws.harness.snapshot(GrantsDoc, ctx))!.grants).filter((x) => x.holder.kind === "project");
+check("action_result works for mission agents", JSON.parse(out(await asAgent("worker", "action_result", { actionId: devWrite.queuedForApproval }))).status === "pending");
+const tools = JSON.parse(out(await asAgent("worker", "airlock_tools", { grant: "notes", search: "delete" })));
+check("airlock_tools finds methods with their schemas", tools[0]?.name === "delete_note" && tools[0]?.arguments?.properties?.id?.type === "number" && tools[0]?.runs === "write, needs approval", tools);
+const { resourcesSection } = await import("../src/airlocks/prompt.ts");
+const held = Object.values((await ws.harness.snapshot(GrantsDoc, ctx))!.grants).filter((x) => x.holder.kind === "mission");
 const prompt = await resourcesSection(ws, held);
 check("the agent's <resources> lists methods and how each runs", /search_notes\(query: string\?/.test(prompt) && /\[read\]/.test(prompt) && /add_note\(text: string\) \[write, needs approval\]/.test(prompt), prompt.slice(0, 400));
-const asked = JSON.parse(out(await asAgent("planner", "request_access", { gatekeeper: "notes", reason: "read notes for the requirements", methods: ["search_notes"] })));
+const asked = JSON.parse(out(await asAgent("planner", "request_access", { airlock: "notes", reason: "read notes for the requirements", methods: ["search_notes"] })));
 const req = (await ws.harness.snapshot(GrantsDoc, ctx))!.requests[asked.requested];
-check("a project agent's access request is for its role and the methods it named", req?.connection === notesConn.id && req.holder.kind === "project" && req.holder.roles?.[0] === "planner" && req.methods?.join() === "search_notes", req);
+check("a mission agent's access request is for its role and the methods it named", req?.connection === notesConn.id && req.holder.kind === "mission" && req.holder.roles?.[0] === "planner" && req.methods?.join() === "search_notes", req);
 
 // ------------------------------------------------------------------ proposals (agents draft, owners connect)
 console.log("proposals");
-const { createOsExtension } = await import("../src/agent/extension.ts");
+const { createOutpostExtension } = await import("../src/agent/extension.ts");
 const chatId = await ws.createChat(u, "proposals");
-const proposeTool = createOsExtension(ws).tools!.find((t: any) => t.name === "propose_connection") as any;
+const proposeTool = createOutpostExtension(ws).tools!.find((t: any) => t.name === "propose_connection") as any;
 const propose = async (args: any) => {
 	const r = await proposeTool.execute(args, { conversationId: Number(chatId), taskId: 9000 + Math.floor(Math.random() * 1000) }, ctx);
 	return JSON.parse(r.output.map((o: any) => o.text).join(""));
@@ -228,8 +228,8 @@ const grantsAfter = Object.values((await ws.harness.snapshot(GrantsDoc, ctx))!.g
 const approvals = (await ws.harness.snapshot(ApprovalsDoc, ctx))!.actions;
 check("removing a connection revokes its grants and rejects their queued actions", grantsAfter.length === 0 && approvals[pendingItem2.queuedForApproval]?.status === "rejected", grantsAfter.length);
 check("…and forgets its secrets", Object.keys(connectionSecrets.get(ws.id, inv.id)).length === 0 && Object.keys(connectionSecrets.get(ws.id, pastedSpec.id)).length === 1);
-const a = assess({ runtime: GADGET_RUNTIME, server: ["gatekeepers"], client: [], gatekeepers: [{ id: "mcp", methods: ["search_notes"] }] });
-check("import check: a gadget using a connection runs, with a note to connect the service", a.status === "ok" && /Connections/.test(a.notes.join(" ")), a);
+const a = assess({ runtime: MODULE_RUNTIME, server: ["airlocks"], client: [], airlocks: [{ id: "mcp", methods: ["search_notes"] }] });
+check("import check: a module using a connection runs, with a note to connect the service", a.status === "ok" && /Connections/.test(a.notes.join(" ")), a);
 
 services.close();
 await finish();

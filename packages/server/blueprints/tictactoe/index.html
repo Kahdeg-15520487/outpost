@@ -48,20 +48,20 @@
   let s = null, prev = [];
   const fail = (e) => { $("err").textContent = e.message; setTimeout(() => ($("err").textContent = ""), 3000); };
   const set = (p) => p.then((n) => { s = n; render(); }).catch(fail);
-  const cells = [...Array(9)].map((_, i) => { const b = document.createElement("button"); b.className = "cell"; b.onclick = () => set(gadget.api.move(i)); $("board").append(b); return b; });
+  const cells = [...Array(9)].map((_, i) => { const b = document.createElement("button"); b.className = "cell"; b.onclick = () => set(module.api.move(i)); $("board").append(b); return b; });
 
   function seat(side) {
-    const el = $("seat" + side), p = s.players[side], mine = p && p.id === gadget.user.id;
+    const el = $("seat" + side), p = s.players[side], mine = p && p.id === module.user.id;
     el.classList.toggle("turn", !s.winner && s.turn === side);
     el.querySelector(".who").textContent = p ? p.name + (mine ? " (you)" : "") : "open seat";
     el.querySelector("button")?.remove();
-    if (!p && gadget.user.role !== "viewer") {
-      const b = document.createElement("button"); b.innerHTML = "<span>Sit here</span>"; b.onclick = () => set(gadget.api.join(side)); el.append(b);
+    if (!p && module.user.role !== "viewer") {
+      const b = document.createElement("button"); b.innerHTML = "<span>Sit here</span>"; b.onclick = () => set(module.api.join(side)); el.append(b);
     }
   }
   function render() {
     seat("X"); seat("O");
-    const myTurn = s.players[s.turn] && s.players[s.turn].id === gadget.user.id;
+    const myTurn = s.players[s.turn] && s.players[s.turn].id === module.user.id;
     s.board.forEach((v, i) => {
       const c = cells[i];
       c.textContent = v || ""; c.className = "cell" + (v ? " " + v : "") + (s.line && s.line.includes(i) ? " win" : "") + (v && !prev[i] ? " pop" : "");
@@ -73,9 +73,9 @@
     $("score").textContent = `X ${s.score.X} · O ${s.score.O} · draws ${s.score.draw}`;
     $("again").hidden = !s.winner;
   }
-  $("again").onclick = () => set(gadget.api.reset());
-  gadget.on("state", (n) => { s = n; render(); });
-  gadget.api.state().then((n) => { s = n; render(); });
+  $("again").onclick = () => set(module.api.reset());
+  module.on("state", (n) => { s = n; render(); });
+  module.api.state().then((n) => { s = n; render(); });
 </script>
 </body>
 </html>

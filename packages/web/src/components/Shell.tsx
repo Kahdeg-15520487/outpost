@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { ConnectionsPage } from "./Connections";
-import { exportGadget } from "./Transfer";
-import { api, type Gadget, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, homeHref, navigate, projectHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
+import { exportModule } from "./Transfer";
+import { api, type Module, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
+import { chatHref, homeHref, navigate, missionHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
 import { HomePage } from "./Home";
-import { GadgetWindow } from "./GadgetWindow";
+import { ModuleWindow } from "./ModuleWindow";
 import { ApprovalsDrawer } from "./Approvals";
 import { BlueprintsPage } from "./Blueprints";
 import { SettingsPage } from "./Settings";
@@ -14,33 +14,33 @@ import { FilesPage } from "./Files";
 import { UserMenu } from "./UserMenu";
 import { InlineRename, RowMenu } from "./RowMenu";
 import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
-import { NewProjectDialog, ProjectPage } from "./ProjectPage";
+import { NewMissionDialog, MissionPage } from "./MissionPage";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	const route = useRoute();
 	const online = useSocketStatus();
 	const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-	const [shared, setShared] = useState<Gadget[]>([]);
+	const [shared, setShared] = useState<Module[]>([]);
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [defaultModel, setDefaultModel] = useState<ModelRef>();
 	const [picker, setPicker] = useState<ModelPicker>({});
 	const [managingModels, setManagingModels] = useState(false);
-	const [newProject, setNewProject] = useState(false);
+	const [newMission, setNewMission] = useState(false);
 	const [drawer, setDrawer] = useState(false);
 	/** The sidebar can be tucked away; the choice is remembered per browser. */
-	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("pios.sidebar") === "collapsed");
+	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("outpost.sidebar") === "collapsed");
 	const setSidebar = (hide: boolean) => {
 		setCollapsed(hide);
-		localStorage.setItem("pios.sidebar", hide ? "collapsed" : "open");
+		localStorage.setItem("outpost.sidebar", hide ? "collapsed" : "open");
 	};
 	/** Which sidebar row is being renamed ("c:<id>" / "g:<id>"), and which row's menu is open (keeps its button visible). */
 	const [renaming, setRenaming] = useState<string>();
 	const [menuOpen, setMenuOpen] = useState<string>();
-	/** Ask the gadget window to switch tabs (from the sidebar menu's "Share…"). */
-	const [tabRequest, setTabRequest] = useState<{ gadget: string; tab: "share"; n: number }>();
+	/** Ask the module window to switch tabs (from the sidebar menu's "Share…"). */
+	const [tabRequest, setTabRequest] = useState<{ module: string; tab: "share"; n: number }>();
 
 	const loadWorkspaces = () => api.get("/api/workspaces").then((r) => setWorkspaces(r.workspaces));
-	const loadShared = () => api.get("/api/shared").then((r) => setShared(r.gadgets));
+	const loadShared = () => api.get("/api/shared").then((r) => setShared(r.modules));
 	useEffect(() => {
 		loadWorkspaces();
 		loadShared();
@@ -68,7 +68,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		addEventListener("focus", loadModels);
 		return () => removeEventListener("focus", loadModels);
 	}, [wsId]);
-	const { docs, gadgets, projects } = useWorkspace(ws?.id);
+	const { docs, modules, missions } = useWorkspace(ws?.id);
 	const proposed = useConnections(ws?.id).proposals.filter((p) => p.status === "pending").length;
 	const updated = useAppUpdated();
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
@@ -91,28 +91,28 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const archiveChat = async (id: string) => {
 		if (!ws || !confirm("Archive this chat? It's removed from the sidebar for everyone in the workspace.")) return;
 		await api.del(`/api/w/${ws.id}/chats/${id}`);
-		if (route.page === "chat" && route.chat === id) navigate(chatHref(ws.id, undefined, route.gadget));
+		if (route.page === "chat" && route.chat === id) navigate(chatHref(ws.id, undefined, route.module));
 	};
-	const deleteGadget = async (g: Gadget) => {
+	const deleteModule = async (g: Module) => {
 		if (!ws || !confirm(`Delete "${g.name}"? Its code and data are removed for everyone it's shared with.`)) return;
-		await api.del(`/api/gadgets/${g.id}`).catch((e) => alert(e.message));
-		if (route.page === "chat" && route.gadget === g.id) navigate(chatHref(ws.id, route.chat));
+		await api.del(`/api/modules/${g.id}`).catch((e) => alert(e.message));
+		if (route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, route.chat));
 	};
 	const rowClass = (key: string, on: boolean) => `side-row ${on ? "on" : ""} ${menuOpen === key ? "menu-open" : ""}`;
 
-	const gadgetOpen = route.page === "chat" && route.gadget;
-	const chatHidden = route.page === "chat" && !!route.gadget && !!route.focus;
+	const moduleOpen = route.page === "chat" && route.module;
+	const chatHidden = route.page === "chat" && !!route.module && !!route.focus;
 	const canEdit = ws?.role !== "viewer";
 
 	return (
-		<div className={`shell ${gadgetOpen ? "with-gadget" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""}`}>
+		<div className={`shell ${moduleOpen ? "with-module" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""}`}>
 			<aside className="sidebar">
 				<div className="brand">
 					<a className="logo" href={wsId ? homeHref(wsId) : "#"} title="Workspace home" onClick={(e) => (wsId ? undefined : e.preventDefault())}>
-						π
+						<img src="/outpost.svg" width="30" height="30" alt="Outpost home" />
 					</a>
 					<a className="name" href={wsId ? homeHref(wsId) : "#"} title="Workspace home">
-						pi<em>·</em>os
+						Outpost
 					</a>
 					<div className="kernel" title={online ? "Connected to the kernel" : "Reconnecting…"}>
 						<span className={`dot ${online ? "" : "off"}`} />
@@ -167,21 +167,21 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					</div>
 					<div className="side-section">
 						<div className="label">
-							<span>Projects</span>
+							<span>Missions</span>
 							{canEdit && ws && (
-								<button className="side-add" onClick={() => setNewProject(true)} title="New project: a team of agents builds it">
+								<button className="side-add" onClick={() => setNewMission(true)} title="New mission: a team of agents builds it">
 									+
 								</button>
 							)}
 						</div>
-						{projects.length === 0 && canEdit && (
-							<a className="side-item" href="#" style={{ color: "#6c6655" }} onClick={(e) => (e.preventDefault(), setNewProject(true))}>
+						{missions.length === 0 && canEdit && (
+							<a className="side-item" href="#" style={{ color: "#6c6655" }} onClick={(e) => (e.preventDefault(), setNewMission(true))}>
 								Give a team of agents a goal
 							</a>
 						)}
 						{ws &&
-							projects.map((p) => (
-								<a key={p.id} className={`side-item ${route.page === "project" && route.project === p.id ? "on" : ""}`} href={projectHref(ws.id, p.id)} title={p.goal}>
+							missions.map((p) => (
+								<a key={p.id} className={`side-item ${route.page === "mission" && route.mission === p.id ? "on" : ""}`} href={missionHref(ws.id, p.id)} title={p.goal}>
 									<span className="ico">◈</span>
 									<span className="t">{p.name}</span>
 									<span className="ago">{p.stage}</span>
@@ -206,7 +206,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									<div key={c.id} className={rowClass(`c:${c.id}`, on)}>
 										<a
 											className={`side-item ${on ? "on" : ""}`}
-											href={chatHref(ws.id, c.id, route.page === "chat" ? route.gadget : undefined)}
+											href={chatHref(ws.id, c.id, route.page === "chat" ? route.module : undefined)}
 											title={canEdit ? `${c.title} — double-click to rename` : c.title}
 											onDoubleClick={canEdit ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`c:${c.id}`)) : undefined}
 										>
@@ -228,18 +228,18 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					</div>
 					<div className="side-section">
 						<div className="label">
-							<span>Gadgets</span>
-							<span>{gadgets.length || ""}</span>
+							<span>Modules</span>
+							<span>{modules.length || ""}</span>
 						</div>
-						{gadgets.length === 0 && <div className="side-item" style={{ color: "#6c6655" }}>Ask the agent to build one</div>}
+						{modules.length === 0 && <div className="side-item" style={{ color: "#6c6655" }}>Ask the agent to build one</div>}
 						{ws &&
-							gadgets.map((g) => {
-								const on = route.page === "chat" && route.gadget === g.id;
+							modules.map((g) => {
+								const on = route.page === "chat" && route.module === g.id;
 								const canChange = g.role === "owner" || g.role === "editor";
 								return renaming === `g:${g.id}` ? (
 									<div key={g.id} className="side-item editing">
 										<span className="ico">{g.icon}</span>
-										<InlineRename value={g.name} onSave={(name) => api.patch(`/api/gadgets/${g.id}`, { name })} onDone={() => setRenaming(undefined)} />
+										<InlineRename value={g.name} onSave={(name) => api.patch(`/api/modules/${g.id}`, { name })} onDone={() => setRenaming(undefined)} />
 									</div>
 								) : (
 									<div key={g.id} className={rowClass(`g:${g.id}`, on)}>
@@ -257,20 +257,20 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 											onOpenChange={(o) => setMenuOpen(o ? `g:${g.id}` : undefined)}
 											items={[
 												{ label: "Rename", icon: "✎", onSelect: () => setRenaming(`g:${g.id}`), hidden: !canChange },
-												{ label: "Open full page", icon: "⤢", onSelect: () => navigate(`#/g/${g.id}`) },
+												{ label: "Open full page", icon: "⤢", onSelect: () => navigate(`#/modules/${g.id}`) },
 												{
 													label: "Share…",
 													icon: "⇪",
 													hidden: g.role !== "owner",
 													onSelect: () => {
-														navigate(chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, route.page === "chat" && route.gadget === g.id ? route.focus : true));
-														setTabRequest((t) => ({ gadget: g.id, tab: "share", n: (t?.n ?? 0) + 1 }));
+														navigate(chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, route.page === "chat" && route.module === g.id ? route.focus : true));
+														setTabRequest((t) => ({ module: g.id, tab: "share", n: (t?.n ?? 0) + 1 }));
 													},
 												},
-												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/g/${g.id}`) },
-												{ label: "Export", icon: "⤓", onSelect: () => exportGadget(g.id, false).catch((e) => alert(e.message)), hidden: !canChange },
-												{ label: "Export with data", icon: "⤓", onSelect: () => exportGadget(g.id, true).catch((e) => alert(e.message)), hidden: !canChange },
-												{ label: "Delete", icon: "✕", onSelect: () => deleteGadget(g), danger: true, hidden: g.role !== "owner" },
+												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/modules/${g.id}`) },
+												{ label: "Export", icon: "⤓", onSelect: () => exportModule(g.id, false).catch((e) => alert(e.message)), hidden: !canChange },
+												{ label: "Export with data", icon: "⤓", onSelect: () => exportModule(g.id, true).catch((e) => alert(e.message)), hidden: !canChange },
+												{ label: "Delete", icon: "✕", onSelect: () => deleteModule(g), danger: true, hidden: g.role !== "owner" },
 											]}
 										/>
 									</div>
@@ -283,7 +283,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								<span>Shared with me</span>
 							</div>
 							{shared.map((g) => (
-								<a key={g.id} className={`side-item ${route.page === "gadget" && route.gadget === g.id ? "on" : ""}`} href={`#/g/${g.id}`}>
+								<a key={g.id} className={`side-item ${route.page === "module" && route.module === g.id ? "on" : ""}`} href={`#/modules/${g.id}`}>
 									<span className="ico">{g.icon}</span>
 									<span className="t">{g.name}</span>
 									<span className="ago">{g.role}</span>
@@ -305,19 +305,19 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				</button>
 			)}
 
-			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
-			{route.page === "chat" && ws && route.gadget && (
-				<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} tabRequest={tabRequest?.gadget === route.gadget ? tabRequest : undefined}
+			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
+			{route.page === "chat" && ws && route.module && (
+				<ModuleWindow key={route.module} moduleId={route.module} user={user} grants={docs.grants} tabRequest={tabRequest?.module === route.module ? tabRequest : undefined}
 					chatHidden={chatHidden}
-					onToggleChat={() => navigate(chatHref(ws.id, route.chat, route.gadget, !chatHidden))}
+					onToggleChat={() => navigate(chatHref(ws.id, route.chat, route.module, !chatHidden))}
 					onClose={() => navigate(chatHref(ws.id, route.chat))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
-			{route.page === "project" && ws && <ProjectPage key={route.project} ws={ws} projectId={route.project} tab={route.tab} models={models} picker={picker} grants={docs.grants} />}
-			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} gadgets={gadgets} />}
+			{route.page === "mission" && ws && <MissionPage key={route.mission} ws={ws} missionId={route.mission} tab={route.tab} models={models} picker={picker} grants={docs.grants} />}
+			{route.page === "files" && ws && <FilesPage ws={ws} files={docs.files.files} modules={modules} />}
 			{updated && (
 				<div className="update-banner" role="status">
-					pi-os was updated while this tab was open.
+					Outpost was updated while this tab was open.
 					<button className="btn small primary" onClick={() => location.reload()}>
 						Reload
 					</button>
@@ -325,17 +325,17 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 			)}
 			{route.page === "connections" && ws && <ConnectionsPage ws={ws} />}
 			{route.page === "settings" && ws && <SettingsPage ws={ws} onChanged={() => (loadWorkspaces(), loadModels())} onManageModels={() => setManagingModels(true)} />}
-			{route.page === "gadget" && (
+			{route.page === "module" && (
 				<div className="main" style={{ display: "flex" }}>
-					<GadgetWindow key={route.gadget} gadgetId={route.gadget} user={user} grants={docs.grants} standalone onClose={() => navigate("#/")} />
+					<ModuleWindow key={route.module} moduleId={route.module} user={user} grants={docs.grants} standalone onClose={() => navigate("#/")} />
 				</div>
 			)}
 			{route.page === "home" && ws && (
-				<HomePage key={`${ws.id}:home`} ws={ws} user={user} canEdit={canEdit} onNewChat={newChat} onNewProject={() => setNewProject(true)} onApprovals={() => setDrawer(true)} />
+				<HomePage key={`${ws.id}:home`} ws={ws} user={user} canEdit={canEdit} onNewChat={newChat} onNewMission={() => setNewMission(true)} onApprovals={() => setDrawer(true)} />
 			)}
 			{(route.page === "home" && !ws) || route.page === "link" ? <div className="main" /> : null}
 
-			{newProject && ws && <NewProjectDialog ws={ws} models={models} picker={picker} defaultModel={defaultModel} onClose={() => setNewProject(false)} />}
+			{newMission && ws && <NewMissionDialog ws={ws} models={models} picker={picker} defaultModel={defaultModel} onClose={() => setNewMission(false)} />}
 			{managingModels && (
 				<ModelPickerDialog
 					models={models}
@@ -344,7 +344,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					onSave={async (next) => setPicker((await api.put("/api/me/model-picker", { picker: next })).picker)}
 				/>
 			)}
-			{drawer && ws && <ApprovalsDrawer ws={ws} docs={docs} gadgets={gadgets} onClose={() => setDrawer(false)} />}
+			{drawer && ws && <ApprovalsDrawer ws={ws} docs={docs} modules={modules} onClose={() => setDrawer(false)} />}
 		</div>
 	);
 }

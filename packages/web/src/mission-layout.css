@@ -1,0 +1,59 @@
+/* ================================================================== mission layouts */
+
+/* Side ↔ Team switch in the header */
+.ph-layout { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--ink-2); border: 1px solid var(--ink-3); flex: none; }
+.ph-layout button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--ink-muted); font: 600 11.5px var(--sans); padding: 4px 10px; border-radius: 7px; cursor: pointer; }
+.ph-layout button:hover { color: var(--ink-text); }
+.ph-layout button.on { background: var(--ink-3); color: white; }
+.ph-layout svg { width: 18px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1; }
+.ph-layout svg .fill { fill: currentColor; fill-opacity: .35; }
+
+/* Tiles fill the space their grid gives them (TileGrid sets columns/rows inline). */
+.tiles { grid-auto-rows: minmax(150px, 1fr); }
+.tiles.mini { grid-auto-rows: 44px; }
+.agent-tile { min-height: 0; height: 100%; }
+.agent-tile .at-tail { font-size: clamp(12px, 0.35vw + 7.5px, 13.5px); }
+
+/* Team layout: every agent across the top, the viewer (activity, questions, artifacts) below. */
+.mission-body.team { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.mission-body.team .tiles { padding: 2px 2px 0; }
+.mission-body.team .viewer { min-height: 0; }
+.splitter { display: grid; place-items: center; cursor: row-resize; touch-action: none; }
+.splitter span { width: 56px; height: 4px; border-radius: 4px; background: var(--ink-3); transition: background .12s, width .12s; }
+.splitter:hover span { background: var(--ink-muted); width: 80px; }
+body.resizing-rows { cursor: row-resize; user-select: none; }
+body.resizing-rows iframe { pointer-events: none; }
+
+@media (max-width: 900px) {
+	.mission-body.team { grid-template-rows: auto !important; overflow-y: auto; }
+	.mission-body.team .splitter { display: none; }
+	.mission-body.team .viewer { min-height: 480px; }
+	.ph-layout { display: none; }
+}
+
+/* header: keep it on one line with the layout switch */
+.mission-head { gap: 14px; flex-wrap: nowrap; }
+.ph-title { flex: 1 1 260px; max-width: 380px; }
+.ph-stages li { padding: 0 7px; }
+.ph-meta { gap: 10px; }
+.ph-actions { flex: none; }
+@media (max-width: 1640px) {
+	.ph-stages li:not(.now) { font-size: 0; gap: 0; padding: 0 5px; }
+	.ph-stages li:not(.now) .dot { font-size: initial; }
+}
+@media (max-width: 1180px) { .ph-meta span:not(:first-child) { display: none; } }
+
+/* attachments strip (Requirements tab) */
+.att-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin: 0 0 16px; border: 1px dashed var(--line-2); border-radius: 10px; background: var(--card); }
+.att-strip .label { margin-right: 4px; }
+.att-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; height: 28px; padding: 0 8px 0 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--text); text-decoration: none; font-size: 12.5px; }
+.att-chip:hover { border-color: var(--text); }
+.att-chip img { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; }
+.att-ext { display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 3px; border-radius: 4px; background: var(--text); color: #ffb08f; font: 700 9px var(--mono); }
+.att-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.att-size { font-size: 10.5px; color: var(--muted); flex: none; }
+.att-note { font-size: 11.5px; margin-left: auto; }
+.doc-before { padding-bottom: 0; }
+.vt-count { font: 600 10.5px var(--mono); color: var(--muted); }
+.vt-count { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+.vt-count svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }

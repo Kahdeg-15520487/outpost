@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Gadget, type Workspace } from "../api";
+import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Module, type Workspace } from "../api";
 import { chatHref, navigate, timeAgo } from "../store";
 import { Dialog } from "./bits";
 
 const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
 const isImage = (f: FileMeta) => /^image\/(png|jpeg|gif|webp)$/.test(f.mime);
 const isTextual = (f: FileMeta) => /^text|json|xml|csv|tsv|html|svg|markdown|yaml/.test(f.kind) || /^text\//.test(f.mime);
-const SOURCE: Record<FileMeta["source"], string> = { upload: "uploaded", agent: "agent", gadget: "gadget", extract: "extracted" };
+const SOURCE: Record<FileMeta["source"], string> = { upload: "uploaded", agent: "agent", module: "module", extract: "extracted" };
 
-export function FilesPage({ ws, files, gadgets }: { ws: Workspace; files: Record<string, FileMeta>; gadgets: Gadget[] }) {
+export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record<string, FileMeta>; modules: Module[] }) {
 	const [filter, setFilter] = useState("");
 	const [open, setOpen] = useState<Record<string, boolean>>({});
 	const [preview, setPreview] = useState<FileMeta>();
@@ -43,7 +43,7 @@ export function FilesPage({ ws, files, gadgets }: { ws: Workspace; files: Record
 		}
 	};
 	const ask = (f: FileMeta) => {
-		sessionStorage.setItem("pios.attach", JSON.stringify([f]));
+		sessionStorage.setItem("outpost.attach", JSON.stringify([f]));
 		navigate(chatHref(ws.id));
 	};
 
@@ -78,8 +78,8 @@ export function FilesPage({ ws, files, gadgets }: { ws: Workspace; files: Record
 				<td className="muted mono" style={{ fontSize: 11.5 }}>
 					{timeAgo(f.createdAt)}
 				</td>
-				<td className="muted" style={{ fontSize: 12 }} title={f.gadgets.map((g) => gadgets.find((x) => x.id === g)?.name ?? g).join(", ")}>
-					{f.gadgets.length ? `${f.gadgets.length} gadget${f.gadgets.length > 1 ? "s" : ""}` : "—"}
+				<td className="muted" style={{ fontSize: 12 }} title={f.modules.map((g) => modules.find((x) => x.id === g)?.name ?? g).join(", ")}>
+					{f.modules.length ? `${f.modules.length} module${f.modules.length > 1 ? "s" : ""}` : "—"}
 				</td>
 				<td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
 					{canEdit && (
@@ -119,7 +119,7 @@ export function FilesPage({ ws, files, gadgets }: { ws: Workspace; files: Record
 						<div className="grow">
 							<h1>Files</h1>
 							<p className="lede" style={{ marginBottom: 18 }}>
-								Uploads, things the agent and gadgets produce, and parts extracted from archives. Any format: the agent takes apart what it doesn't know, and builds gadgets to work with it.
+								Uploads, things the agent and modules produce, and parts extracted from archives. Any format: the agent takes apart what it doesn't know, and builds modules to work with it.
 							</p>
 						</div>
 						<span className="mono muted" style={{ fontSize: 12, marginBottom: 22 }}>
@@ -169,12 +169,12 @@ export function FilesPage({ ws, files, gadgets }: { ws: Workspace; files: Record
 					)}
 				</div>
 			</div>
-			{preview && <PreviewDialog ws={ws} file={files[preview.id] ?? preview} gadgets={gadgets} canEdit={canEdit} onAsk={() => ask(preview)} onClose={() => setPreview(undefined)} />}
+			{preview && <PreviewDialog ws={ws} file={files[preview.id] ?? preview} modules={modules} canEdit={canEdit} onAsk={() => ask(preview)} onClose={() => setPreview(undefined)} />}
 		</div>
 	);
 }
 
-function PreviewDialog({ ws, file, gadgets, canEdit, onAsk, onClose }: { ws: Workspace; file: FileMeta; gadgets: Gadget[]; canEdit: boolean; onAsk: () => void; onClose: () => void }) {
+function PreviewDialog({ ws, file, modules, canEdit, onAsk, onClose }: { ws: Workspace; file: FileMeta; modules: Module[]; canEdit: boolean; onAsk: () => void; onClose: () => void }) {
 	const [textBody, setTextBody] = useState<string>();
 	const [name, setName] = useState(file.name);
 	useEffect(() => {
@@ -187,7 +187,7 @@ function PreviewDialog({ ws, file, gadgets, canEdit, onAsk, onClose }: { ws: Wor
 			live = false;
 		};
 	}, [file.id]);
-	const toggleGadget = (id: string) => api.patch(`/api/w/${ws.id}/files/${file.id}`, { gadgets: file.gadgets.includes(id) ? file.gadgets.filter((g) => g !== id) : [...file.gadgets, id] });
+	const toggleModule = (id: string) => api.patch(`/api/w/${ws.id}/files/${file.id}`, { modules: file.modules.includes(id) ? file.modules.filter((g) => g !== id) : [...file.modules, id] });
 
 	return (
 		<Dialog onClose={onClose}>
@@ -210,18 +210,18 @@ function PreviewDialog({ ws, file, gadgets, canEdit, onAsk, onClose }: { ws: Wor
 				<div className="preview">{textBody ?? "Loading…"}</div>
 			) : (
 				<div className="card muted" style={{ textAlign: "center", padding: 26 }}>
-					No built-in preview for <b>{file.kind}</b>. The agent can take it apart — and build a gadget to view it.
+					No built-in preview for <b>{file.kind}</b>. The agent can take it apart — and build a module to view it.
 				</div>
 			)}
 			<div style={{ marginTop: 14 }}>
 				<div className="label" style={{ marginBottom: 6 }}>
-					Gadgets that can read this file
+					Modules that can read this file
 				</div>
-				{gadgets.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No gadgets in this workspace.</div>}
+				{modules.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No modules in this workspace.</div>}
 				<div className="row" style={{ flexWrap: "wrap" }}>
-					{gadgets.map((g) => (
+					{modules.map((g) => (
 						<label key={g.id} className="pill" style={{ cursor: canEdit ? "pointer" : "default", padding: "3px 10px" }}>
-							<input type="checkbox" disabled={!canEdit} checked={file.gadgets.includes(g.id)} onChange={() => toggleGadget(g.id)} style={{ margin: 0 }} /> {g.icon} {g.name}
+							<input type="checkbox" disabled={!canEdit} checked={file.modules.includes(g.id)} onChange={() => toggleModule(g.id)} style={{ margin: 0 }} /> {g.icon} {g.name}
 						</label>
 					))}
 				</div>

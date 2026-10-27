@@ -49,7 +49,7 @@
   const $ = (id) => document.getElementById(id);
   const colors = ["#d9480f", "#1971c2", "#2b8a3e", "#9c36b5", "#e67700", "#0c8599"];
   const color = (s) => colors[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length];
-  const canEdit = gadget.user.role !== "viewer";
+  const canEdit = module.user.role !== "viewer";
   let items = [];
 
   const fail = (e) => { $("err").textContent = e.message; setTimeout(() => ($("err").textContent = ""), 3000); };
@@ -65,14 +65,14 @@
       const check = document.createElement("button");
       check.className = "check";
       check.disabled = !canEdit;
-      check.onclick = () => act(gadget.api.toggle(item.id));
+      check.onclick = () => act(module.api.toggle(item.id));
       const body = document.createElement("div");
       const text = document.createElement("div");
       text.className = "text";
       text.textContent = item.text;
       if (canEdit) {
         text.contentEditable = "plaintext-only";
-        text.onblur = () => text.textContent.trim() !== item.text && act(gadget.api.update(item.id, { text: text.textContent.trim() }));
+        text.onblur = () => text.textContent.trim() !== item.text && act(module.api.update(item.id, { text: text.textContent.trim() }));
         text.onkeydown = (e) => e.key === "Enter" && (e.preventDefault(), text.blur());
       }
       const meta = document.createElement("div");
@@ -84,7 +84,7 @@
       del.textContent = "✕";
       del.title = "Delete";
       del.hidden = !canEdit;
-      del.onclick = () => act(gadget.api.remove(item.id));
+      del.onclick = () => act(module.api.remove(item.id));
       li.append(check, body, del);
       list.append(li);
     }
@@ -98,14 +98,14 @@
     const raw = $("text").value.trim();
     if (!raw) return;
     const m = /\s@(\w+)\s*$/.exec(raw);
-    act(gadget.api.add(m ? raw.slice(0, m.index) : raw, m ? m[1] : null));
+    act(module.api.add(m ? raw.slice(0, m.index) : raw, m ? m[1] : null));
     $("text").value = "";
   };
-  $("clear").onclick = () => act(gadget.api.clearDone());
+  $("clear").onclick = () => act(module.api.clearDone());
   if (!canEdit) { $("add").hidden = true; $("clear").hidden = true; }
 
-  gadget.on("changed", (next) => { items = next; render(); });
-  gadget.onPresence((users) => {
+  module.on("changed", (next) => { items = next; render(); });
+  module.onPresence((users) => {
     $("faces").replaceChildren(...users.map((u) => {
       const d = document.createElement("div");
       d.className = "face"; d.title = u.name; d.style.background = color(u.name);
@@ -113,7 +113,7 @@
       return d;
     }));
   });
-  gadget.api.list().then((l) => { items = l; render(); }).catch(fail);
+  module.api.list().then((l) => { items = l; render(); }).catch(fail);
 </script>
 </body>
 </html>

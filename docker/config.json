@@ -13,7 +13,7 @@
     "ambientEnv": true,
     "demo": true
   },
-  "gatekeepers": {
+  "airlocks": {
     "github": { "token": "$GITHUB_TOKEN" }
   },
   "files": { "maxUploadMB": 100 }

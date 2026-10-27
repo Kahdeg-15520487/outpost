@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type HomePayload, type User, type Workspace } from "../api";
-import { chatHref, projectHref, timeAgo } from "../store";
+import { chatHref, missionHref, timeAgo } from "../store";
 
 /**
  * The workspace homepage: what you were doing when you left, and what the agents did while you were
@@ -10,12 +10,12 @@ import { chatHref, projectHref, timeAgo } from "../store";
  * Opening the page marks the workspace seen *after* the first read, so the digest you are looking at
  * is the one measured from your previous visit.
  */
-export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprovals }: {
+export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprovals }: {
 	ws: Workspace;
 	user: User;
 	canEdit: boolean;
 	onNewChat: () => void;
-	onNewProject: () => void;
+	onNewMission: () => void;
 	onApprovals: () => void;
 }) {
 	const [data, setData] = useState<HomePayload>();
@@ -78,7 +78,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 
 	const away = data?.away;
 	const totals = away?.totals;
-	const nothingHappened = away && !away.chats.length && !away.gadgets.length && !away.projects.length && !away.approvals.pending && !away.files;
+	const nothingHappened = away && !away.chats.length && !away.modules.length && !away.missions.length && !away.approvals.pending && !away.files;
 	const untouched = useMemo(() => (data ? data.pickup.approvals.length === 0 && data.pickup.questions.length === 0 && !data.pickup.lastChat && canEdit : false), [data, canEdit]);
 
 	if (error) {
@@ -107,7 +107,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 					</h1>
 					<div className="home-actions">
 						{canEdit && <button className="btn primary" onClick={onNewChat}>Start a chat</button>}
-						{canEdit && <button className="btn" onClick={onNewProject}>Give a team a goal</button>}
+						{canEdit && <button className="btn" onClick={onNewMission}>Give a team a goal</button>}
 						<button className="btn" onClick={onApprovals}>
 							Approvals{data?.pickup.approvals.length ? ` (${data.pickup.approvals.length})` : ""}
 						</button>
@@ -133,15 +133,15 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 										</a>
 									)}
 									{data.pickup.questions.map((q) => (
-										<a key={`${q.projectId}-${q.at}`} className="home-card warn" href={projectHref(ws.id, q.projectId, "overview")}>
-											<span className="home-card-label">Waiting on you · {q.project}</span>
+										<a key={`${q.missionId}-${q.at}`} className="home-card warn" href={missionHref(ws.id, q.missionId, "overview")}>
+											<span className="home-card-label">Waiting on you · {q.mission}</span>
 											<span className="home-card-title">{q.text}</span>
 											<span className="home-card-meta">{q.agent} asked {timeAgo(q.at)} ago</span>
 										</a>
 									))}
 									{data.pickup.approvals.map((a) => (
 										<button key={a.id} className="home-card warn" onClick={onApprovals}>
-											<span className="home-card-label">Approval · {a.gatekeeper}</span>
+											<span className="home-card-label">Approval · {a.airlock}</span>
 											<span className="home-card-title">{a.summary}</span>
 											<span className="home-card-meta">{a.requestedBy} · {timeAgo(a.at)} ago</span>
 										</button>
@@ -167,8 +167,8 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 							{!!totals?.runs && (
 								<p className="home-totals mono">
 									{totals.runs} run{totals.runs === 1 ? "" : "s"} · {totals.messages} message{totals.messages === 1 ? "" : "s"} · {totals.tools} tool call{totals.tools === 1 ? "" : "s"}
-									{!!away?.projects.length && ` · ${away.projects.length} project${away.projects.length === 1 ? "" : "s"}`}
-									{!!away?.gadgets.length && ` · ${away.gadgets.length} gadget${away.gadgets.length === 1 ? "" : "s"}`}
+									{!!away?.missions.length && ` · ${away.missions.length} mission${away.missions.length === 1 ? "" : "s"}`}
+									{!!away?.modules.length && ` · ${away.modules.length} module${away.modules.length === 1 ? "" : "s"}`}
 									{!!away?.approvals.decided && ` · ${away.approvals.decided} approval${away.approvals.decided === 1 ? "" : "s"}`}
 									{!!away?.files && ` · ${away.files} file${away.files === 1 ? "" : "s"}`}
 								</p>
@@ -193,10 +193,10 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 								))}
 							</div>
 
-							{!!away?.projects.length && (
+							{!!away?.missions.length && (
 								<div className="home-side-list">
-									{away.projects.map((p) => (
-										<a key={p.id} className="home-side-row" href={projectHref(ws.id, p.id, "overview")}>
+									{away.missions.map((p) => (
+										<a key={p.id} className="home-side-row" href={missionHref(ws.id, p.id, "overview")}>
 											<span className="ico">◈</span>
 											<span className="grow">{p.name}</span>
 											<span className="muted">{p.changes} update{p.changes === 1 ? "" : "s"} · {p.stage}</span>
@@ -205,9 +205,9 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 								</div>
 							)}
 
-							{!!away?.gadgets.length && (
+							{!!away?.modules.length && (
 								<div className="home-side-list">
-									{away.gadgets.map((g) => (
+									{away.modules.map((g) => (
 										<a key={g.id} className="home-side-row" href={chatHref(ws.id, undefined, g.id)}>
 											<span className="ico">{g.icon}</span>
 											<span className="grow">{g.name}</span>
@@ -218,12 +218,12 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewProject, onApprova
 							)}
 						</section>
 
-						{!!data.projects.length && (
+						{!!data.missions.length && (
 							<section className="home-section">
-								<h2>Projects</h2>
+								<h2>Missions</h2>
 								<div className="home-side-list">
-									{data.projects.map((p) => (
-										<a key={p.id} className="home-side-row" href={projectHref(ws.id, p.id, "overview")}>
+									{data.missions.map((p) => (
+										<a key={p.id} className="home-side-row" href={missionHref(ws.id, p.id, "overview")}>
 											<span className="grow">{p.name}</span>
 											{p.open > 0 && <span className="badge">{p.open}</span>}
 											<span className="muted">{p.stage}{p.lastAt ? ` · ${timeAgo(p.lastAt)}` : ""}</span>

@@ -3,7 +3,7 @@
  * check, boards (WIQL query, get, create with JSON Patch, comment), approvals that depend on each
  * other (a comment on a work item still being created), pull requests, always-ask methods, a fixed
  * project, bad tokens, and proposals (unknown organizations are refused).
- * Run: pnpm --filter @pi-os/server test -- azure-devops
+ * Run: pnpm --filter @outpost/server test -- azure-devops
  */
 import { check, finish, must } from "./lib/harness.ts";
 import { createServer } from "node:http";
@@ -65,8 +65,8 @@ const server = createServer(async (req, res) => {
 	send(404, { message: `no route ${req.method} ${path}` });
 });
 const port = await new Promise<number>((r) => server.listen(0, "127.0.0.1", () => r((server.address() as any).port)));
-process.env.PI_OS_AZDO_URL = `http://127.0.0.1:${port}`;
-process.env.PI_OS_ALLOW_PRIVATE_HOSTS = "1";
+process.env.OUTPOST_AZDO_URL = `http://127.0.0.1:${port}`;
+process.env.OUTPOST_ALLOW_PRIVATE_HOSTS = "1";
 
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
@@ -75,8 +75,8 @@ const { BACKGROUND_CONTEXT: ctx } = await import("@earendil-works/chord/context"
 
 const u = users.create("azdo", "password123");
 const ws = await Workspace.get(workspaces.create("azdo", u.id).id);
-const holder = { kind: "gadget" as const, id: "g_azdo" };
-const call = (grant: string, method: string, args: any = {}) => ws.gatekeeperCall(holder, grant, method, args, { ...holder, name: "test" });
+const holder = { kind: "module" as const, id: "g_azdo" };
+const call = (grant: string, method: string, args: any = {}) => ws.airlockCall(holder, grant, method, args, { ...holder, name: "test" });
 const fails = async (p: Promise<unknown>) => {
 	try {
 		await p;
@@ -124,7 +124,7 @@ check("deleting always waits for approval", typeof del.queuedForApproval === "st
 console.log("repos");
 const prs = (await call("ado", "list_pull_requests", { project: "Shop" })) as any[];
 check("pull requests: branches, reviewers and votes", prs[0]?.source === "login" && prs[0]?.reviewers?.[0]?.vote === "approved" && hits.at(-1)?.query["searchCriteria.status"] === "active", prs[0]);
-check("voting can never be auto-approved", /always asks|can't be auto-approved/.test(await fails(ws.grant({ connection: "ado", holder: { kind: "gadget", id: "g2" }, policy: { vote_on_pull_request: "auto" }, by: "owner" }))));
+check("voting can never be auto-approved", /always asks|can't be auto-approved/.test(await fails(ws.grant({ connection: "ado", holder: { kind: "module", id: "g2" }, policy: { vote_on_pull_request: "auto" }, by: "owner" }))));
 
 console.log("fixed project, proposals");
 const pinned = await ws.connections.create({ kind: "azure-devops", label: "shop", params: { organization: ORG, project: "Shop" }, secrets: { password: PAT } }, "owner");

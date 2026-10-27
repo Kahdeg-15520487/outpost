@@ -25,7 +25,7 @@
 <div class="who" id="who"></div>
 <script>
   const canvas = document.getElementById("c"), g = canvas.getContext("2d");
-  const canEdit = gadget.user.role !== "viewer";
+  const canEdit = module.user.role !== "viewer";
   const COLORS = ["#1d1b16", "#d9480f", "#1971c2", "#2b8a3e", "#9c36b5", "#f59f00"];
   const tint = (s) => COLORS[1 + [...s].reduce((a, c) => a + c.charCodeAt(0), 0) % (COLORS.length - 1)];
   let color = COLORS[0], width = 3, strokes = new Map(), drawing = null;
@@ -46,8 +46,8 @@
     }
     width = 4;
     tools.insertAdjacentHTML("beforeend", '<span class="sep"></span>');
-    const undo = document.createElement("button"); undo.className = "t"; undo.textContent = "Undo"; undo.onclick = () => gadget.api.undo();
-    const clear = document.createElement("button"); clear.className = "t"; clear.textContent = "Clear"; clear.onclick = () => confirm("Clear the board for everyone?") && gadget.api.clear();
+    const undo = document.createElement("button"); undo.className = "t"; undo.textContent = "Undo"; undo.onclick = () => module.api.undo();
+    const clear = document.createElement("button"); clear.className = "t"; clear.textContent = "Clear"; clear.onclick = () => confirm("Clear the board for everyone?") && module.api.clear();
     tools.append(undo, clear);
   }
 
@@ -71,7 +71,7 @@
   let lastCursor = 0;
   canvas.onpointermove = (e) => {
     const now = Date.now();
-    if (now - lastCursor > 60) { lastCursor = now; gadget.api.cursor(e.clientX, e.clientY).catch(() => {}); }
+    if (now - lastCursor > 60) { lastCursor = now; module.api.cursor(e.clientX, e.clientY).catch(() => {}); }
     if (!drawing) return;
     drawing.points.push(e.clientX, e.clientY); redraw();
   };
@@ -84,12 +84,12 @@
     if (!drawing) return;
     const s = drawing; drawing = null;
     const temp = "local-" + Math.random(); strokes.set(temp, s); redraw();
-    gadget.api.addStroke(s).then(() => strokes.delete(temp)).catch(() => { strokes.delete(temp); redraw(); });
+    module.api.addStroke(s).then(() => strokes.delete(temp)).catch(() => { strokes.delete(temp); redraw(); });
   };
 
   const cursors = new Map();
-  gadget.on("cursor", (c) => {
-    if (c.id === gadget.user.id) return;
+  module.on("cursor", (c) => {
+    if (c.id === module.user.id) return;
     let el = cursors.get(c.id);
     if (!el) {
       el = document.createElement("div"); el.className = "cursor";
@@ -101,11 +101,11 @@
     el.style.transform = `translate(${c.x}px, ${c.y}px)`;
     clearTimeout(el._t); el._t = setTimeout(() => { el.remove(); cursors.delete(c.id); }, 4000);
   });
-  gadget.on("stroke", (s) => { strokes.set(s.id, s); redraw(); });
-  gadget.on("remove", (id) => { strokes.delete(id); redraw(); });
-  gadget.on("clear", () => { strokes.clear(); redraw(); });
-  gadget.onPresence((users) => { document.getElementById("who").textContent = users.map((u) => u.name).join(" · "); });
-  gadget.api.strokes().then((list) => { for (const s of list) strokes.set(s.id, s); size(); });
+  module.on("stroke", (s) => { strokes.set(s.id, s); redraw(); });
+  module.on("remove", (id) => { strokes.delete(id); redraw(); });
+  module.on("clear", () => { strokes.clear(); redraw(); });
+  module.onPresence((users) => { document.getElementById("who").textContent = users.map((u) => u.name).join(" · "); });
+  module.api.strokes().then((list) => { for (const s of list) strokes.set(s.id, s); size(); });
   size();
 </script>
 </body>

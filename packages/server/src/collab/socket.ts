@@ -12,17 +12,17 @@ import { join } from "node:path";
 
 /**
  * One WebSocket per browser tab. Subscriptions:
- *   { t: "sub", kind: "ws", ws }                 workspace docs + gadget list changes
+ *   { t: "sub", kind: "ws", ws }                 workspace docs + module list changes
  *   { t: "sub", kind: "chat", ws, chat }         agent events (snapshot, then batches)
- *   { t: "sub", kind: "gadget", gadgetId }       gadget broadcasts, reloads, logs, presence
- *   { t: "sub", kind: "project", ws, project }   project team, agent summaries, repo changes
- *   { t: "call", id, gadgetId, method, args }    gadget RPC as the signed-in user
+ *   { t: "sub", kind: "module", moduleId }       module broadcasts, reloads, logs, presence
+ *   { t: "sub", kind: "mission", ws, mission }   mission team, agent summaries, repo changes
+ *   { t: "call", id, moduleId, method, args }    module RPC as the signed-in user
  */
 export function attachSockets(server: import("node:http").Server) {
 	const wss = new WebSocketServer({ noServer: true });
 	server.on("upgrade", (req, socket, head) => {
 		if (!req.url?.startsWith("/ws")) return socket.destroy();
-		const user = sessions.user(parseCookies(req.headers.cookie).pios_session);
+		const user = sessions.user(parseCookies(req.headers.cookie).outpost_session);
 		if (!user) {
 			socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
 			return socket.destroy();
@@ -40,7 +40,7 @@ const sockets = new Set<WebSocket>();
  */
 let built: { mtime: number; id?: string } | undefined;
 export function webBuild(): string | undefined {
-	if (process.env.PI_OS_BUILD_ID) return process.env.PI_OS_BUILD_ID;
+	if (process.env.OUTPOST_BUILD_ID) return process.env.OUTPOST_BUILD_ID;
 	const file = join(config.webDist, "index.html");
 	try {
 		const mtime = statSync(file).mtimeMs;
@@ -99,31 +99,31 @@ function connection(socket: WebSocket, user: User, _req: IncomingMessage) {
 				const key = `${m.ws}:${m.chat}`;
 				await streams.get(key)?.stop();
 				streams.delete(key);
-			} else if (m.t === "sub" && m.kind === "project") {
+			} else if (m.t === "sub" && m.kind === "mission") {
 				if (!workspaces.role(m.ws, user.id)) throw new Error("not a member");
 				const ws = await Workspace.get(m.ws);
-				await ws.projects.watch(m.project);
-				hub.join(ws.projects.channel(m.project), client);
-				client.send({ t: "project.snapshot", ws: m.ws, projectId: m.project, ...(await ws.projects.snapshot(m.project)) });
-			} else if (m.t === "unsub" && m.kind === "project") {
-				hub.leave(`project:${m.ws}:${m.project}`, client);
-			} else if (m.t === "sub" && m.kind === "gadget") {
-				const { gadget, role } = await Workspace.gadgetFor(m.gadgetId, user);
-				const channel = `gadget:${gadget.id}`;
+				await ws.missions.watch(m.mission);
+				hub.join(ws.missions.channel(m.mission), client);
+				client.send({ t: "mission.snapshot", ws: m.ws, missionId: m.mission, ...(await ws.missions.snapshot(m.mission)) });
+			} else if (m.t === "unsub" && m.kind === "mission") {
+				hub.leave(`mission:${m.ws}:${m.mission}`, client);
+			} else if (m.t === "sub" && m.kind === "module") {
+				const { module, role } = await Workspace.moduleFor(m.moduleId, user);
+				const channel = `module:${module.id}`;
 				if (!presenceWatchers.has(channel)) {
 					presenceWatchers.set(
 						channel,
-						hub.onMembership(channel, () => hub.publish(channel, { t: "gadget.presence", gadgetId: gadget.id, users: hub.presence(channel) })),
+						hub.onMembership(channel, () => hub.publish(channel, { t: "module.presence", moduleId: module.id, users: hub.presence(channel) })),
 					);
 				}
 				hub.join(channel, client);
-				client.send({ t: "gadget.subscribed", gadgetId: gadget.id, role, users: hub.presence(channel) });
-			} else if (m.t === "unsub" && m.kind === "gadget") {
-				hub.leave(`gadget:${m.gadgetId}`, client);
+				client.send({ t: "module.subscribed", moduleId: module.id, role, users: hub.presence(channel) });
+			} else if (m.t === "unsub" && m.kind === "module") {
+				hub.leave(`module:${m.moduleId}`, client);
 			} else if (m.t === "call") {
 				try {
-					const { ws, caller } = await Workspace.gadgetFor(m.gadgetId, user);
-					const value = await ws.host(m.gadgetId).call(String(m.method), Array.isArray(m.args) ? m.args : [], caller);
+					const { ws, caller } = await Workspace.moduleFor(m.moduleId, user);
+					const value = await ws.host(m.moduleId).call(String(m.method), Array.isArray(m.args) ? m.args : [], caller);
 					client.send({ t: "call.result", id: m.id, ok: true, value: value ?? null });
 				} catch (error) {
 					client.send({ t: "call.result", id: m.id, ok: false, error: error instanceof Error ? error.message : String(error) });

@@ -97,7 +97,7 @@
 <script src="pptx-export.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
-  const canEdit = gadget.user.role !== "viewer";
+  const canEdit = module.user.role !== "viewer";
   let deck = null, at = 0, presenting = false, following = true;
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const LAYOUTS = ["title", "section", "bullets", "two-column", "quote", "big-number"];
@@ -145,7 +145,7 @@
     if (el.hasAttribute("data-list")) return [...el.querySelectorAll("li")].map((li) => li.textContent.trim()).filter(Boolean).length ? [...el.querySelectorAll("li")].map((li) => li.textContent.trim()).filter(Boolean) : el.innerText.split("\n").map((t) => t.trim()).filter(Boolean);
     return el.textContent.trim();
   }
-  const save = (patch) => gadget.api.updateSlide(deck.slides[at].id, patch).then((d) => { deck = d; }).catch((e) => alert(e.message));
+  const save = (patch) => module.api.updateSlide(deck.slides[at].id, patch).then((d) => { deck = d; }).catch((e) => alert(e.message));
 
   $("frame").addEventListener("focusout", (e) => {
     const el = e.target.closest("[data-f]");
@@ -154,33 +154,33 @@
     if (JSON.stringify(value) !== JSON.stringify(deck.slides[at][name] ?? (el.hasAttribute("data-list") ? [] : ""))) save({ [name]: value });
   });
   $("rail").addEventListener("click", (e) => {
-    if (e.target.id === "addSlide") return gadget.api.addSlide({ layout: "bullets", title: "New slide", bullets: ["First point"] }, at + 1).then((d) => { deck = d; at++; render(); });
+    if (e.target.id === "addSlide") return module.api.addSlide({ layout: "bullets", title: "New slide", bullets: ["First point"] }, at + 1).then((d) => { deck = d; at++; render(); });
     const t = e.target.closest(".thumb");
     if (t) go(+t.dataset.i);
   });
   $("notes").onchange = () => save({ notes: $("notes").value });
   $("layout").onchange = () => save({ layout: $("layout").value }).then(render);
-  $("theme").onchange = () => gadget.api.setTheme($("theme").value).then((d) => { deck = d; render(); });
-  $("del").onclick = () => confirm("Delete this slide?") && gadget.api.removeSlide(deck.slides[at].id).then((d) => { deck = d; render(); });
-  $("up").onclick = () => at > 0 && gadget.api.moveSlide(deck.slides[at].id, at - 1).then((d) => { deck = d; at--; render(); });
-  $("down").onclick = () => at < deck.slides.length - 1 && gadget.api.moveSlide(deck.slides[at].id, at + 1).then((d) => { deck = d; at++; render(); });
+  $("theme").onchange = () => module.api.setTheme($("theme").value).then((d) => { deck = d; render(); });
+  $("del").onclick = () => confirm("Delete this slide?") && module.api.removeSlide(deck.slides[at].id).then((d) => { deck = d; render(); });
+  $("up").onclick = () => at > 0 && module.api.moveSlide(deck.slides[at].id, at - 1).then((d) => { deck = d; at--; render(); });
+  $("down").onclick = () => at < deck.slides.length - 1 && module.api.moveSlide(deck.slides[at].id, at + 1).then((d) => { deck = d; at++; render(); });
   $("deckTitle").contentEditable = canEdit ? "plaintext-only" : "false";
-  $("deckTitle").onblur = () => $("deckTitle").textContent.trim() !== deck.title && gadget.api.setTitle($("deckTitle").textContent.trim());
+  $("deckTitle").onblur = () => $("deckTitle").textContent.trim() !== deck.title && module.api.setTitle($("deckTitle").textContent.trim());
   if (!canEdit) for (const id of ["theme", "notes", "up", "down", "layout", "del"]) $(id).disabled = true;
 
   function go(i) {
     at = Math.max(0, Math.min(deck.slides.length - 1, i));
     render();
-    if (presenting) gadget.api.go(at).catch(() => {});
+    if (presenting) module.api.go(at).catch(() => {});
   }
   $("present").onclick = async () => {
     presenting = true; document.body.classList.add("presenting");
-    if (canEdit) await gadget.api.present(true).catch(() => {});
+    if (canEdit) await module.api.present(true).catch(() => {});
     render();
   };
   async function stopPresenting() {
     presenting = false; document.body.classList.remove("presenting");
-    if (canEdit) await gadget.api.present(false).catch(() => {});
+    if (canEdit) await module.api.present(false).catch(() => {});
     render();
   }
   $("pptx").onclick = async () => {
@@ -205,13 +205,13 @@
   });
   $("frame").addEventListener("click", () => presenting && go(at + 1));
 
-  gadget.on("deck", (d) => {
+  module.on("deck", (d) => {
     const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest("[data-f],#notes,#deckTitle");
     deck = d;
     if (d.presenter && following && !presenting) at = d.current;
     if (!focused) render();
   });
-  gadget.api.get().then((d) => { deck = d; at = d.presenter ? d.current : 0; render(); });
+  module.api.get().then((d) => { deck = d; at = d.presenter ? d.current : 0; render(); });
 </script>
 </body>
 </html>

@@ -7,14 +7,15 @@ coverage/
 
 # runtime data: workspaces, uploads, system db (never commit)
 data/
+outpost-data/
 *.sqlite
 *.sqlite-*
 *.db
 
-# local config & secrets (pi-os.config.example.json is the template)
-pi-os.config.json
-pi-os.config.*.json
-!pi-os.config.example.json
+# local config & secrets (outpost.config.example.json is the template)
+outpost.config.json
+outpost.config.*.json
+!outpost.config.example.json
 .env
 .env.*
 !.env.example
@@ -24,7 +25,7 @@ pi-os.config.*.json
 # logs & scratch
 *.log
 # release snapshots, not source
-/pi-os.zip
+/outpost.zip
 npm-debug.log*
 pnpm-debug.log*
 *.tmp.*

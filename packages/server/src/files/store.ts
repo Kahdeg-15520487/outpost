@@ -15,7 +15,7 @@ import { FilesDoc, type FileMeta } from "../kernel/docs.ts";
  */
 
 let images: Promise<ImageProcessor | undefined> | undefined;
-export const imageProcessor = () => (images ??= createNodePhotonImages().catch((e) => (console.warn("pi-os: image processor unavailable:", e.message), undefined)));
+export const imageProcessor = () => (images ??= createNodePhotonImages().catch((e) => (console.warn("outpost: image processor unavailable:", e.message), undefined)));
 
 const MIME_BY_EXT: Record<string, string> = {
 	txt: "text/plain", md: "text/markdown", csv: "text/csv", tsv: "text/tab-separated-values", json: "application/json", xml: "application/xml", html: "text/html", htm: "text/html",
@@ -180,7 +180,7 @@ export class FileStore {
 		return meta;
 	}
 
-	async put(bytes: Buffer, init: { name: string; mime?: string; createdBy: string; source: FileMeta["source"]; parent?: string; chatId?: string; gadgets?: string[] }): Promise<FileMeta> {
+	async put(bytes: Buffer, init: { name: string; mime?: string; createdBy: string; source: FileMeta["source"]; parent?: string; chatId?: string; modules?: string[] }): Promise<FileMeta> {
 		const sha256 = createHash("sha256").update(bytes).digest("hex");
 		if (!existsSync(this.#path(sha256))) writeFileSync(this.#path(sha256), bytes);
 		const name = init.name.replace(/[\\\0]/g, "_").slice(0, 240) || "untitled";
@@ -196,7 +196,7 @@ export class FileStore {
 			source: init.source,
 			...(init.parent ? { parent: init.parent } : {}),
 			...(init.chatId ? { chatId: init.chatId } : {}),
-			gadgets: init.gadgets ?? [],
+			modules: init.modules ?? [],
 		};
 		await this.harness.commit(async (tx) => {
 			(await tx.doc(FilesDoc)).files[meta.id] = meta;

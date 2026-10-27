@@ -273,6 +273,8 @@ A **connection** turns a third-party service into a Airlock with no service-spec
 
 A connection is the workspace's account on the service (a shared service account): workspace owners add them on the **Connections** page (auth: bearer token, API key in a header or the URL, or basic; basic's username may be empty, as for Azure DevOps personal access tokens). Secrets are encrypted with the instance secret (`data/connections.enc.json`) and never sent back to the browser or shown to agents. A connection gives nobody access by itself: you introduce it to a chat, module or mission (🔑 Resources), choosing the methods and, per write, ask / auto / refuse. An owner can mark a write as a read ("treat as read").
 
+**Always ask / Always allow, per method.** On the Connections page each method has an Ask / Allow control, set by workspace owners for the whole workspace. Without a setting, reads run and writes ask. **Allow** runs a method without asking, including on connections added in the UI and for destructive methods (those need a confirmation first); **Ask** queues even a read for approval. A capability (a chat, module or mission) can still narrow an allowed method back to ask or refuse it, but can never widen one. Changes are audited with who made them, and each call an Allow lets through is audited too. Resetting a method (↺) returns it to the default, and removing a connection forgets its settings.
+
 Trust:
 
 - **Added in the UI** ("byo"): public hosts only (private, loopback, link-local and metadata addresses are refused, redirects can't leave the host), and writes are never auto-approved.

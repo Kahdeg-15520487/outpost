@@ -118,7 +118,7 @@ export const ApprovalsDoc = defineDoc<{ actions: Record<string, ApprovalAction> 
 });
 
 /** Third-party services added to this workspace (generic connectors: MCP servers, OpenAPI REST APIs). Secrets are stored apart, encrypted. */
-export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection>; proposals?: Record<string, ConnectionProposal> }>({
+export const ConnectionsDoc = defineDoc<{ connections: Record<string, Connection>; proposals?: Record<string, ConnectionProposal>; /** Per connection and method: what its owners decided, whatever the method's default. */ approval?: Record<string, Record<string, "ask" | "allow">> }>({
 	kind: "outpost.connections",
 	version: 1,
 	scope: "session",

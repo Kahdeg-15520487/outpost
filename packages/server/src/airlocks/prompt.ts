@@ -1,6 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { Grant, Holder } from "../kernel/docs.ts";
-import type { Airlock } from "./catalog.ts";
+import { runMode, type Airlock } from "./catalog.ts";
 
 /**
  * What agents are told about their Airlock access, shared by chats and mission agents: the
@@ -23,11 +23,11 @@ export function holds(grantHolder: Holder, caller: Holder): boolean {
 /** How a call to `method` on this grant runs: read, needs approval, auto-approved, or not allowed. */
 export function howItRuns(g: { autoApprove: boolean; policy?: Record<string, string> }, gk: Airlock, method: string): string {
 	const m = gk.methods[method];
-	if (!m || m.effect === "read") return "read";
-	const policy = g.policy?.[method] ?? (g.autoApprove ? "auto" : "ask");
-	if (policy === "deny") return "write, not allowed";
-	if (policy === "auto" && !m.alwaysAsk && gk.trust !== "byo") return "write, auto-approved";
-	return "write, needs approval";
+	if (!m) return "read";
+	const mode = runMode(g, gk, method);
+	if (mode === "deny") return "write, not allowed";
+	if (mode === "run") return m.effect === "read" ? "read" : "write, auto-approved";
+	return `${m.effect}, needs approval`;
 }
 
 /** The <resources> prompt section for a holder's grants, plus the connections it could ask for. */

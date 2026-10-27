@@ -74,7 +74,7 @@ const byName = (n: string) => notesConn.methods.find((m) => m.name === n)!;
 check("readOnlyHint → read, classified by the server", byName("search_notes").effect === "read" && byName("search_notes").classifiedBy === "server");
 check("no annotation → write (default)", byName("add_note").effect === "write" && byName("add_note").classifiedBy === "default" && !byName("add_note").alwaysAsk);
 check("destructiveHint → always asks", byName("delete_note").alwaysAsk === true);
-const described = JSON.stringify(ws.connections.describe(notesConn));
+const described = JSON.stringify(await ws.connections.describe(notesConn));
 const stored = JSON.stringify(await ws.harness.snapshot(ConnectionsDoc, ctx));
 check("the token never leaves the server: not in the API view, the workspace doc, or the file on disk", !described.includes(MCP_TOKEN) && !stored.includes(MCP_TOKEN) && !readFileSync(join(config.dataDir, "connections.enc.json"), "utf8").includes(MCP_TOKEN) && described.includes('"secretsSet":["token"]'));
 check("byo connections can't be auto-approved", /can't be auto-approved/.test(await fails(ws.grant({ connection: notesConn.id, holder, autoApprove: true, by: "owner" }))));
@@ -217,6 +217,69 @@ const second = await propose({ kind: "mcp", label: "maybe", url: mcpUrl, auth: {
 await ws.declineProposal(second.proposed, "owner");
 check("an owner can decline one", (await ws.connections.proposals()).find((p) => p.id === second.proposed)?.status === "declined");
 await ws.removeConnection(accepted.id);
+
+// ------------------------------------------------------------------ per-method approval settings
+console.log("always ask / always allow, per method");
+const { howItRuns } = await import("../src/airlocks/prompt.ts");
+const ap = await ws.connections.create({ kind: "openapi", label: "approvals", spec: `${apiOrigin}/openapi.yaml`, auth: { kind: "header", name: "x-api-key" }, secrets: { value: API_KEY } }, "owner");
+must("a connection added in the UI to experiment on", ap.status === "ok" && ap.trust === "byo", ap.error);
+const apGrant = await ws.grant({ connection: ap.id, holder, by: "owner" });
+const grantNow = async () => (await ws.airlockFor({ airlock: ap.kind, connection: ap.id }))!;
+const how = async (m: string) => howItRuns((await ws.grantFor(holder, apGrant.label)) as any, await grantNow(), m);
+check("by default reads run and writes ask", (await how("listItems")) === "read" && (await how("createItem")) === "write, needs approval");
+const hitsBefore = apiHits.length;
+const q0 = (await call("approvals", "createItem", { body: { name: "Default" } })) as any;
+check("…so a write queues and nothing is sent", typeof q0.queuedForApproval === "string" && apiHits.length === hitsBefore);
+
+await ws.setConnectionApproval(ap.id, "createItem", "allow", "owner");
+check("the setting is stored and shown on the connection", (await ws.connections.describe(await ws.connections.require(ap.id))).approval.createItem === "allow");
+const sent = (await call("approvals", "createItem", { body: { name: "Allowed" } })) as any;
+check("Always allow runs a write at once, even on a connection added in the UI", sent?.status === 201 && items.some((i) => i.name === "Allowed") && sent.queuedForApproval === undefined, sent);
+check("…and the agent is told it runs without asking", (await how("createItem")) === "write, auto-approved");
+const auditLines = (await ws.harness.snapshot(AuditDoc, ctx))!.lines;
+check("the change is audited with who made it", auditLines.some((l) => l.method === "createItem" && l.by === "owner" && /always allow/.test(l.detail ?? "")), auditLines.at(-3));
+check("…and so is each call it lets through", auditLines.some((l) => l.method === "createItem" && l.outcome === "ok" && /approvals\.createItem/.test(l.detail ?? "")));
+
+const holder2 = { kind: "module" as const, id: "g_narrow" };
+await ws.grant({ connection: ap.id, holder: holder2, policy: { createItem: "ask" }, by: "owner" });
+const narrowed = (await ws.airlockCall(holder2, "approvals", "createItem", { body: { name: "Narrowed" } }, { ...holder2, name: "narrow" })) as any;
+check("a capability can still narrow an allowed method back to ask", typeof narrowed.queuedForApproval === "string" && !items.some((i) => i.name === "Narrowed"), narrowed);
+const holder3 = { kind: "module" as const, id: "g_refused" };
+await ws.grant({ connection: ap.id, holder: holder3, policy: { createItem: "deny" }, by: "owner" });
+check("…or refuse it", /doesn't allow createItem/.test(await fails(ws.airlockCall(holder3, "approvals", "createItem", { body: { name: "No" } }, { ...holder3, name: "refused" }))));
+
+const delBefore = items.length;
+const delQueued = (await call("approvals", "deleteItem", { id: "a1" })) as any;
+check("a destructive method asks by default", typeof delQueued.queuedForApproval === "string" && items.length === delBefore);
+await ws.setConnectionApproval(ap.id, "deleteItem", "allow", "owner");
+const delRun = (await call("approvals", "deleteItem", { id: "a1" })) as any;
+check("…but the owner can set it to Always allow", delRun?.queuedForApproval === undefined && apiHits.at(-1) === "DELETE /api/items/a1", [delRun, apiHits.at(-1)]);
+
+await ws.setConnectionApproval(ap.id, "listItems", "ask", "owner");
+const readHits = apiHits.length;
+const askedRead = (await call("approvals", "listItems", { q: "anv" })) as any;
+check("a read can be set to Always ask: it queues and nothing is fetched", typeof askedRead.queuedForApproval === "string" && apiHits.length === readHits && (await how("listItems")) === "read, needs approval", askedRead);
+await ws.decide(askedRead.queuedForApproval, true, "owner");
+const readResult = await ws.actionResult(holder, askedRead.queuedForApproval);
+check("…and once approved the read runs and its result is available", readResult.status === "approved" && (readResult as any).result?.status === 200 && apiHits.at(-1) === "GET /api/items?q=anv", readResult);
+
+await ws.setConnectionApproval(ap.id, "createItem", null, "owner");
+await ws.setConnectionApproval(ap.id, "listItems", null, "owner");
+const q1 = (await call("approvals", "createItem", { body: { name: "After reset" } })) as any;
+check("resetting returns a method to its default", typeof q1.queuedForApproval === "string" && Object.keys((await ws.connections.approvals())[ap.id] ?? {}).join() === "deleteItem" && (await call("approvals", "listItems", { q: "x" }) as any).status === 200);
+check("only existing methods can be set, to ask or allow", /no method "nope"/.test(await fails(ws.setConnectionApproval(ap.id, "nope", "allow", "owner"))) && /mode must be/.test(await fails(ws.setConnectionApproval(ap.id, "createItem", "always" as any, "owner"))));
+await ws.connections.update(ap.id, { title: "Approvals test" });
+await ws.connections.refresh(ap.id);
+check("settings survive editing and refreshing the connection", (await ws.connections.approvals())[ap.id]?.deleteItem === "allow");
+
+// An admin-declared connection: the owner's setting beats its auto-approving capability, too.
+await ws.setConnectionApproval("cfg.inventory", "createItem", "ask", "owner");
+const askedVetted = (await call("inv", "createItem", { body: { name: "Chisel 2" } })) as any;
+check("Always ask beats a capability that auto-approves (config connections too)", typeof askedVetted.queuedForApproval === "string", askedVetted);
+await ws.setConnectionApproval("cfg.inventory", "createItem", null, "owner");
+
+await ws.removeConnection(ap.id);
+check("removing a connection forgets its settings", (await ws.connections.approvals())[ap.id] === undefined);
 
 // ------------------------------------------------------------------ removal, export
 console.log("removal and export");

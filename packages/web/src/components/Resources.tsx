@@ -200,10 +200,11 @@ function CapabilityEditor({ conn, value, onChange }: { conn: ConnectionInfo; val
 		else next.add(name);
 		onChange({ ...value, methods: [...next] });
 	};
-	const setPolicy = (name: string, p: Policy) => {
+	/** "inherit": follow the connection's Always allow. "ask" is stored only when it narrows that. */
+	const setPolicy = (name: string, p: Policy | "inherit", setting?: "ask" | "allow") => {
 		const policy = { ...value.policy };
-		if (p === "ask") delete policy[name];
-		else policy[name] = p;
+		if (p === "inherit" || (p === "ask" && setting !== "allow")) delete policy[name];
+		else policy[name] = p as Policy;
 		onChange({ ...value, policy });
 	};
 	return (
@@ -215,7 +216,7 @@ function CapabilityEditor({ conn, value, onChange }: { conn: ConnectionInfo; val
 				<span className="grow" />
 				{conn.methods.length > 8 && <input className="input" style={{ maxWidth: 180, padding: "3px 8px", fontSize: 12 }} placeholder="filter" value={filter} onChange={(e) => setFilter(e.target.value)} />}
 			</div>
-			{conn.trust === "byo" && <div className="muted" style={{ fontSize: 11.5 }}>Added in the UI: its writes always wait for approval (or can be refused).</div>}
+			{conn.trust === "byo" && <div className="muted" style={{ fontSize: 11.5 }}>Added in the UI: its writes wait for approval unless an owner set a method to Always allow on the Connections page. A capability can still make it ask, or refuse it.</div>}
 			<div className="cap-list">
 				{shown.map((m) => (
 					<div key={m.name} className="cap-row" title={m.description}>
@@ -224,9 +225,10 @@ function CapabilityEditor({ conn, value, onChange }: { conn: ConnectionInfo; val
 						<span className={`pill ${m.effect === "read" ? "ok" : "signal"}`}>{m.effect}</span>
 						<span className="muted grow conn-desc">{m.description}</span>
 						{m.effect === "write" && (
-							<select value={value.policy[m.name] ?? "ask"} onChange={(e) => setPolicy(m.name, e.target.value as Policy)} disabled={!included.has(m.name)}>
-								<option value="ask">ask</option>
-								{conn.trust === "vetted" && !m.alwaysAsk && <option value="auto">auto</option>}
+							<select value={value.policy[m.name] ?? (conn.approval?.[m.name] === "allow" ? "inherit" : "ask")} onChange={(e) => setPolicy(m.name, e.target.value as Policy | "inherit", conn.approval?.[m.name])} disabled={!included.has(m.name)}>
+								{conn.approval?.[m.name] === "allow" && <option value="inherit">allow (connection setting)</option>}
+								<option value="ask">{conn.approval?.[m.name] === "ask" ? "ask (connection setting)" : "ask"}</option>
+								{conn.trust === "vetted" && !m.alwaysAsk && !conn.approval?.[m.name] && <option value="auto">auto</option>}
 								<option value="deny">refuse</option>
 							</select>
 						)}

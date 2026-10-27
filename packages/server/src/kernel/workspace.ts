@@ -9,7 +9,7 @@ import { config } from "../config.ts";
 import { hub } from "../collab/hub.ts";
 import { createOutpostExtension } from "../agent/extension.ts";
 import { ModuleHost, type Caller } from "../modules/host.ts";
-import { AIRLOCKS, type Airlock } from "../airlocks/catalog.ts";
+import { AIRLOCKS, runMode, type Airlock } from "../airlocks/catalog.ts";
 import { Connections } from "../airlocks/connectors/index.ts";
 import { holds } from "../airlocks/prompt.ts";
 import { FileStore, formatBytes, imageProcessor, looksLikeText } from "../files/store.ts";
@@ -457,7 +457,7 @@ export class Workspace {
 	async airlockFor(grant: { airlock: string; connection?: string }): Promise<Airlock | undefined> {
 		if (!grant.connection) return AIRLOCKS[grant.airlock];
 		const conn = await this.connections.get(grant.connection);
-		return conn && this.connections.airlock(conn);
+		return conn && this.connections.airlock(conn, (await this.connections.approvals())[conn.id]);
 	}
 
 	async grant(opts: {
@@ -541,6 +541,13 @@ export class Workspace {
 	}
 
 	/** Remove a connection and everything granted on it. */
+	/** An owner sets whether a connection's method asks first or runs without asking; the change is audited. */
+	async setConnectionApproval(id: string, method: string, mode: "ask" | "allow" | null, by: string) {
+		const conn = await this.connections.require(id);
+		await this.connections.setApproval(conn.id, method, mode);
+		await this.#audit({ at: Date.now(), grantId: `connection:${conn.id}`, airlock: conn.kind, method, by, outcome: "ok", detail: `${conn.label}.${method}: ${mode === null ? "reset to the default" : mode === "allow" ? "always allow (runs without asking)" : "always ask"}` });
+	}
+
 	async removeConnection(id: string) {
 		const conn = await this.connections.require(id);
 		const grants = Object.values((await this.harness.snapshot(GrantsDoc, ctx))?.grants ?? {}).filter((g) => g.connection === conn.id);
@@ -564,7 +571,7 @@ export class Workspace {
 
 	async requestAccess(holder: Holder, airlock: string, resource: string, reason: string, methods?: string[]) {
 		const conn = AIRLOCKS[airlock] ? undefined : await this.connections.get(airlock);
-		const gk = AIRLOCKS[airlock] ?? (conn && this.connections.airlock(conn));
+		const gk = AIRLOCKS[airlock] ?? (conn && this.connections.airlock(conn, (await this.connections.approvals())[conn.id]));
 		if (!gk) {
 			const available = [...Object.keys(AIRLOCKS), ...(await this.connections.list()).map((c) => c.label)];
 			throw new Error(`Unknown airlock or connection "${airlock}". Available: ${available.join(", ")}`);
@@ -647,18 +654,18 @@ export class Workspace {
 				throw error;
 			}
 		};
-		if (m.effect === "read") {
+		const mode = runMode(grant, gk, method);
+		if (mode === "deny") {
+			await this.#audit({ ...base, outcome: "error", detail: `denied by grant policy: ${m.summarize?.(args) ?? method}` });
+			throw new Error(`Grant "${grant.label}" doesn't allow ${method}.`);
+		}
+		if (mode === "run" && m.effect === "read") {
 			let result = await runNow(gk.connection ? `${grant.label}: read (classified by ${m.classifiedBy ?? "connector"})` : undefined);
 			const pending = Object.values((await this.harness.snapshot(ApprovalsDoc, ctx))?.actions ?? {}).filter((a) => a.grantId === grant.id && a.status === "pending");
 			if (pending.length && gk.overlay) result = gk.overlay(method, args, result, pending);
 			return result;
 		}
-		const policy = grant.policy?.[method] ?? (grant.autoApprove ? "auto" : "ask");
-		if (policy === "deny") {
-			await this.#audit({ ...base, outcome: "error", detail: `denied by grant policy: ${m.summarize?.(args) ?? method}` });
-			throw new Error(`Grant "${grant.label}" doesn't allow ${method}.`);
-		}
-		if (policy === "auto" && !m.alwaysAsk && gk.trust !== "byo") return runNow(m.summarize?.(args));
+		if (mode === "run") return runNow(m.summarize?.(args) ?? (gk.approval?.[method] === "allow" ? "allowed by the connection's setting" : undefined));
 		const id = newId("ap");
 		const simulated = m.simulate ? m.simulate(grant.resource, args, id) : { ok: true, simulated: true };
 		const action: ApprovalAction = JSON.parse(

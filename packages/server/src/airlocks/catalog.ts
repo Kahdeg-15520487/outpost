@@ -38,7 +38,31 @@ export type Airlock = {
 	trust?: "vetted" | "byo";
 	/** The workspace connection behind it (generic connectors). */
 	connection?: string;
+	/** What the connection's owners decided per method: "ask" always queues it, "allow" runs it without asking. Absent: the default. */
+	approval?: Record<string, "ask" | "allow">;
 };
+
+export type RunMode = "run" | "ask" | "deny";
+
+/**
+ * How one call runs. The connection's per-method setting wins over the method's default (reads run, writes
+ * ask), even for deletes and for connections added in the UI: it is the owners' explicit decision. A
+ * capability can only narrow it: a method the connection allows still asks (or is refused) where the
+ * capability says so. Without a setting: reads run; writes ask unless the capability auto-approves them,
+ * which is never for connections added in the UI or for methods that always ask.
+ */
+export function runMode(g: { autoApprove: boolean; policy?: Record<string, string> }, gk: Airlock, method: string): RunMode {
+	const m = gk.methods[method];
+	if (!m) return "ask";
+	const policy = g.policy?.[method];
+	if (policy === "deny" && m.effect === "write") return "deny";
+	const setting = gk.approval?.[method];
+	if (setting === "ask") return "ask";
+	if (setting === "allow") return policy === "ask" ? "ask" : "run";
+	if (m.effect === "read") return "run";
+	const p = policy ?? (g.autoApprove ? "auto" : "ask");
+	return p === "auto" && !m.alwaysAsk && gk.trust !== "byo" ? "run" : "ask";
+}
 
 const truncate = (s: string, n = 60_000) => (s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s);
 

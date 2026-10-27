@@ -56,6 +56,8 @@ export type ConnectionInfo = {
 	auth: ConnectionAuth;
 	reads?: string[];
 	methods: ConnectionMethod[];
+	/** What the owners set per method: ask first, or run without asking. Absent: the method's default (reads run, writes ask). */
+	approval: Record<string, "ask" | "allow">;
 	status: "ok" | "error" | "pending";
 	error?: string;
 	refreshedAt?: number;

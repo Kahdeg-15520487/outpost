@@ -374,7 +374,41 @@ async function run() {
 		await clickText(".conn-form button", "Connect");
 		check("add a REST API from its OpenAPI document", await until("connected", () => text(".conn").then((t) => /connected/.test(t) && /4 methods/.test(t) && /set ✓/.test(t))), await text(".conn, .conn-form .err"));
 		await clickText(".conn .conn-foot button", /4 methods/);
-		check("its operations, with reads, writes and always-ask", await until("methods", async () => (await count(".conn-method")) === 4 && /always asks/.test(await text(".conn-methods"))));
+		check("its operations, with reads, writes and destructive ones", await until("methods", async () => (await count(".conn-method")) === 4 && /destructive/.test(await text(".conn-methods"))));
+
+		// Always ask / Always allow, per method.
+		const connId = (await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.label === "inventory").id as string;
+		const row = (name: string) => `.conn-method:has(code) >> ::-p-text(${name})`;
+		const pressed = (name: string) =>
+			page.$$eval(".conn-method", (rows, n) => {
+				const r = rows.find((x) => x.querySelector("code")?.textContent === n);
+				return [...(r?.querySelectorAll(".seg-btn") ?? [])].filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent).join();
+			}, name);
+		const press = (name: string, label: string) =>
+			page.evaluate((n, l) => {
+				const r = [...document.querySelectorAll(".conn-method")].find((x) => x.querySelector("code")?.textContent === n);
+				([...(r?.querySelectorAll(".seg-btn") ?? [])].find((b) => b.textContent === l) as HTMLElement | undefined)?.click();
+			}, name, label);
+		void row;
+		check("every method has Ask / Allow: reads default to Allow, writes to Ask", (await pressed("listItems")) === "Allow" && (await pressed("createItem")) === "Ask" && (await pressed("deleteItem")) === "Ask");
+		check("a card says how many methods ask first", /2 ask first/.test(await text(".conn")));
+		await press("createItem", "Allow");
+		check("choosing Allow on a write is saved and shown", await until("allow saved", async () => (await pressed("createItem")) === "Allow" && (await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval.createItem === "allow"));
+		check("a changed method offers a reset to the default", !!(await page.$('.conn-reset[aria-label="Reset createItem to its default"]')));
+		let confirmText = "";
+		page.once("dialog", async (d) => { confirmText = d.message(); await d.dismiss(); });
+		await press("deleteItem", "Allow");
+		await sleep(400);
+		check("allowing a destructive method asks you first, and Cancel changes nothing", /can't easily be undone/.test(confirmText) && (await pressed("deleteItem")) === "Ask" && !(await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval.deleteItem);
+		page.once("dialog", (d) => void d.accept());
+		await press("deleteItem", "Allow");
+		check("…confirming allows it", await until("delete allowed", async () => (await pressed("deleteItem")) === "Allow"));
+		await press("listItems", "Ask");
+		check("a read can be set to Ask", await until("read asks", async () => (await pressed("listItems")) === "Ask"));
+		await shot("connection-approvals");
+		for (const m of ["createItem", "deleteItem", "listItems"]) await page.click(`.conn-reset[aria-label="Reset ${m} to its default"]`).then(() => sleep(300));
+		check("resetting puts each method back to its default", await until("defaults back", async () => (await pressed("listItems")) === "Allow" && (await pressed("createItem")) === "Ask" && (await pressed("deleteItem")) === "Ask" && !(await page.$("button.conn-reset"))));
+		check("…and nothing is left stored", Object.keys((await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval).length === 0);
 		const listed = await api("GET", `/api/w/${ws}/connections`);
 		check("the API never sends the key back", !JSON.stringify(listed).includes(API_KEY));
 		await shot("connections");

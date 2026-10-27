@@ -639,11 +639,11 @@ export function createApi(): Router {
 	});
 	r.get("/api/w/:ws/connections", async (req) => {
 		const { ws } = await member(req);
-		return { connections: (await ws.connections.list()).map((c) => ws.connections.describe(c)), proposals: await ws.connections.proposals() };
+		return { connections: await Promise.all((await ws.connections.list()).map((c) => ws.connections.describe(c))), proposals: await ws.connections.proposals() };
 	});
 	r.post("/api/w/:ws/connection-proposals/:id/accept", async (req) => {
 		const { user, ws } = await member(req, "owner");
-		return { connection: ws.connections.describe(await ws.acceptProposal(req.params.id!, await req.body(), user.displayName)) };
+		return { connection: await ws.connections.describe(await ws.acceptProposal(req.params.id!, await req.body(), user.displayName)) };
 	});
 	r.post("/api/w/:ws/connection-proposals/:id/decline", async (req) => {
 		const { user, ws } = await member(req, "owner");
@@ -651,19 +651,27 @@ export function createApi(): Router {
 	});
 	r.get("/api/w/:ws/connections/:id", async (req) => {
 		const { ws } = await member(req);
-		return { connection: ws.connections.describe(await ws.connections.require(req.params.id!)) };
+		return { connection: await ws.connections.describe(await ws.connections.require(req.params.id!)) };
 	});
 	r.post("/api/w/:ws/connections", async (req) => {
 		const { user, ws } = await member(req, "owner");
-		return { connection: ws.connections.describe(await ws.connections.create(await req.body(), user.displayName)) };
+		return { connection: await ws.connections.describe(await ws.connections.create(await req.body(), user.displayName)) };
 	});
 	r.patch("/api/w/:ws/connections/:id", async (req) => {
 		const { ws } = await member(req, "owner");
-		return { connection: ws.connections.describe(await ws.connections.update(req.params.id!, await req.body())) };
+		return { connection: await ws.connections.describe(await ws.connections.update(req.params.id!, await req.body())) };
 	});
 	r.post("/api/w/:ws/connections/:id/refresh", async (req) => {
 		const { ws } = await member(req, "owner");
-		return { connection: ws.connections.describe(await ws.connections.refresh(req.params.id!)) };
+		return { connection: await ws.connections.describe(await ws.connections.refresh(req.params.id!)) };
+	});
+	/** Body: { method, mode: "ask" | "allow" | null }. Owners decide, per method, whether it asks first or runs without asking (null: the default). */
+	r.put("/api/w/:ws/connections/:id/approval", async (req) => {
+		const { user, ws } = await member(req, "owner");
+		const { method, mode } = await req.body();
+		if (typeof method !== "string" || !method) throw new HttpError(400, "method is required");
+		await ws.setConnectionApproval(req.params.id!, method, mode === undefined ? null : mode, user.displayName);
+		return { connection: await ws.connections.describe(await ws.connections.require(req.params.id!)) };
 	});
 	r.delete("/api/w/:ws/connections/:id", async (req) => {
 		const { ws } = await member(req, "owner");

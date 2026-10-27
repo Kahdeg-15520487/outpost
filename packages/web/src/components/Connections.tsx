@@ -40,7 +40,7 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 						)}
 					</div>
 					<p className="lede">
-						Services this workspace's agents and modules can be given access to. Outpost calls each one as the workspace's account and keeps the credentials to itself. A connection gives nobody access by itself: you introduce it to a chat or module, choosing which methods it may use. Reads run straight away; writes wait for approval.
+						Services this workspace's agents and modules can be given access to. Outpost calls each one as the workspace's account and keeps the credentials to itself. A connection gives nobody access by itself: you introduce it to a chat or module, choosing which methods it may use. By default reads run straight away and writes wait for approval; for each method you can set Always ask or Always allow.
 					</p>
 					{editing && (
 						<ConnectionForm
@@ -100,7 +100,9 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 	const editable = isOwner && conn.source === "workspace";
 	const reads = conn.methods.filter((m) => m.effect === "read").length;
 	const writes = conn.methods.length - reads;
-	const asks = conn.methods.filter((m) => m.alwaysAsk).length;
+	/** Without a setting: reads run and writes ask. */
+	const mode = (m: ConnectionMethod): "ask" | "allow" => conn.approval?.[m.name] ?? (m.effect === "read" ? "allow" : "ask");
+	const asks = conn.methods.filter((m) => mode(m) === "ask").length;
 	const fixed = Object.entries(conn.params ?? {})
 		.map(([k, v]) => `${k}=${v}`)
 		.join(" ");
@@ -123,11 +125,12 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 			setBusy(false);
 		}
 	};
-	const toggleRead = (m: ConnectionMethod) => {
-		const set = new Set(conn.reads ?? []);
-		if (set.has(m.name)) set.delete(m.name);
-		else set.add(m.name);
-		return run(() => api.patch(`/api/w/${wsId}/connections/${conn.id}`, { reads: [...set] }));
+	/** Always ask / Always allow for one method; null goes back to the default. Allowing a destructive method needs a confirmation. */
+	const setMode = (m: ConnectionMethod, next: "ask" | "allow" | null) => {
+		if (next === "allow" && m.alwaysAsk && !confirm(`“${m.name}” changes or deletes things and can't easily be undone.
+
+Allow it to run without asking? Any chat, module or mission with access to this connection could then run it on its own.`)) return;
+		return run(() => api.put(`/api/w/${wsId}/connections/${conn.id}/approval`, { method: m.name, mode: next }));
 	};
 
 	return (
@@ -163,7 +166,7 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 				{conn.methods.length > 0 && (
 					<span className="muted conn-counts">
 						{reads} read{reads === 1 ? "" : "s"} · {writes} write{writes === 1 ? "" : "s"}
-						{asks ? ` (${asks} always ask)` : ""}
+						{` · ${asks} ask first`}
 					</span>
 				)}
 				<span className="grow" />
@@ -199,15 +202,26 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 							<span className={`pill ${m.effect === "read" ? "ok" : "signal"}`} title={classified(m)}>
 								{m.effect}
 							</span>
-							{m.alwaysAsk && <span className="pill bad">always asks</span>}
+							{m.alwaysAsk && <span className="pill bad" title="Deletes or changes things that are hard to undo. It asks first unless you set it to Always allow.">destructive</span>}
 							<span className="muted grow conn-desc" title={m.description}>
 								{m.description}
 							</span>
-							{editable && (m.effect === "write" || m.classifiedBy === "owner") && (
-								<label className="row conn-asread" title="Calls run without approval: only for methods that change nothing">
-									<input type="checkbox" checked={m.classifiedBy === "owner"} disabled={busy} onChange={() => toggleRead(m)} /> treat as read
-								</label>
-							)}
+							<div className="conn-mode">
+								<div className="seg" role="group" aria-label={`Approval for ${m.name}`}>
+									{(["ask", "allow"] as const).map((v) => (
+										<button key={v} type="button" className={`seg-btn ${mode(m) === v ? "on" : ""} ${v}`} aria-pressed={mode(m) === v} disabled={!isOwner || busy} title={v === "ask" ? "Always ask: calls wait for your approval" : "Always allow: calls run without asking"} onClick={() => (mode(m) === v && !conn.approval?.[m.name] ? undefined : setMode(m, v))}>
+											{v === "ask" ? "Ask" : "Allow"}
+										</button>
+									))}
+								</div>
+								{conn.approval?.[m.name] && isOwner ? (
+									<button type="button" className="btn ghost small conn-reset" disabled={busy} title={`Back to the default (${m.effect === "read" ? "allow" : "ask"})`} aria-label={`Reset ${m.name} to its default`} onClick={() => setMode(m, null)}>
+										↺
+									</button>
+								) : (
+									<span className="conn-reset" aria-hidden="true" />
+								)}
+							</div>
 						</div>
 					))}
 				</div>

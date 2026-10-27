@@ -161,15 +161,40 @@ export class Connections {
 	}
 
 	/** What the API shows: everything but secret values (it says which are set). */
-	describe(conn: Connection) {
+	async describe(conn: Connection) {
+		const approval = (await this.approvals())[conn.id] ?? {};
 		const secrets = this.#secrets(conn);
 		const names = [...secretNames(conn.auth), ...Object.keys(secrets).filter((k) => k.startsWith("env."))];
 		return {
 			...conn,
+			approval,
 			secretsSet: names.filter((n) => !!secrets[n]),
 			secretsNeeded: requiredSecretNames(conn.auth),
 			methods: conn.methods.map((m) => ({ name: m.name, description: m.description, effect: m.effect, alwaysAsk: !!m.alwaysAsk, classifiedBy: m.classifiedBy, params: paramHints(m.inputSchema) })),
 		};
+	}
+
+	/** What the owners decided per connection and method (ask / allow), whatever the default. */
+	async approvals(): Promise<Record<string, Record<string, "ask" | "allow">>> {
+		return plain((await this.harness.snapshot(ConnectionsDoc, ctx))?.approval ?? {});
+	}
+
+	/** Set (or with null, reset to the default) whether a method asks first or runs without asking. */
+	async setApproval(id: string, method: string, mode: "ask" | "allow" | null): Promise<void> {
+		const conn = await this.require(id);
+		if (!conn.methods.some((m) => m.name === method)) throw new HttpError(404, `${conn.label} has no method "${method}"`);
+		if (mode !== null && mode !== "ask" && mode !== "allow") throw new HttpError(400, 'mode must be "ask", "allow", or null to reset');
+		await this.harness.commit(async (tx) => {
+			const doc = await tx.doc(ConnectionsDoc);
+			const all = plain(doc.approval ?? {});
+			const mine = all[id] ?? {};
+			if (mode === null) delete mine[method];
+			else mine[method] = mode;
+			if (Object.keys(mine).length) all[id] = mine;
+			else delete all[id];
+			doc.approval = all;
+		}, ctx);
+		this.onChange();
 	}
 
 	async #checkLabel(label: string, exceptId?: string) {
@@ -277,7 +302,13 @@ export class Connections {
 		const conn = await this.require(id);
 		if (conn.source === "config") throw new HttpError(403, "This connection is declared in outpost.config.json");
 		await this.harness.commit(async (tx) => {
-			delete (await tx.doc(ConnectionsDoc)).connections[id];
+			const doc = await tx.doc(ConnectionsDoc);
+			delete doc.connections[id];
+			if (doc.approval?.[id]) {
+				const rest = plain(doc.approval);
+				delete rest[id];
+				doc.approval = rest;
+			}
 		}, ctx);
 		await pool.close(this.#key(conn));
 		await connectionSecrets.update(this.wsId, id, null);
@@ -351,7 +382,7 @@ export class Connections {
 	}
 
 	/** A connection as a Airlock, so grants, approvals, audit and ctx.airlocks treat it like a built-in one. */
-	airlock(conn: Connection): Airlock {
+	airlock(conn: Connection, approval?: Record<string, "ask" | "allow">): Airlock {
 		const info = CONNECTOR_INFO[conn.kind];
 		const methods: Record<string, AirlockMethod> = {};
 		for (const m of conn.methods) methods[m.name] = this.#method(conn, m);
@@ -365,6 +396,7 @@ export class Connections {
 			methods,
 			trust: conn.trust,
 			connection: conn.id,
+			...(approval && Object.keys(approval).length ? { approval } : {}),
 			...(conn.kind === "azure-devops" ? { overlay: azdoOverlay } : {}),
 		};
 	}

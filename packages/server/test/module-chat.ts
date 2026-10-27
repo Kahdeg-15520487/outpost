@@ -125,6 +125,15 @@ try {
 	check("backfill does not link list results or prose mentions", !(await linked(legacy)).includes(unlinked.id));
 	await backfillModuleChats(ws);
 	check("backfill is idempotent", (await linked(legacy)).length === 2);
+	console.log("archiving");
+	const { modules: moduleDb } = await import("../src/kernel/system-db.ts");
+	moduleDb.setArchived(second.id, true);
+	check("an archived module leaves the workspace list and the agent's", !moduleDb.inWorkspace(ws.id).some((m) => m.id === second.id) && moduleDb.archived(ws.id).map((m) => m.id).join() === second.id);
+	check("its code, data and shares stay", (await ws.moduleFiles(second.id))["index.html"] !== undefined && (await ws.moduleState(second.id)) !== undefined);
+	check("a direct link still opens it", (await Workspace.moduleFor(second.id, user)).module.id === second.id);
+	moduleDb.setArchived(second.id, false);
+	check("restoring brings it back to the list", moduleDb.inWorkspace(ws.id).some((m) => m.id === second.id) && moduleDb.archived(ws.id).length === 0);
+	moduleDb.setArchived(second.id, true);
 	await ws.deleteModule(second.id);
 	check("deletion removes dangling relationships", !(await linked(origin)).includes(second.id) && !(await linked(legacy)).includes(second.id));
 	if (page) {

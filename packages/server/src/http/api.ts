@@ -459,7 +459,7 @@ export function createApi(): Router {
 	// ------------------------------------------------------------ modules
 	r.get("/api/w/:ws/modules", async (req) => {
 		const { role } = await member(req);
-		return { modules: modules.inWorkspace(req.params.ws!).map((g) => moduleView(g, role)) };
+		return { modules: modules.inWorkspace(req.params.ws!).map((g) => moduleView(g, role)), archived: modules.archived(req.params.ws!).map((g) => moduleView(g, role)) };
 	});
 	r.post("/api/w/:ws/modules", async (req) => {
 		const { user, ws } = await member(req, "editor");
@@ -482,8 +482,9 @@ export function createApi(): Router {
 	});
 	r.patch("/api/modules/:id", async (req) => {
 		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
-		const { name, icon } = await req.body();
-		modules.touch(module.id, { name, icon });
+		const { name, icon, archived } = await req.body();
+		if (name !== undefined || icon !== undefined) modules.touch(module.id, { ...(name !== undefined ? { name: String(name).slice(0, 120) } : {}), ...(icon ? { icon: String(icon).slice(0, 8) } : {}) });
+		if (typeof archived === "boolean") modules.setArchived(module.id, archived);
 		ws.publishModules();
 		return { ok: true };
 	});

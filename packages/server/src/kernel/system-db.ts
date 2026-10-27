@@ -27,6 +27,8 @@ export type ModuleRow = {
 	blueprintId: string | null;
 	createdAt: number;
 	updatedAt: number;
+	/** Put away: hidden from the sidebar, home and menus; its code, data and shares stay. */
+	archivedAt?: number;
 };
 export type BlueprintRow = {
 	id: string;
@@ -64,6 +66,7 @@ CREATE TABLE IF NOT EXISTS blueprints (id TEXT PRIMARY KEY, name TEXT NOT NULL, 
 // Added after the first release; existing databases get the columns on startup.
 if (!(db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).some((c) => c.name === "prefs")) db.exec("ALTER TABLE users ADD COLUMN prefs TEXT NOT NULL DEFAULT '{}'");
 if (!(db.prepare("PRAGMA table_info(blueprints)").all() as { name: string }[]).some((c) => c.name === "intro")) db.exec("ALTER TABLE blueprints ADD COLUMN intro TEXT NOT NULL DEFAULT '{}'");
+if (!(db.prepare("PRAGMA table_info(modules)").all() as { name: string }[]).some((c) => c.name === "archived_at")) db.exec("ALTER TABLE modules ADD COLUMN archived_at INTEGER");
 
 const secret = config.secret;
 
@@ -209,25 +212,34 @@ const toModule = (row: any): ModuleRow => ({
 	blueprintId: row.blueprint_id,
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
+	...(row.archived_at ? { archivedAt: row.archived_at } : {}),
 });
 
 export const modules = {
 	create(workspaceId: string, ownerId: string, name: string, icon: string, blueprintId: string | null): ModuleRow {
 		const now = Date.now();
 		const row = { id: newId("mod"), workspaceId, ownerId, name, icon, blueprintId, createdAt: now, updatedAt: now };
-		db.prepare("INSERT INTO modules VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(row.id, workspaceId, ownerId, name, icon, blueprintId, now, now);
+		db.prepare("INSERT INTO modules (id, workspace_id, owner_id, name, icon, blueprint_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(row.id, workspaceId, ownerId, name, icon, blueprintId, now, now);
 		return row;
 	},
 	get(id: string): ModuleRow | undefined {
 		const row = db.prepare("SELECT * FROM modules WHERE id = ?").get(id);
 		return row ? toModule(row) : undefined;
 	},
+	/** The workspace's modules, newest first. Archived ones are left out: see `archived()`. */
 	inWorkspace(workspaceId: string): ModuleRow[] {
-		return db.prepare("SELECT * FROM modules WHERE workspace_id = ? ORDER BY updated_at DESC").all(workspaceId).map(toModule);
+		return db.prepare("SELECT * FROM modules WHERE workspace_id = ? AND archived_at IS NULL ORDER BY updated_at DESC").all(workspaceId).map(toModule);
+	},
+	archived(workspaceId: string): ModuleRow[] {
+		return db.prepare("SELECT * FROM modules WHERE workspace_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC").all(workspaceId).map(toModule);
+	},
+	/** Put a module away, or bring it back. Touching it on restore puts it at the top of the list. */
+	setArchived(id: string, archived: boolean) {
+		db.prepare("UPDATE modules SET archived_at = ?, updated_at = ? WHERE id = ?").run(archived ? Date.now() : null, Date.now(), id);
 	},
 	sharedWith(userId: string): (ModuleRow & { role: Role })[] {
 		return db
-			.prepare("SELECT g.*, s.role FROM modules g JOIN module_shares s ON s.module_id = g.id WHERE s.user_id = ? ORDER BY g.updated_at DESC")
+			.prepare("SELECT g.*, s.role FROM modules g JOIN module_shares s ON s.module_id = g.id WHERE s.user_id = ? AND g.archived_at IS NULL ORDER BY g.updated_at DESC")
 			.all(userId)
 			.map((r: any) => ({ ...toModule(r), role: r.role }));
 	},

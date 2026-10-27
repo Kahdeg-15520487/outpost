@@ -29,6 +29,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [drawer, setDrawer] = useState(false);
 	/** The sidebar can be tucked away; the choice is remembered per browser. */
 	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("outpost.sidebar") === "collapsed");
+	const [showArchived, setShowArchived] = useState(false);
 	const setSidebar = (hide: boolean) => {
 		setCollapsed(hide);
 		localStorage.setItem("outpost.sidebar", hide ? "collapsed" : "open");
@@ -68,7 +69,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		addEventListener("focus", loadModels);
 		return () => removeEventListener("focus", loadModels);
 	}, [wsId]);
-	const { docs, modules, missions } = useWorkspace(ws?.id);
+	const { docs, modules, archived, missions } = useWorkspace(ws?.id);
 	const proposed = useConnections(ws?.id).proposals.filter((p) => p.status === "pending").length;
 	const updated = useAppUpdated();
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
@@ -92,6 +93,11 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		if (!ws || !confirm("Archive this chat? It's removed from the sidebar for everyone in the workspace.")) return;
 		await api.del(`/api/w/${ws.id}/chats/${id}`);
 		if (route.page === "chat" && route.chat === id) navigate(chatHref(ws.id, undefined, route.module));
+	};
+	/** Put a module away (or bring it back): hidden from the sidebar, home and menus; its code, data and shares stay. */
+	const setArchived = async (g: Module, archived: boolean) => {
+		await api.patch(`/api/modules/${g.id}`, { archived });
+		if (archived && ws && route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, chatId));
 	};
 	const deleteModule = async (g: Module) => {
 		if (!ws || !confirm(`Delete "${g.name}"? Its code and data are removed for everyone it's shared with.`)) return;
@@ -287,6 +293,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 													},
 												},
 												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/modules/${g.id}`) },
+												{ label: "Archive", icon: "▣", onSelect: () => setArchived(g, true).catch((e) => alert(e.message)), hidden: !canChange },
 												{ label: "Export", icon: "⤓", onSelect: () => exportModule(g.id, false).catch((e) => alert(e.message)), hidden: !canChange },
 												{ label: "Export with data", icon: "⤓", onSelect: () => exportModule(g.id, true).catch((e) => alert(e.message)), hidden: !canChange },
 												{ label: "Delete", icon: "✕", onSelect: () => deleteModule(g), danger: true, hidden: g.role !== "owner" },
@@ -296,6 +303,39 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								);
 							})}
 					</div>
+					{archived.length > 0 && (
+						<div className="side-section">
+							<button type="button" className="label side-archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}>
+								<span>Archived</span>
+								<span>
+									{archived.length} {showArchived ? "▾" : "▸"}
+								</span>
+							</button>
+							{showArchived &&
+								ws &&
+								archived.map((g) => {
+									const canChange = g.role === "owner" || g.role === "editor";
+									return (
+										<div key={g.id} data-module-id={g.id} className={`side-row archived ${menuOpen === `g:${g.id}` ? "menu-open" : ""}`}>
+											<a className="side-item archived" href={chatHref(ws.id, undefined, g.id, true)} title={`${g.name} — archived ${timeAgo(g.archivedAt ?? g.updatedAt)} ago`}>
+												<span className="ico">{g.icon}</span>
+												<span className="t">{g.name}</span>
+											</a>
+											<RowMenu
+												label={g.name}
+												onOpenChange={(o) => setMenuOpen(o ? `g:${g.id}` : undefined)}
+												items={[
+													{ label: "Restore", icon: "▣", onSelect: () => setArchived(g, false).catch((e) => alert(e.message)), hidden: !canChange },
+													{ label: "Open", icon: "⤢", onSelect: () => navigate(chatHref(ws.id, undefined, g.id, true)) },
+													{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/modules/${g.id}`) },
+													{ label: "Delete", icon: "✕", onSelect: () => deleteModule(g), danger: true, hidden: g.role !== "owner" },
+												]}
+											/>
+										</div>
+									);
+								})}
+						</div>
+					)}
 					{shared.length > 0 && (
 						<div className="side-section">
 							<div className="label">

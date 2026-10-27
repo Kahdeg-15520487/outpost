@@ -65,6 +65,7 @@ const emptyDocs: WorkspaceDocs = { chats: { chats: {} }, grants: { grants: {}, r
 export function useWorkspace(ws: string | undefined) {
 	const [docs, setDocs] = useState<WorkspaceDocs>(emptyDocs);
 	const [modules, setModules] = useState<Module[]>([]);
+	const [archived, setArchived] = useState<Module[]>([]);
 	const [modulesTick, setTick] = useState(0);
 	const [missions, setMissions] = useState<MissionMeta[]>([]);
 	const [missionsTick, setMissionsTick] = useState(0);
@@ -88,7 +89,7 @@ export function useWorkspace(ws: string | undefined) {
 	useEffect(() => {
 		if (!ws) return;
 		let live = true;
-		api.get(`/api/w/${ws}/modules`).then((r) => live && setModules(r.modules)).catch(() => {});
+		api.get(`/api/w/${ws}/modules`).then((r) => live && (setModules(r.modules), setArchived(r.archived ?? []))).catch(() => {});
 		return () => {
 			live = false;
 		};
@@ -101,7 +102,7 @@ export function useWorkspace(ws: string | undefined) {
 			live = false;
 		};
 	}, [ws, missionsTick, reconnects]);
-	return { docs, modules, missions };
+	return { docs, modules, archived, missions };
 }
 
 export const missionHref = (ws: string, mission: string, tab?: string) => `#/w/${ws}/missions/${mission}${tab ? `?tab=${tab}` : ""}`;

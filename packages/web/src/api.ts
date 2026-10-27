@@ -6,7 +6,7 @@ export type Workspace = { id: string; name: string; ownerId: string; role: Role;
 export type WorkspaceSettings = { companyContext?: string; defaultModel?: ModelRef; toolMode?: "hybrid" | "codemode" };
 export type ModelRef = { provider: string; modelId: string };
 export type ModelInfo = { provider: string; id: string; name: string; reasoning: boolean; contextWindow: number; vision: boolean };
-export type Module = { id: string; workspaceId: string; ownerId: string; name: string; icon: string; blueprintId: string | null; updatedAt: number; role: Role; workspaceName?: string; owner?: string; blueprint?: BlueprintIntro };
+export type Module = { id: string; workspaceId: string; ownerId: string; name: string; icon: string; blueprintId: string | null; updatedAt: number; archivedAt?: number; role: Role; workspaceName?: string; owner?: string; blueprint?: BlueprintIntro };
 export type Suggestion = { k: string; t: string; d: string; p: string };
 /** How a fresh chat beside a module greets the user; comes from the blueprint the module was made from. */
 export type BlueprintIntro = { name: string; description: string; headline?: string; intro?: string; suggestions?: Suggestion[] };

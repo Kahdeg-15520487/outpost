@@ -38,6 +38,8 @@ pnpm dev              # server on :8787 (tsx watch), web on http://localhost:517
 
 Sign up. The first account gets a personal workspace. Invite others by username in **Settings → Members**, or share single modules.
 
+**Archiving a module.** ⋯ → *Archive* on a module in the sidebar puts it away: it leaves the sidebar, the workspace home and the agent's `module_list`, and stays out of "Shared with me". Its code, data, shares and link are kept, a direct link (`#/modules/:id`) still opens it, and the workspace's **Archived** section (collapsed, with a count) restores it. Only an owner or editor can archive or restore. Deleting is still the permanent option.
+
 **When the backend is unreachable.** The app notices a closed live connection or a request that gets no answer, shows a banner with how long it has been down and a **Retry now** button, and raises one toast instead of one per failed action. Nothing is disabled: actions still try, and fail with a clear message ("Can't reach Outpost — the server isn't responding…"). It checks every few seconds, says **Back online** when the server answers again, and reloads whatever a failed request left stale. A dropped network is reported as such.
 
 **Chats and modules stay linked.** A chat lists the modules it created or worked on, with **Open** links below its header. Opening a module selects a related chat (keeping the current one if it is related, otherwise the most recent), and the sidebar marks other related items separately from the active item. Browsing the sidebar alone doesn't create links. Existing chats recover links from recorded tool activity; archived chats stay out of navigation.

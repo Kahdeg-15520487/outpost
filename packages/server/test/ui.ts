@@ -197,6 +197,38 @@ async function run() {
 	await clickText(".tx-dialog button", "Done");
 	check("the imported blueprint is in the library", await until("listed", () => page.$$eval(".bp-grid .bp .n", (ns) => ns.some((n) => n.textContent === "Imported board"))));
 	check("the imported module is in the sidebar", await until("sidebar module", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported module"))));
+
+	// Archive: out of the sidebar and the module list, restorable from the Archived section.
+	const modRow = ".sidebar [data-module-id] > a .t";
+	const archivedNames = () => page.$$eval(".sidebar .side-row.archived .t", (ts) => ts.map((t) => t.textContent));
+	const menu = (name: string, label: string) =>
+		page.evaluate(async (n, l) => {
+			const row = [...document.querySelectorAll(".sidebar [data-module-id]")].find((r) => r.querySelector("a .t")?.textContent === n);
+			(row?.querySelector(".row-menu-btn") as HTMLElement | undefined)?.click();
+			await new Promise((r) => setTimeout(r, 150));
+			const item = [...document.querySelectorAll(".row-menu [role=menuitem]")].find((b) => b.textContent?.trim().endsWith(l));
+			(item as HTMLElement | undefined)?.click();
+			await new Promise((r) => setTimeout(r, 150));
+		}, name, label);
+	await menu("Imported module", "Archive");
+	check("Archiving takes a module out of the sidebar", await until("gone from sidebar", async () => !(await page.$$eval(modRow, (ts) => ts.some((t) => t.textContent === "Imported module")))));
+	check("…and the Archived section appears, collapsed, with a count", await until("archived section", () => text(".side-archived-toggle").then((t) => /archived/i.test(t) && /1/.test(t))) && (await archivedNames()).length === 0);
+	await page.click(".side-archived-toggle");
+	check("opening it lists the archived module", await until("archived listed", async () => (await archivedNames()).includes("Imported module")));
+	await shot("archived");
+	await menu("Imported module", "Restore");
+	check("Restore puts it back in the sidebar", await until("restored", async () => (await page.$$eval(modRow, (ts) => ts.some((t) => t.textContent === "Imported module"))) && (await archivedNames()).length === 0));
+	check("…and the empty Archived section goes away", !(await page.$(".side-archived-toggle")));
+	const after = (await api("GET", `/api/w/${ws}/modules`)).modules.find((m: any) => m.name === "Imported module");
+	await api("PATCH", `/api/modules/${after.id}`, { archived: true });
+	check("an archived module still opens from its link", await (async () => {
+		await go(`#/w/${ws}/modules/${after.id}?focus=1`);
+		return !!(await until("opened", () => page.$(".gwin"), 10000));
+	})());
+	await api("PATCH", `/api/modules/${after.id}`, { archived: false });
+	await go(`#/w/${ws}/blueprints`);
+	check("restored by the API, it is listed again", await until("back after api restore", () => page.$$eval(modRow, (ts) => ts.some((t) => t.textContent === "Imported module"))));
+
 	await clickText(".bp-head button", "Export…");
 	check("export dialog offers my blueprints and the workspace's modules", await until("export dialog", () => text(".tx-dialog").then((t) => /My blueprints \(1\)/.test(t) && /Modules in/.test(t) && /Include their data/.test(t))));
 	await sleep(400);

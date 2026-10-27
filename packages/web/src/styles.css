@@ -103,6 +103,10 @@ textarea.input { resize: vertical; }
 .side-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; text-decoration: none; color: #cfc8b6; font-size: 13.5px; position: relative; }
 .side-item:hover { background: var(--ink-2); color: var(--ink-text); }
 .side-item.on { background: var(--ink-3); color: white; }
+.side-archived-toggle { display: flex; width: 100%; justify-content: space-between; background: none; border: 0; padding: 0 8px 6px; cursor: pointer; }
+.side-archived-toggle:hover { color: var(--ink-text); }
+.side-item.archived { color: #8f8771; font-style: italic; }
+.side-item.archived:hover { color: var(--ink-text); }
 .side-item.related:not(.on) { background: var(--ink-2); color: var(--ink-text); box-shadow: inset 0 0 0 1px #54472f; }
 .side-related { flex: none; font-size: 10px; color: #dec99e; }
 .side-item:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }

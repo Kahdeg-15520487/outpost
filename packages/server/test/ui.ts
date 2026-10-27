@@ -97,6 +97,44 @@ async function run() {
 		check("rename from the ⋯ menu", await until("renamed", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Renamed chat"))));
 	}
 
+	console.log("account menu + collapsible sidebar");
+	const sidebarW = () => page.$eval(".sidebar", (e) => Math.round(e.getBoundingClientRect().width)).catch(() => 0);
+	check("no bare Sign out button in the footer", (await page.$(".side-foot > button.who-btn")) !== null && !(await page.$$eval(".side-foot > button", (bs) => bs.some((b) => /sign out/i.test(b.textContent ?? "")))));
+	check("the footer shows the user's name", (await text(".who-btn .who")) === "Ana");
+	await page.click(".who-btn");
+	check("clicking the name opens a menu with Sign out", await until("user menu", () => page.$$eval(".user-menu [role=menuitem]", (is) => is.some((i) => /sign out/i.test(i.textContent ?? "")))));
+	await shot("user-menu");
+	await page.keyboard.press("Escape");
+	check("Escape closes the menu", await until("menu closed", async () => !(await page.$(".user-menu"))));
+	await page.click(".who-btn");
+	await page.mouse.click(900, 300);
+	check("clicking elsewhere closes the menu", await until("menu closed 2", async () => !(await page.$(".user-menu"))));
+
+	check("the sidebar starts open", (await sidebarW()) > 200 && !(await page.$(".side-reveal")));
+	await page.click(".side-hide");
+	check("the hide button tucks the sidebar away", await until("collapsed", async () => (await sidebarW()) === 0));
+	check("a small button to show it again appears", !!(await page.$(".side-reveal")));
+	const mainLeft = await page.$eval(".main", (e) => Math.round(e.getBoundingClientRect().left));
+	check("the page takes the freed space (starts at the left edge)", mainLeft === 0, mainLeft);
+	await shot("sidebar-collapsed");
+	await page.reload();
+	await page.waitForSelector(".composer textarea");
+	check("the choice survives a reload", (await sidebarW()) === 0 && !!(await page.$(".side-reveal")));
+	await page.click(".side-reveal");
+	check("the reveal button brings it back", await until("reopened", async () => (await sidebarW()) > 200) && !(await page.$(".side-reveal")));
+	await page.reload();
+	await page.waitForSelector(".composer textarea");
+	check("…and that survives a reload too", (await sidebarW()) > 200);
+
+	const chatUrl = page.url();
+	await page.click(".who-btn");
+	await clickText(".user-menu [role=menuitem]", "Sign out");
+	check("Sign out in the menu signs you out", await until("login form", () => page.$(".auth-form form")));
+	await api("POST", "/api/auth/login", { username: "ana", password: "password123" });
+	await page.goto(chatUrl);
+	await page.reload();
+	must("signed back in", await until("composer again", () => page.$(".composer textarea")));
+
 	console.log("model picker");
 	// A second provider (never called) so the picker has something to hide. Set only now: the chat above
 	// must keep the demo model as its default.

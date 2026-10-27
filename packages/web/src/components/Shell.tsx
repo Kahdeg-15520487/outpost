@@ -11,7 +11,7 @@ import { ApprovalsDrawer } from "./Approvals";
 import { BlueprintsPage } from "./Blueprints";
 import { SettingsPage } from "./Settings";
 import { FilesPage } from "./Files";
-import { Avatar } from "./bits";
+import { UserMenu } from "./UserMenu";
 import { InlineRename, RowMenu } from "./RowMenu";
 import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
 import { NewProjectDialog, ProjectPage } from "./ProjectPage";
@@ -27,6 +27,12 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [managingModels, setManagingModels] = useState(false);
 	const [newProject, setNewProject] = useState(false);
 	const [drawer, setDrawer] = useState(false);
+	/** The sidebar can be tucked away; the choice is remembered per browser. */
+	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("pios.sidebar") === "collapsed");
+	const setSidebar = (hide: boolean) => {
+		setCollapsed(hide);
+		localStorage.setItem("pios.sidebar", hide ? "collapsed" : "open");
+	};
 	/** Which sidebar row is being renamed ("c:<id>" / "g:<id>"), and which row's menu is open (keeps its button visible). */
 	const [renaming, setRenaming] = useState<string>();
 	const [menuOpen, setMenuOpen] = useState<string>();
@@ -99,7 +105,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const canEdit = ws?.role !== "viewer";
 
 	return (
-		<div className={`shell ${gadgetOpen ? "with-gadget" : ""} ${chatHidden ? "chat-hidden" : ""}`}>
+		<div className={`shell ${gadgetOpen ? "with-gadget" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""}`}>
 			<aside className="sidebar">
 				<div className="brand">
 					<a className="logo" href={wsId ? homeHref(wsId) : "#"} title="Workspace home" onClick={(e) => (wsId ? undefined : e.preventDefault())}>
@@ -287,11 +293,17 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					)}
 				</div>
 				<div className="side-foot">
-					<Avatar name={user.displayName} />
-					<span className="who">{user.displayName}</span>
-					<button onClick={onSignOut}>Sign out</button>
+					<UserMenu user={user} onSignOut={onSignOut} />
+					<button className="side-hide" title="Hide the side panel" aria-label="Hide the side panel" onClick={() => setSidebar(true)}>
+						«
+					</button>
 				</div>
 			</aside>
+			{collapsed && (
+				<button className="side-reveal" title="Show the side panel" aria-label="Show the side panel" onClick={() => setSidebar(false)}>
+					»
+				</button>
+			)}
 
 			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openGadget={route.gadget} gadget={gadgets.find((g) => g.id === route.gadget)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.gadget && (

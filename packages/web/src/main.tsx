@@ -6,6 +6,7 @@ import { socket } from "./socket";
 import { navigate, useRoute } from "./store";
 import { Login } from "./components/Login";
 import { Shell } from "./components/Shell";
+import { ConnectionUI } from "./components/ConnectionUI";
 
 function App() {
 	const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -25,18 +26,32 @@ function App() {
 		}
 	}, [user, route]);
 
-	if (user === undefined) return null;
-	if (!user) return <Login onAuthed={setUser} />;
+	if (user === undefined)
+		return (
+			<>
+				<ConnectionUI />
+			</>
+		);
+	if (!user)
+		return (
+			<>
+				<ConnectionUI />
+				<Login onAuthed={setUser} />
+			</>
+		);
 	return (
-		<Shell
+		<>
+			<ConnectionUI />
+			<Shell
 			user={user}
-			onSignOut={async () => {
-				await api.post("/api/auth/logout");
-				socket.close();
-				setUser(null);
-				location.hash = "";
-			}}
-		/>
+				onSignOut={async () => {
+					await api.post("/api/auth/logout");
+					socket.close();
+					setUser(null);
+					location.hash = "";
+				}}
+			/>
+		</>
 	);
 }
 

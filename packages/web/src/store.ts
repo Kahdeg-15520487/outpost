@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useState, useSyncExternalStore } from "react";
 import { api, type AgentSummary, type ConnectionInfo, type ConnectionProposal, type Backlog, type Module, type PreviewInfo, type MissionMeta, type MissionState, type WorkspaceDocs } from "./api";
 import { socket } from "./socket";
+import { connectivity } from "./net";
 
 // ------------------------------------------------------------------ routing (hash)
 
@@ -83,6 +84,7 @@ export function useWorkspace(ws: string | undefined) {
 			unsub();
 		};
 	}, [ws]);
+	const reconnects = useReconnects();
 	useEffect(() => {
 		if (!ws) return;
 		let live = true;
@@ -90,7 +92,7 @@ export function useWorkspace(ws: string | undefined) {
 		return () => {
 			live = false;
 		};
-	}, [ws, modulesTick]);
+	}, [ws, modulesTick, reconnects]);
 	useEffect(() => {
 		if (!ws) return;
 		let live = true;
@@ -98,7 +100,7 @@ export function useWorkspace(ws: string | undefined) {
 		return () => {
 			live = false;
 		};
-	}, [ws, missionsTick]);
+	}, [ws, missionsTick, reconnects]);
 	return { docs, modules, missions };
 }
 
@@ -309,6 +311,14 @@ export function useChat(ws: string, chat: string | undefined) {
 		};
 	}, [ws, chat]);
 	return state;
+}
+
+/** Changes whenever the backend becomes reachable again: depend on it to refetch what a failed request left empty. */
+export function useReconnects() {
+	return useSyncExternalStore(
+		connectivity.subscribe,
+		() => connectivity.get().reconnects,
+	);
 }
 
 export function useSocketStatus() {

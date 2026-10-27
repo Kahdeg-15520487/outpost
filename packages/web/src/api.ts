@@ -1,3 +1,5 @@
+import { markOffline, markOnline } from "./net";
+
 export type Role = "owner" | "editor" | "viewer";
 export type User = { id: string; username: string; displayName: string };
 export type Workspace = { id: string; name: string; ownerId: string; role: Role; settings: WorkspaceSettings };
@@ -117,15 +119,29 @@ export class ApiError extends Error {
 	}
 }
 
+/** What a request says when the backend can't be reached at all (as opposed to answering with an error). */
+export const UNREACHABLE = "Can't reach Outpost — the server isn't responding. Check that it's running, then try again.";
+
 async function request<T = any>(method: string, path: string, body?: unknown): Promise<T> {
-	const res = await fetch(path, {
-		method,
-		headers: body === undefined ? {} : { "content-type": "application/json" },
-		body: body === undefined ? undefined : JSON.stringify(body),
-		credentials: "same-origin",
-	});
+	let res: Response;
+	try {
+		res = await fetch(path, {
+			method,
+			headers: body === undefined ? {} : { "content-type": "application/json" },
+			body: body === undefined ? undefined : JSON.stringify(body),
+			credentials: "same-origin",
+		});
+	} catch (e) {
+		// No answer at all: a stopped server, a dropped network, a proxy that can't reach it.
+		if ((e as Error)?.name === "AbortError") throw e;
+		markOffline(navigator.onLine === false ? "network" : "server");
+		throw new Error(UNREACHABLE);
+	}
+	// The server itself answered, so it is reachable; 5xx still means this request failed.
+	if (res.status < 500) markOnline();
+	else markOffline("server");
 	const json = await res.json().catch(() => ({}));
-	if (!res.ok) throw new ApiError(res.status, json.error ?? res.statusText);
+	if (!res.ok) throw new ApiError(res.status, json.error ?? (res.status >= 500 ? UNREACHABLE : res.statusText));
 	return json as T;
 }
 

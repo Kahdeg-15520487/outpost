@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type HomePayload, type User, type Workspace } from "../api";
-import { chatHref, missionHref, timeAgo } from "../store";
+import { chatHref, missionHref, timeAgo, useReconnects } from "../store";
 
 /**
  * The workspace homepage: what you were doing when you left, and what the agents did while you were
@@ -25,7 +25,8 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 	/** Marked once per visit, and only after the page has actually been looked at. */
 	const marked = useRef<string | undefined>(undefined);
 
-	const load = () => api.get(`/api/w/${ws.id}/home`).then(setData).catch((e) => setError(e.message));
+	const load = () => api.get(`/api/w/${ws.id}/home`).then((d) => (setData(d), setError(undefined))).catch((e) => setError(e.message));
+	const reconnects = useReconnects();
 
 	useEffect(() => {
 		marked.current = undefined;
@@ -33,7 +34,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 		setSummaryNote(undefined);
 		setError(undefined);
 		load();
-	}, [ws.id]);
+	}, [ws.id, reconnects]);
 
 	/**
 	 * "Seen" is what the next visit measures from, so it is written when you leave — not on arrival,

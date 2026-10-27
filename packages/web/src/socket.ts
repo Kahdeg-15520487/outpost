@@ -1,3 +1,5 @@
+import { markOffline, markOnline } from "./net";
+
 type Listener = (m: any) => void;
 
 /**
@@ -12,6 +14,9 @@ class Socket {
 	#seq = 0;
 	#queue: string[] = [];
 	#retry = 0;
+	#timer: ReturnType<typeof setTimeout> | undefined;
+	/** Signing out closes the socket on purpose: that is not a lost connection. */
+	#intentional = false;
 	connected = false;
 	/** The server now serves a newer web app than this tab runs: reload to get it. */
 	updated = false;
@@ -26,6 +31,7 @@ class Socket {
 		ws.onopen = () => {
 			this.#retry = 0;
 			this.#setConnected(true);
+			markOnline();
 			for (const sub of this.#subs.values()) ws.send(JSON.stringify(sub));
 			for (const m of this.#queue.splice(0)) ws.send(m);
 		};
@@ -53,16 +59,32 @@ class Socket {
 		ws.onclose = () => {
 			this.#ws = undefined;
 			this.#setConnected(false);
-			for (const p of this.#calls.values()) p.reject(new Error("connection lost"));
+			for (const p of this.#calls.values()) p.reject(new Error("The connection to Outpost was lost. Try again in a moment."));
 			this.#calls.clear();
-			setTimeout(() => this.connect(), Math.min(5000, 300 * 2 ** this.#retry++));
+			if (!this.#intentional) markOffline("server");
+			this.#scheduleReconnect();
 		};
+	}
+
+	#scheduleReconnect() {
+		clearTimeout(this.#timer);
+		this.#timer = setTimeout(() => this.connect(), Math.min(5000, 300 * 2 ** this.#retry++));
+	}
+
+	/** The banner's Retry: skip the backoff and try right now. */
+	retryNow() {
+		clearTimeout(this.#timer);
+		this.#retry = 0;
+		this.#intentional = false;
+		if (!this.#ws) this.connect();
 	}
 
 	close() {
 		this.#subs.clear();
 		const ws = this.#ws;
 		this.#ws = undefined;
+		this.#intentional = true;
+		clearTimeout(this.#timer);
 		ws?.close();
 	}
 

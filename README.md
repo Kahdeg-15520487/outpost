@@ -38,6 +38,8 @@ pnpm dev              # server on :8787 (tsx watch), web on http://localhost:517
 
 Sign up. The first account gets a personal workspace. Invite others by username in **Settings → Members**, or share single modules.
 
+**When the backend is unreachable.** The app notices a closed live connection or a request that gets no answer, shows a banner with how long it has been down and a **Retry now** button, and raises one toast instead of one per failed action. Nothing is disabled: actions still try, and fail with a clear message ("Can't reach Outpost — the server isn't responding…"). It checks every few seconds, says **Back online** when the server answers again, and reloads whatever a failed request left stale. A dropped network is reported as such.
+
 **Chats and modules stay linked.** A chat lists the modules it created or worked on, with **Open** links below its header. Opening a module selects a related chat (keeping the current one if it is related, otherwise the most recent), and the sidebar marks other related items separately from the active item. Browsing the sidebar alone doesn't create links. Existing chats recover links from recorded tool activity; archived chats stay out of navigation.
 
 ### Configuration
@@ -317,6 +319,7 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | `preview` | `preview.ports` (the container case): the browser port comes from the range, the app stays on loopback, two missions run side by side, stopping frees the port |
 | `smoke` | HTTP + WebSocket end to end: accounts, chat → module, module RPC and rollback, frame CSP, sharing, roles, presence, live sync, Airlocks and approvals, files, blueprints |
 | `render` | `module_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
+| `offline` | a real server stopped and restarted under an open tab: the offline banner and toast, failed actions explained, recovery, network-only drops, toast dismissal |
 | `module-chat` | persistent chat/module relationships, historical recovery, subagent ownership, sidebar highlights and Open links, reloads, archived chats and deleted modules |
 | `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the mission page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval), Connections (add a REST API, its methods) and granting a connection to a chat and to a mission's developers. `SHOTS=<dir>` saves screenshots |
 

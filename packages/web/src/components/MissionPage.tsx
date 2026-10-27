@@ -22,7 +22,7 @@ const STAGES: { id: MissionStage; label: string }[] = [
 ];
 
 const ROLE_COLORS: Record<string, string> = {
-	lead: "#ff5b1f",
+	lead: "#7c3aed",
 	"product-owner": "#a78bfa",
 	architect: "#60a5fa",
 	planner: "#2dd4bf",

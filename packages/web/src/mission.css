@@ -16,7 +16,7 @@
 .ph-stages li.done { color: #b8b09a; }
 .ph-stages li.done .dot { background: #b8b09a; border-color: #b8b09a; }
 .ph-stages li.now { color: white; }
-.ph-stages li.now .dot { background: var(--signal); border-color: var(--signal); box-shadow: 0 0 0 4px rgba(255, 91, 31, .2); }
+.ph-stages li.now .dot { background: var(--signal); border-color: var(--signal); box-shadow: 0 0 0 4px rgba(124, 58, 237, .24); }
 .ph-meta { display: flex; gap: 14px; font-size: 11px; color: var(--ink-muted); margin-left: auto; white-space: nowrap; }
 .ph-meta b { color: var(--signal); font-weight: 700; }
 .ph-actions { display: flex; gap: 6px; }

@@ -11,7 +11,7 @@ const COLUMNS: { id: ItemStatus; label: string }[] = [
 	{ id: "done", label: "Done" },
 ];
 const STATUS_LABEL: Record<ItemStatus, string> = { todo: "To do", doing: "In progress", review: "Review", done: "Done", blocked: "Blocked" };
-const FEATURE_COLORS = ["#ff5b1f", "#3b82f6", "#16a34a", "#a855f7", "#d97706", "#0891b2", "#db2777", "#65a30d", "#7c3aed", "#dc2626", "#0d9488", "#ca8a04"];
+const FEATURE_COLORS = ["#7c3aed", "#3b82f6", "#16a34a", "#a855f7", "#d97706", "#0891b2", "#db2777", "#65a30d", "#7c3aed", "#dc2626", "#0d9488", "#ca8a04"];
 
 const byOrder = (a: BacklogItem, b: BacklogItem) => a.order - b.order || a.id.localeCompare(b.id, undefined, { numeric: true });
 

@@ -18,6 +18,7 @@ const SUGGESTIONS: Suggestion[] = [
 export function ChatView(props: {
 	ws: Workspace;
 	chatId?: string;
+	relatedModules: Module[];
 	chats: Record<string, ChatMeta>;
 	models: ModelInfo[];
 	defaultModel?: ModelRef;
@@ -130,6 +131,16 @@ export function ChatView(props: {
 					</button>
 				)}
 			</div>
+			{props.relatedModules.length > 0 && (
+				<nav className="chat-modules" aria-label="Modules in this chat">
+					<span className="chat-modules-label">Modules</span>
+					{props.relatedModules.map((m) => (
+						<a key={m.id} className="btn small chat-module-link" href={chatHref(ws.id, chatId, m.id)} aria-label={`Open module: ${m.name}`} aria-current={props.openModule === m.id ? "true" : undefined} title={`Open ${m.name}`}>
+							<span aria-hidden="true">{m.icon}</span><span className="t">{m.name}</span><span className="chat-module-open">Open ↗</span>
+						</a>
+					))}
+				</nav>
+			)}
 			<div
 				className="transcript"
 				ref={scroller}

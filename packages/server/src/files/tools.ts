@@ -204,11 +204,12 @@ export function createFileTools(ws: Workspace) {
 			name: "file_share_with_module",
 			description: "Let a module's server read a file through ctx.files (files are capabilities, like grants).",
 			parameters: Type.Object({ file: Type.String(), module: Type.String({ description: "module id or name" }) }),
-			execute: async (args) => {
+			execute: async (args, api) => {
 				const f = await get(args.file);
 				const g = moduleDb.get(args.module) ?? moduleDb.inWorkspace(ws.id).find((x) => x.name.toLowerCase() === args.module.toLowerCase());
 				if (!g || g.workspaceId !== ws.id) throw new Error(`Unknown module ${args.module}`);
 				if (!f.modules.includes(g.id)) await ws.files.update(f.id, (m) => void m.modules.push(g.id));
+				await ws.linkModuleChat(String(api.conversationId), g.id);
 				return text({ ok: true, file: f.id, module: g.id, note: `In the module server: ctx.files.bytes("${f.id}") / ctx.files.text("${f.id}")` });
 			},
 		}),

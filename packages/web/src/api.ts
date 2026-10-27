@@ -81,7 +81,7 @@ export type ApprovalAction = {
 	decidedAt?: number;
 	decidedBy?: string;
 };
-export type ChatMeta = { id: string; title: string; createdAt: number; createdBy: string; updatedAt: number; archived?: boolean };
+export type ChatMeta = { id: string; title: string; createdAt: number; createdBy: string; updatedAt: number; archived?: boolean; moduleIds?: string[] };
 export type AuditLine = { at: number; grantId: string; airlock: string; method: string; by: string; outcome: string; detail?: string };
 export type WorkspaceDocs = {
 	chats: { chats: Record<string, ChatMeta> };

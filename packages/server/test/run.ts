@@ -24,6 +24,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "smoke", file: "smoke.ts", what: "HTTP/WS end to end: chat, modules, sharing, airlocks, files, blueprints" },
 	{ name: "render", file: "render-check.ts", what: "module_screenshot (browser)" },
 	{ name: "ui", file: "ui.ts", what: "web app in a browser: home page, chat, menus, picker, mission page" },
+	{ name: "module-chat", file: "module-chat.ts", what: "durable chat/module links, legacy recovery, sidebar highlighting and Open module navigation" },
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

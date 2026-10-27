@@ -35,6 +35,7 @@ import {
 } from "./docs.ts";
 import { defaultModel, models } from "./models.ts";
 import { watchRuns, watchRunning } from "./home.ts";
+import { backfillModuleChats } from "./module-chats.ts";
 import { MissionManager } from "../missions/manager.ts";
 import { agentEnv } from "../missions/env.ts";
 import { blueprints, modules, HttpError, newId, users, workspaces, type BlueprintRow, type ModuleRow, type User, type WorkspaceRow } from "./system-db.ts";
@@ -135,6 +136,7 @@ export class Workspace {
 		registry.install(ws.missions.coding);
 		registry.install(ws.missions.extension);
 		await ws.#watchDocs();
+		await backfillModuleChats(ws);
 		await ws.missions.init();
 		harness.closed.then((end) => {
 			if (end.reason === "failed") {
@@ -193,7 +195,7 @@ export class Workspace {
 				agent: { model: chosen, thinkingLevel: "medium" },
 				init: async (tx, id) => {
 					const chats = await tx.doc(ChatsDoc);
-					chats.chats[String(id)] = { id: String(id), title: title?.trim() || "New chat", createdAt: Date.now(), createdBy: user.displayName, updatedAt: Date.now() };
+					chats.chats[String(id)] = { id: String(id), title: title?.trim() || "New chat", createdAt: Date.now(), createdBy: user.displayName, updatedAt: Date.now(), moduleIds: [] };
 				},
 			},
 			ctx,
@@ -231,6 +233,10 @@ export class Workspace {
 			const chats = await tx.doc(ChatsDoc);
 			const chat = chats.chats[chatId];
 			if (chat) {
+				if (open?.workspaceId === this.id) {
+					chat.moduleIds ??= [];
+					if (!chat.moduleIds.includes(open.id)) chat.moduleIds.push(open.id);
+				}
 				chat.updatedAt = Date.now();
 				if (chat.title === "New chat") chat.title = content.replace(/\s+/g, " ").slice(0, 60);
 			}
@@ -243,7 +249,7 @@ export class Workspace {
 				whenBusy: mode === "steer" ? "steer" : "followUp",
 				entry: {
 					kind: "outpost.user",
-					data: { author: user.displayName, authorId: user.id, text: content, files: attached.map((f) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: f.size })) },
+					data: { author: user.displayName, authorId: user.id, text: content, ...(open?.workspaceId === this.id ? { moduleId: open.id } : {}), files: attached.map((f) => ({ id: f.id, name: f.name, kind: f.kind, mime: f.mime, size: f.size })) },
 				},
 			},
 			ctx,
@@ -266,6 +272,26 @@ export class Workspace {
 			else parts.push({ type: "text", text: `${label} Not inlined — inspect it with the file tools (file_info first).` });
 		}
 		return parts;
+	}
+
+	/** Record actual work on a module, resolving subagent conversations to their owning chat. */
+	async linkModuleChat(conversationId: string, moduleId: string) {
+		await this.harness.commit(async (tx) => {
+			if (modules.get(moduleId)?.workspaceId !== this.id) return;
+			const chats = (await tx.doc(ChatsDoc)).chats;
+			let id = conversationId;
+			for (let depth = 0; depth < 16; depth++) {
+				const chat = chats[id];
+				if (chat) {
+					chat.moduleIds ??= [];
+					if (!chat.moduleIds.includes(moduleId)) chat.moduleIds.push(moduleId);
+					return;
+				}
+				const record = await tx.conversation(Number(id) as any);
+				if (!record?.owner) return;
+				id = String(record.owner.conversationId);
+			}
+		}, ctx);
 	}
 
 	async renameChat(chatId: string, title: string) {
@@ -404,6 +430,7 @@ export class Workspace {
 			await tx.retireDoc(ModuleSourceDoc, moduleId);
 			await tx.retireDoc(ModuleStateDoc, moduleId);
 			await tx.retireDoc(ModuleLogsDoc, moduleId);
+			for (const chat of Object.values((await tx.doc(ChatsDoc)).chats)) if (chat.moduleIds) chat.moduleIds = chat.moduleIds.filter((id) => id !== moduleId);
 			const grants = await tx.doc(GrantsDoc);
 			for (const [id, g] of Object.entries(grants.grants)) if (g.holder.kind === "module" && g.holder.id === moduleId) delete grants.grants[id];
 			const files = await tx.doc(FilesDoc);

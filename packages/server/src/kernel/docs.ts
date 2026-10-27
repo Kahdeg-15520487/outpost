@@ -9,7 +9,7 @@ const latest = { checkpointWhen: () => false } as const;
 // Large documents that churn: write a full base every so often to bound replay.
 const every = (n: number) => ({ checkpointWhen: (_v: unknown, _ops: unknown, info: { deltasSinceBase: number }) => info.deltasSinceBase >= n }) as any;
 
-export type ChatMeta = { id: string; title: string; createdAt: number; createdBy: string; updatedAt: number; archived?: boolean };
+export type ChatMeta = { id: string; title: string; createdAt: number; createdBy: string; updatedAt: number; archived?: boolean; /** Modules created or used here; absent until legacy history has been indexed. */ moduleIds?: string[] };
 export const ChatsDoc = defineDoc<{ chats: Record<string, ChatMeta> }>({
 	kind: "outpost.chats",
 	version: 1,

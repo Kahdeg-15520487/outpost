@@ -78,6 +78,12 @@ export function createOutpostExtension(ws: Workspace): Extension {
 		role: "editor" as const,
 	});
 
+	const usedModule = async (ref: string, api: ToolExecutionApi) => {
+		const g = requireModule(ws, ref);
+		await ws.linkModuleChat(String(api.conversationId), g.id);
+		return g;
+	};
+
 	const tools = [
 		defineTool({
 			name: "module_list",
@@ -104,6 +110,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 				const existing = await api.memo<string>("module", context);
 				const g = existing ? moduleDb.get(existing)! : await ws.createModule({ name: args.name, icon: args.icon, blueprintId: args.blueprint, ownerId: ws.row.ownerId });
 				await api.memo("module", g.id, context);
+				await ws.linkModuleChat(String(api.conversationId), g.id);
 				await api.details({ openModule: g.id }, context);
 				const files = await ws.moduleFiles(g.id);
 				const server = await ws.host(g.id).describe();
@@ -114,8 +121,8 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			name: "module_read",
 			description: "Without path: list a module's files and its server API. With path: read one file.",
 			parameters: Type.Object({ module: Type.String({ description: "module id or name" }), path: Type.Optional(Type.String()) }),
-			execute: async (args) => {
-				const g = requireModule(ws, args.module);
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
 				const files = await ws.moduleFiles(g.id);
 				if (args.path) {
 					if (files[args.path] === undefined) throw new Error(`No file ${args.path}. Files: ${Object.keys(files).join(", ")}`);
@@ -130,7 +137,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			parameters: Type.Object({ module: Type.String(), path: Type.String(), content: Type.String() }),
 			replay: "safe",
 			execute: async (args, api, context) => {
-				const g = requireModule(ws, args.module);
+				const g = await usedModule(args.module, api);
 				await ws.writeModuleFiles(g.id, { [args.path]: args.content });
 				await api.details({ openModule: g.id }, context);
 				const compat = await moduleCompat(ws, g.id);
@@ -147,7 +154,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			}),
 			replay: "safe",
 			execute: async (args, api, context) => {
-				const g = requireModule(ws, args.module);
+				const g = await usedModule(args.module, api);
 				const files = await ws.moduleFiles(g.id);
 				let content = files[args.path];
 				if (content === undefined) throw new Error(`No file ${args.path}`);
@@ -166,8 +173,8 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			name: "module_delete_file",
 			description: "Delete a file from a module.",
 			parameters: Type.Object({ module: Type.String(), path: Type.String() }),
-			execute: async (args) => {
-				const g = requireModule(ws, args.module);
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
 				await ws.writeModuleFiles(g.id, { [args.path]: null });
 				return text({ ok: true });
 			},
@@ -177,7 +184,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			description: "Call a module server method as the agent — use the app on the user's behalf. Changes are broadcast live to everyone viewing it.",
 			parameters: Type.Object({ module: Type.String(), method: Type.String(), args: Type.Optional(Type.Array(Type.Any())) }),
 			execute: async (args, api, context) => {
-				const g = requireModule(ws, args.module);
+				const g = await usedModule(args.module, api);
 				const result = await ws.host(g.id).call(args.method, args.args ?? [], await agentCaller(api, context));
 				return text(result ?? null);
 			},
@@ -201,7 +208,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 				persist: Type.Optional(Type.Boolean({ description: "keep state changes made by the render (default false: it runs against a scratch copy of the module's storage)" })),
 			}),
 			execute: async (args, api, context) => {
-				const g = requireModule(ws, args.module);
+				const g = await usedModule(args.module, api);
 				const r = await ws.renderModule(g.id, await agentCaller(api, context), {
 					width: clamp(args.width ?? 900, 320, 1600),
 					height: clamp(args.height ?? 700, 240, 2000),
@@ -230,8 +237,8 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			name: "module_logs",
 			description: "Recent module server logs: console output, calls, and errors.",
 			parameters: Type.Object({ module: Type.String(), limit: Type.Optional(Type.Number()) }),
-			execute: async (args) => {
-				const g = requireModule(ws, args.module);
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
 				const lines = (await ws.moduleLogs(g.id)).slice(-(args.limit ?? 40));
 				return text(lines.map((l) => `${new Date(l.at).toISOString().slice(11, 19)} ${l.level.padEnd(5)} ${l.text}`).join("\n") || "(no logs)");
 			},
@@ -240,8 +247,8 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			name: "blueprint_publish",
 			description: "Publish a module's code as a blueprint others can create their own copies from.",
 			parameters: Type.Object({ module: Type.String(), name: Type.String(), description: Type.String(), visibility: Type.Optional(Type.Union([Type.Literal("public"), Type.Literal("private")])) }),
-			execute: async (args) => {
-				const g = requireModule(ws, args.module);
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
 				const bp = await ws.publishBlueprint(g.id, { name: args.name, description: args.description, visibility: args.visibility ?? "public", authorId: ws.row.ownerId });
 				return text({ id: bp.id, name: bp.name });
 			},
@@ -273,7 +280,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			}),
 			execute: async (args, api, context) => {
 				const chat = await chatOf(ws, api.conversationId, context);
-				const holder = args.forModule ? { kind: "module" as const, id: requireModule(ws, args.forModule).id } : { kind: "conversation" as const, id: chat };
+				const holder = args.forModule ? { kind: "module" as const, id: (await usedModule(args.forModule, api)).id } : { kind: "conversation" as const, id: chat };
 				const req = await ws.requestAccess(holder, args.airlock, args.resource, args.reason, args.methods);
 				return text({ requested: req.id, status: "pending — the user has been asked. Continue with what you can; you'll see the resource in <resources> once granted." });
 			},

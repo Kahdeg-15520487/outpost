@@ -96,9 +96,23 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const deleteModule = async (g: Module) => {
 		if (!ws || !confirm(`Delete "${g.name}"? Its code and data are removed for everyone it's shared with.`)) return;
 		await api.del(`/api/modules/${g.id}`).catch((e) => alert(e.message));
-		if (route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, route.chat));
+		if (route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, chatId));
 	};
-	const rowClass = (key: string, on: boolean) => `side-row ${on ? "on" : ""} ${menuOpen === key ? "menu-open" : ""}`;
+	const openModuleId = route.page === "chat" || route.page === "module" ? route.module : undefined;
+	const relatedChats = openModuleId ? chats.filter((c) => c.moduleIds?.includes(openModuleId)) : [];
+	// Module-only URLs recover their chat context; an explicit chat URL always wins.
+	const chatId = route.page === "chat" ? route.chat ?? relatedChats[0]?.id : undefined;
+	// Pin recovered context in the URL so another chat's later activity cannot steal selection.
+	useEffect(() => {
+		if (route.page === "chat" && route.module && !route.chat && chatId && ws) navigate(chatHref(ws.id, chatId, route.module, route.focus));
+	}, [route, chatId, ws?.id]);
+	const relatedModuleIds = chatId ? docs.chats.chats[chatId]?.moduleIds ?? [] : [];
+	const relatedModules = modules.filter((m) => relatedModuleIds.includes(m.id));
+	const chatForModule = (id: string) => {
+		const linked = chats.filter((c) => c.moduleIds?.includes(id));
+		return linked.some((c) => c.id === chatId) ? chatId : linked[0]?.id;
+	};
+	const rowClass = (key: string, on: boolean, related = false) => `side-row ${on ? "on" : ""} ${related ? "related" : ""} ${menuOpen === key ? "menu-open" : ""}`;
 
 	const moduleOpen = route.page === "chat" && route.module;
 	const chatHidden = route.page === "chat" && !!route.module && !!route.focus;
@@ -196,22 +210,24 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 						{chats.length === 0 && <div className="side-item muted" style={{ color: "#6c6655" }}>No chats yet</div>}
 						{ws &&
 							chats.map((c) => {
-								const on = route.page === "chat" && route.chat === c.id;
+								const on = chatId === c.id;
+								const related = !!openModuleId && !!c.moduleIds?.includes(openModuleId);
 								const href = chatHref(ws.id, c.id);
 								return renaming === `c:${c.id}` ? (
 									<div key={c.id} className="side-item editing">
 										<InlineRename value={c.title} onSave={(title) => api.patch(`/api/w/${ws.id}/chats/${c.id}`, { title })} onDone={() => setRenaming(undefined)} />
 									</div>
 								) : (
-									<div key={c.id} className={rowClass(`c:${c.id}`, on)}>
+									<div key={c.id} data-chat-id={c.id} className={rowClass(`c:${c.id}`, on, related)}>
 										<a
-											className={`side-item ${on ? "on" : ""}`}
-											href={chatHref(ws.id, c.id, route.page === "chat" ? route.module : undefined)}
+											className={`side-item ${on ? "on" : ""} ${related ? "related" : ""}`}
+											aria-current={on ? "page" : undefined}
+											href={chatHref(ws.id, c.id, related ? openModuleId : undefined)}
 											title={canEdit ? `${c.title} — double-click to rename` : c.title}
 											onDoubleClick={canEdit ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`c:${c.id}`)) : undefined}
 										>
 											<span className="t">{c.title}</span>
-											<span className="ago">{timeAgo(c.updatedAt)}</span>
+											{related && !on ? <span className="side-related" title="This chat has worked on the open module">Related</span> : <span className="ago">{timeAgo(c.updatedAt)}</span>}
 										</a>
 										<RowMenu
 											label={c.title}
@@ -234,7 +250,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 						{modules.length === 0 && <div className="side-item" style={{ color: "#6c6655" }}>Ask the agent to build one</div>}
 						{ws &&
 							modules.map((g) => {
-								const on = route.page === "chat" && route.module === g.id;
+								const on = openModuleId === g.id;
+								const related = relatedModuleIds.includes(g.id);
 								const canChange = g.role === "owner" || g.role === "editor";
 								return renaming === `g:${g.id}` ? (
 									<div key={g.id} className="side-item editing">
@@ -242,15 +259,17 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 										<InlineRename value={g.name} onSave={(name) => api.patch(`/api/modules/${g.id}`, { name })} onDone={() => setRenaming(undefined)} />
 									</div>
 								) : (
-									<div key={g.id} className={rowClass(`g:${g.id}`, on)}>
+									<div key={g.id} data-module-id={g.id} className={rowClass(`g:${g.id}`, on, related)}>
 										<a
-											className={`side-item ${on ? "on" : ""}`}
-											href={chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, true)}
+											className={`side-item ${on ? "on" : ""} ${related ? "related" : ""}`}
+											aria-current={on ? "page" : undefined}
+											href={chatHref(ws.id, chatForModule(g.id), g.id, true)}
 											title={canChange ? `${g.name} — double-click to rename` : g.name}
 											onDoubleClick={canChange ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`g:${g.id}`)) : undefined}
 										>
 											<span className="ico">{g.icon}</span>
 											<span className="t">{g.name}</span>
+											{related && !on && <span className="side-related" title="This module is used in the active chat">Related</span>}
 										</a>
 										<RowMenu
 											label={g.name}
@@ -263,7 +282,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 													icon: "⇪",
 													hidden: g.role !== "owner",
 													onSelect: () => {
-														navigate(chatHref(ws.id, route.page === "chat" ? route.chat : undefined, g.id, route.page === "chat" && route.module === g.id ? route.focus : true));
+														navigate(chatHref(ws.id, chatForModule(g.id), g.id, route.page === "chat" && route.module === g.id ? route.focus : true));
 														setTabRequest((t) => ({ module: g.id, tab: "share", n: (t?.n ?? 0) + 1 }));
 													},
 												},
@@ -305,12 +324,12 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				</button>
 			)}
 
-			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${route.chat ?? ""}`} ws={ws} chatId={route.chat} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
+			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${chatId ?? ""}`} ws={ws} chatId={chatId} relatedModules={relatedModules} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.module && (
 				<ModuleWindow key={route.module} moduleId={route.module} user={user} grants={docs.grants} tabRequest={tabRequest?.module === route.module ? tabRequest : undefined}
 					chatHidden={chatHidden}
-					onToggleChat={() => navigate(chatHref(ws.id, route.chat, route.module, !chatHidden))}
-					onClose={() => navigate(chatHref(ws.id, route.chat))} />
+					onToggleChat={() => navigate(chatHref(ws.id, chatId, route.module, !chatHidden))}
+					onClose={() => navigate(chatHref(ws.id, chatId))} />
 			)}
 			{route.page === "blueprints" && ws && <BlueprintsPage ws={ws} />}
 			{route.page === "mission" && ws && <MissionPage key={route.mission} ws={ws} missionId={route.mission} tab={route.tab} models={models} picker={picker} grants={docs.grants} />}

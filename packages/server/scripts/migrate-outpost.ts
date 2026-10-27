@@ -6,8 +6,8 @@
  * This is a migration utility, NOT a runtime compatibility layer.
  */
 import { DatabaseSync, backup } from "node:sqlite";
-import { closeSync, cpSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { closeSync, cpSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { applyImmutable } from "@earendil-works/chord/delta";
@@ -82,12 +82,26 @@ function operationalText(s: string) {
 		.replace(/\bpi-os\b/g, "Outpost").replace(/\bGadgets?\b/g, (s) => s === "Gadgets" ? "Modules" : "Module")
 		.replace(/\bGatekeepers?\b/g, (s) => s === "Gatekeepers" ? "Airlocks" : "Airlock");
 }
+function canonicalPath(path: string): string {
+	path = resolve(path);
+	if (existsSync(path)) return realpathSync.native(path);
+	if (dirname(path) === path) throw new Error(`Path has no existing root: ${path}`);
+	return join(canonicalPath(dirname(path)), basename(path));
+}
 function pathMove(text: string, oldRoot: string, newRoot: string) {
-	for (const [a, b] of [[oldRoot, newRoot], [oldRoot.replaceAll("\\", "/"), newRoot.replaceAll("\\", "/")]]) {
-		text = text.split(`${a}${a.includes("\\") ? "\\" : "/"}projects${a.includes("\\") ? "\\" : "/"}`)
-			.join(`${b}${b.includes("\\") ? "\\" : "/"}missions${b.includes("\\") ? "\\" : "/"}`);
+	// Git expands junctions and Windows 8.3 paths even when the caller uses their short spelling.
+	for (const root of new Set([resolve(oldRoot), canonicalPath(oldRoot)])) {
+		const pattern = root.split(/[\\/]/).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\\\/]");
+		text = text.replace(new RegExp(`${pattern}[\\\\/](?:projects|missions)[\\\\/]`, process.platform === "win32" ? "gi" : "g"), (match) => {
+			const slash = match.includes("\\") ? "\\" : "/";
+			return `${newRoot.replace(/[\\/]/g, slash)}${slash}missions${slash}`;
+		});
 	}
 	return text;
+}
+function isWithin(root: string, path: string) {
+	const rel = relative(canonicalPath(root), canonicalPath(path));
+	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
 /** Tool-call envelope only: third-party arguments, user text and stored application data stay intact. */
@@ -222,11 +236,10 @@ export function relocateRepositories(data: string, oldRoot: string, newRoot = da
 		for (const d of [join(root, "preview"), join(root, "verify"), ...(existsSync(join(root, "worktrees")) ? readdirSync(join(root, "worktrees")).map((n) => join(root, "worktrees", n)) : [])]) pointers.push(join(d, ".git"));
 		for (const p of pointers) if (existsSync(p) && statSync(p).isFile()) {
 			let text = readFileSync(p, "utf8");
-			for (const slash of ["/", "\\"]) {
-				const old = resolve(oldRoot).replace(/[\\/]/g, slash);
-				const next = resolve(newRoot).replace(/[\\/]/g, slash);
-				text = text.split(`${old}${slash}projects${slash}`).join(`${next}${slash}missions${slash}`)
-					.split(`${old}${slash}missions${slash}`).join(`${next}${slash}missions${slash}`);
+			text = pathMove(text, oldRoot, canonicalPath(newRoot));
+			if (basename(p) === ".git" || basename(p) === "gitdir") {
+				const target = resolve(dirname(p), text.replace(/^gitdir:\s*/, "").trim());
+				if (!isWithin(root, target)) throw new Error(`Refusing a worktree pointer outside the migrated mission: ${p}`);
 			}
 			// Git for Windows marks .git files hidden: opening with O_CREAT ('w') fails with EPERM.
 			const fd = openSync(p, "r+");
@@ -243,6 +256,7 @@ function migrateRepo(root: string) {
 		dir: /^worktree (.+)$/m.exec(s)![1]!, branch: /^branch refs\/heads\/(.+)$/m.exec(s)?.[1],
 	}));
 	const convert = (dir: string) => {
+		if (!isWithin(root, dir)) throw new Error(`Refusing to edit a worktree outside the migrated mission: ${dir}`);
 		const old = join(dir, ".pios", "project.json");
 		if (!existsSync(old)) return;
 		const next = join(dir, ".outpost", "mission.json");
@@ -270,7 +284,8 @@ export function migrateConfig(input: Json): Json {
 }
 
 export async function migrateData(source: string, destination: string, finalData = destination) {
-	source = resolve(source); destination = resolve(destination); finalData = resolve(finalData);
+	const sourceSpelling = resolve(source);
+	source = canonicalPath(source); destination = canonicalPath(destination); finalData = canonicalPath(finalData);
 	if (existsSync(destination)) throw new Error("Destination already exists; choose an empty new path");
 	if (!existsSync(join(source, "system.sqlite"))) throw new Error("Source has no system.sqlite");
 	if (!relative(source, destination).startsWith(`..${sep}`) && !relative(source, destination).startsWith("..")) throw new Error("Destination must be outside source");
@@ -285,8 +300,8 @@ export async function migrateData(source: string, destination: string, finalData
 		try { await backup(db, join(destination, f)); } finally { db.close(); }
 	}
 	migrateSystem(join(destination, "system.sqlite"));
-	for (const f of databases.slice(1)) migrateWorkspace(join(destination, f), source, finalData);
-	relocateRepositories(destination, source);
+	for (const f of databases.slice(1)) migrateWorkspace(join(destination, f), sourceSpelling, finalData);
+	relocateRepositories(destination, sourceSpelling);
 	for (const root of missionRoots(destination)) migrateRepo(root);
 	writeFileSync(join(destination, "outpost-migration.json"), JSON.stringify({ version: 1, source, finalData, at: new Date().toISOString(), databases, omittedCaches: ["node_modules"] }, null, 2));
 	return { databases: databases.length, missions: missionRoots(destination).length };

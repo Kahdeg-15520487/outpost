@@ -1,8 +1,8 @@
 /** Outpost clean-break migration: real SQLite journals and git worktrees, all under the test temp dir. */
 import { check, finish, testDir } from "./lib/harness.ts";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Harness, createRegistry, defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -59,12 +59,16 @@ git(repo, "add", "."); git(repo, "commit", "-qm", "fixture");
 git(repo, "worktree", "add", "-qb", "agent/worker", worker);
 writeFileSync(join(worker, "app.txt"), "staged\n"); git(worker, "add", "app.txt"); writeFileSync(join(worker, "app.txt"), "unstaged\n");
 const beforeHead = git(repo, "rev-parse", "HEAD");
+const originalPointer = readFileSync(join(worker, ".git"), "utf8");
+const sourceAlias = join(testDir, "legacy-alias");
+symlinkSync(source, sourceAlias, process.platform === "win32" ? "junction" : "dir");
 mkdirSync(join(worker, "node_modules")); writeFileSync(join(worker, "node_modules", "cache"), "reinstallable");
 
 try {
 	const code = migrateCode('gadget.api.get(); ctx.storage.get("gadget"); const obj = { gadget: "original" }; obj.gadget; ctx["gatekeepers"].web.get({});');
 	check("code migration changes API references, not literals or user properties", code.includes('module.api.get()') && code.includes('storage.get("gadget")') && code.includes('obj.gadget') && code.includes('ctx["airlocks"]'));
-	const report = await migrateData(source, dest, final);
+	const report = await migrateData(sourceAlias, dest, final);
+	check("path aliases never redirect source worktrees into the copy", readFileSync(join(worker, ".git"), "utf8") === originalPointer && existsSync(join(worker, ".pios", "project.json")));
 	check("migrates system + workspace and a mission", report.databases === 2 && report.missions === 1);
 	check("source database schema is unchanged", (() => { const d = new DatabaseSync(join(source, "system.sqlite"), { readOnly: true }); try { return !!d.prepare("SELECT 1 FROM sqlite_master WHERE name='gadgets'").get(); } finally { d.close(); } })());
 	check("original repository and worktree are untouched", git(repo, "rev-parse", "HEAD") === beforeHead && git(worker, "show", ":app.txt") === "staged" && readFileSync(join(worker, "app.txt"), "utf8") === "unstaged\n");
@@ -91,7 +95,7 @@ try {
 	const targetWorker = join(dest, "missions", "p_1", "worktrees", "worker");
 	check("run manifest is renamed and committed on main and agent branch", git(targetRepo, "show", "HEAD:.outpost/mission.json").includes("echo ok") && git(targetWorker, "show", "HEAD:.outpost/mission.json").includes("echo ok") && !existsSync(join(targetRepo, ".pios")));
 	check("migration does not commit unrelated staged or unstaged work", git(targetWorker, "show", ":app.txt") === "staged" && git(targetWorker, "show", "HEAD:app.txt") === "committed" && readFileSync(join(targetWorker, "app.txt"), "utf8") === "unstaged\n");
-	check("copied worktree points only at the migrated repository", git(targetWorker, "rev-parse", "--git-common-dir").replaceAll("\\", "/").startsWith(dest.replaceAll("\\", "/")));
+	check("copied worktree points only at the migrated repository", realpathSync.native(resolve(targetWorker, git(targetWorker, "rev-parse", "--git-common-dir"))).startsWith(realpathSync.native(dest)));
 	let refused = false; try { await migrateData(source, dest); } catch { refused = true; }
 	check("a second run cannot overwrite the destination", refused);
 	const cfg = migrateConfig({ gatekeepers: { github: { token: "$GITHUB_TOKEN" } }, connectors: [{ params: { project: "Azure project" } }] });

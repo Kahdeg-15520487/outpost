@@ -92,7 +92,7 @@ export default defineConnector({
 
 - **Loading.** pi-os loads built-in connectors from `packages/server/gatekeepers/`, plus whatever packages `pi-os.config.json` lists: `"connectors": ["@acme/pios-jira", "./my-connectors/zendesk"]`. Connectors aren't installed from the UI, because a connector runs in the server process with network access.
 - **`http`** is pi-os's fetch, not the global one. It adds the connection's credential, refreshes OAuth tokens, blocks private and metadata addresses, and enforces timeouts and size limits. Connectors don't touch raw credentials.
-- **The kit** gives connectors the shared plumbing: OAuth (auth code with PKCE, device code), token refresh, an SSRF-safe fetch, pagination helpers, simulation with provisional ids, and a test harness. Cloudflare OS learned the hard way that each connector re-implementing these gets them wrong.
+- **The kit** gives connectors the shared plumbing: OAuth (auth code with PKCE, device code), token refresh, an SSRF-safe fetch, pagination helpers, simulation with provisional ids, and a test harness. Left to each connector, these get re-implemented, and wrongly.
 - The three current Gatekeepers move to this format unchanged in behaviour.
 
 ### 2. MCP servers

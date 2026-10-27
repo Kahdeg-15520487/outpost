@@ -1,6 +1,6 @@
 # pi·os
 
-An AI workspace in the spirit of [Cloudflare OS](https://github.com/cloudflare/cloudflare-os), self-hosted on Node, with [**pi-durable**](https://github.com/earendil-works/pi/tree/main/packages/durable) as the kernel.
+A self-hosted AI workspace on Node, with [**pi-durable**](https://github.com/earendil-works/pi/tree/main/packages/durable) as the kernel.
 
 - **Agents that survive crashes.** Every chat is a pi-durable conversation. Model turns, tool calls and app state are committed to SQLite before they are shown. Kill the process mid-run and the run resumes from its last checkpoint on restart.
 - **Gadgets.** Small private apps the agent writes for you. Each gadget has a sandboxed client and a sandboxed server with durable storage. Gadgets are multiplayer by default, and their API doubles as the agent's tool surface.
@@ -185,7 +185,7 @@ over HTTPS also means the previews' plain-HTTP ports are blocked as mixed conten
 
 **Git and the shell.** The image has git, bash and node plus a system git identity, so agents can open
 worktrees, commit and merge. They run shell commands inside the container, and that shell is
-[not sandboxed](#not-yet-like-cloudflare-os) — the container is the boundary.
+[not sandboxed](#known-limits) — the container is the boundary.
 
 **Size.** ~1.8 GB, most of it Chromium. Skip `chromium` from the `apt-get` line and set
 `render.enabled: false` in the config if you don't need `gadget_screenshot`.
@@ -231,7 +231,7 @@ to the model is the run snippets and tool names, never the transcript.
 
 - **Server:** `server.js` exports a class whose public methods are the RPC API. It runs in its own **QuickJS** VM (`quickjs-wasi`) with a 64 MB heap, a 2 s CPU slice and a 30 s call timeout. It has no fetch, filesystem, timers or Node APIs.
 - **`ctx` inside the VM:** `ctx.storage` (sync KV), `ctx.broadcast`, `ctx.caller`, `ctx.presence()`, `ctx.gatekeepers.<grant>.<method>()`.
-- **Durable Object-like semantics:** calls are serialized. A call's storage writes commit in one pi-durable transaction when it returns. A throwing call rolls back. Broadcasts are released only after the commit (an output gate).
+- **Serialized, transactional calls:** calls run one at a time. A call's storage writes commit in one pi-durable transaction when it returns. A throwing call rolls back. Broadcasts are released only after the commit (an output gate).
 - **Client:** `index.html` runs in `<iframe sandbox="allow-scripts">`, which gives it an opaque origin with no cookies or storage. CSP blocks every network request (`connect-src 'none'`, no external scripts). Its only channel is `postMessage` to the shell, which relays `gadget.api.method()` calls to the server as the signed-in user.
 - **Roles:** viewers can call only the methods listed in `static readonly = [...]`. Editors can call all of them.
 - **Visual feedback:** `gadget_screenshot` renders a gadget's client in headless Chrome, Chromium or Edge and returns the image to the agent. The render uses the same sandbox as the app and blocks all network access. Alongside the image it reports console output, uncaught errors, failed RPC calls, and any bad selectors in `actions`.
@@ -312,9 +312,9 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 
 Browser suites skip themselves when no browser is found (set `PI_OS_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.
 
-## Not (yet) like Cloudflare OS
+## Known limits
 
-- Gadget servers are QuickJS VMs in the main process, not Dynamic Worker facets. They have no outbound network and no timers or alarms.
-- Gatekeepers run in-process and use a static token (`gatekeepers.github.token`) instead of per-user OAuth.
+- Gadget servers are QuickJS VMs in the main process, not separate worker isolates. They have no outbound network and no timers or alarms.
+- Gatekeepers run in-process and use shared service-account keys (a token in `pi-os.config.json`, or a connection's key) rather than per-user OAuth sign-in.
 - Realtime collaboration is method calls plus broadcasts, not CRDT/OT text editing.
 - Single process: storage has one owner, so there's no horizontal scaling.

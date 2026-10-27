@@ -12,7 +12,7 @@ import { hub } from "../collab/hub.ts";
  * authority. What it can touch is exactly what the host passes in `ctx`: its own durable storage,
  * broadcast to its connected clients, and the Gatekeepers it was introduced to.
  *
- * Calls are serialized (like a Durable Object). Storage writes of a call are committed to the
+ * Calls are serialized (one at a time per gadget). Storage writes of a call are committed to the
  * workspace's pi-durable Harness in one transaction when the call returns, and the call's
  * broadcasts are released only after that commit (an output gate). A call that throws rolls back.
  */

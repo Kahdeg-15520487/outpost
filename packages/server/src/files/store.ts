@@ -235,6 +235,9 @@ export class FileStore {
 			const doc = await tx.doc(FilesDoc);
 			sha = doc.files[id]?.sha256;
 			delete doc.files[id];
+			// Derived files outlive their source, but the link to a file that no longer exists is a lie:
+			// drop it, so they list at the top level instead of hanging under nothing.
+			for (const file of Object.values(doc.files)) if (file.parent === id) delete file.parent;
 			stillUsed = Object.values(doc.files).some((f) => f.sha256 === sha);
 		}, ctx);
 		if (sha && !stillUsed && existsSync(this.#path(sha))) rmSync(this.#path(sha));

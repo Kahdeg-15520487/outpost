@@ -146,6 +146,10 @@ check("zip keeps dates and methods", zipParsed.parsed.entries.some((e: any) => e
 const extracted = await ana("POST", `/api/w/${ws}/files/${zip.id}/extract`, {});
 check("extraction wrote the entries", extracted.count === 2, extracted.count);
 check("extraction keeps paths", extracted.files.some((f: any) => f.name === "sample.zip/tree/readme.md"), extracted.files.map((f: any) => f.name));
+check("every extracted entry points at the archive it came from", extracted.files.every((f: any) => f.parent === zip.id && f.source === "extract"), extracted.files.map((f: any) => [f.name, f.parent]));
+const listed = await ana("GET", `/api/w/${ws}/files`);
+const childOf = (parent: string) => listed.files.filter((f: any) => f.parent === parent);
+check("the archive lists its derived files by parent", childOf(zip.id).length === extracted.count, childOf(zip.id).length);
 
 const tar = await upload("sample.tar", fixture("sample.tar"), "application/x-tar");
 const tarParsed = await parsed(tar.id, "json");
@@ -192,6 +196,14 @@ console.log("\nconversion and caching");
 const mdConvert = await ana("POST", `/api/w/${ws}/files/${docx.id}/convert`, { to: "markdown" });
 check("markdown conversion wrote a file", mdConvert.files.length === 1 && mdConvert.files[0].name === "sample.md", mdConvert.files.map((f: any) => f.name));
 check("the derived file points at its source", mdConvert.files[0].parent === docx.id, mdConvert.files[0]);
+const chain = await ana("POST", `/api/w/${ws}/files/${mdConvert.files[0].id}/convert`, { to: "text" });
+check("a derived file can be derived from again", chain.files[0]?.parent === mdConvert.files[0].id, chain.files[0]);
+const deepList = (await ana("GET", `/api/w/${ws}/files`)).files.find((f: any) => f.id === chain.files[0].id);
+check("the chain keeps both links", deepList.parent === mdConvert.files[0].id, deepList);
+await ana("DELETE", `/api/w/${ws}/files/${zip.id}`);
+const afterDelete = await ana("GET", `/api/w/${ws}/files`);
+check("deleting the parent keeps its derived files", afterDelete.files.some((f: any) => f.id === extracted.files[0].id) && !afterDelete.files.some((f: any) => f.id === zip.id));
+check("…and the dangling parent link is dropped, so they list at the top level", !afterDelete.files.find((f: any) => f.id === extracted.files[0].id)?.parent, afterDelete.files.find((f: any) => f.id === extracted.files[0].id));
 const mdConverted = Buffer.from(await (await fetch(`${base}/api/w/${ws}/files/${mdConvert.files[0].id}`, { headers: { cookie: ana.cookie() } })).arrayBuffer()).toString("utf8");
 check("the converted markdown has the content", mdConverted.includes("# Outpost ingestion fixture") && mdConverted.includes("Portal") && mdConverted.includes("| --- |"));
 const htmlConvert = await ana("POST", `/api/w/${ws}/files/${docx.id}/convert`, { to: "html" });

@@ -760,10 +760,26 @@ async function run() {
 	);
 	await ask(longMd);
 	await until("the long document", () => page.$(`.artifact[data-artifact="${longMd}"] .art-toc-item`), 30000);
+	const tocBoxes = () =>
+		page.$$eval(`.artifact[data-artifact="${longMd}"] .art-toc-item`, (is) =>
+			is.map((i) => ({ clipped: i.scrollHeight - i.clientHeight, sideways: i.scrollWidth - i.clientWidth, height: Math.round(i.getBoundingClientRect().height) })),
+		);
+	const wide = await tocBoxes();
+	check("no contents row hides its text vertically", wide.every((b) => b.clipped <= 1), wide);
+	check("no contents row hides it sideways either", wide.every((b) => b.sideways <= 1), wide);
+	check("a long heading takes the lines it needs", wide.some((b) => b.height > 30), wide);
+	// The same at the width the report came from: a narrow window is where the clipping showed.
+	await page.setViewport({ width: 1000, height: 760 });
+	await new Promise((r) => setTimeout(r, 300));
+	const narrow = await tocBoxes();
+	check("…and still does at 1000px wide", narrow.every((b) => b.clipped <= 1 && b.sideways <= 1), narrow);
 	const tocOverflow = await page.$eval(`.artifact[data-artifact="${longMd}"] .art-toc`, (e) => e.scrollWidth - e.clientWidth);
-	check("the contents column never scrolls sideways", tocOverflow <= 1, tocOverflow);
-	const tocLines = await page.$$eval(`.artifact[data-artifact="${longMd}"] .art-toc-item`, (is) => is.map((i) => i.getBoundingClientRect().height));
-	check("…and its rows are tall enough for two lines of text", tocLines.every((h) => h >= 20), tocLines);
+	check("the contents column itself never scrolls sideways", tocOverflow <= 1, tocOverflow);
+	await page.$eval(`.artifact[data-artifact="${longMd}"]`, (e) => e.scrollIntoView({ block: "center" }));
+	await new Promise((r) => setTimeout(r, 300));
+	await shot("artifact-toc-narrow");
+	await page.setViewport({ width: 1280, height: 900 });
+	await new Promise((r) => setTimeout(r, 300));
 	await shot("artifact-toc");
 
 	const composerHeight = () => page.$eval(".composer textarea", (e) => Math.round(e.getBoundingClientRect().height));

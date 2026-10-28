@@ -4,6 +4,7 @@ import { socket } from "../socket";
 import { Avatar } from "./bits";
 import { ResourcesPanel } from "./Resources";
 import { EditableLabel } from "./RowMenu";
+import { askConfirm, askText, reportError } from "../dialogs";
 
 type Tab = "app" | "code" | "logs" | "data" | "share" | "access";
 type Detail = { module: Module; files?: Record<string, string>; server: { methods: string[]; readonly: string[]; error?: string }; shares?: any[]; links?: any[] };
@@ -210,8 +211,8 @@ function CodeTab({ moduleId, files, server }: { moduleId: string; files: Record<
 				))}
 				<button
 					className="muted"
-					onClick={() => {
-						const p = prompt("New file path (e.g. app.js, style.css, server.js)");
+					onClick={async () => {
+						const p = await askText({ title: "New file", label: "Path", placeholder: "app.js, style.css, server.js", required: true });
 						if (p) {
 							setDrafts((d) => ({ ...d, [p]: "" }));
 							setCurrent(p);
@@ -250,7 +251,9 @@ function CodeTab({ moduleId, files, server }: { moduleId: string; files: Record<
 				<div className="ebar">
 					<span className="mono muted grow">{status || `${current} · ${value.length} chars`}</span>
 					{files[current] !== undefined && (
-						<button className="btn ghost small" onClick={() => confirm(`Delete ${current}?`) && api.put(`/api/modules/${moduleId}/files`, { path: current, content: null })}>
+						<button className="btn ghost small" onClick={() => void askConfirm({ title: `Delete ${current}?`, danger: true, confirmLabel: "Delete" }).then((ok) => {
+							if (ok) void api.put(`/api/modules/${moduleId}/files`, { path: current, content: null }).catch(reportError);
+						})}>
 							Delete
 						</button>
 					)}
@@ -417,7 +420,9 @@ function ShareTab({ detail, user, onChange }: { detail: Detail; user: User; onCh
 							Removes its code, data, grants and shares.
 						</div>
 					</div>
-					<button className="btn" style={{ color: "var(--bad)" }} onClick={() => confirm(`Delete “${g.name}” for everyone?`) && api.del(`/api/modules/${g.id}`)}>
+					<button className="btn" style={{ color: "var(--bad)" }} onClick={() => void askConfirm({ title: `Delete “${g.name}” for everyone?`, body: "Its code and data are removed for everyone it is shared with.", danger: true, confirmLabel: "Delete" }).then((ok) => {
+							if (ok) void api.del(`/api/modules/${g.id}`).catch(reportError);
+						})}>
 						Delete
 					</button>
 				</div>

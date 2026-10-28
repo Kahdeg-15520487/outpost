@@ -3,6 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type AgentRecord, type Backlog, type BacklogItem, type Feedback, type ItemStatus, type Question } from "../api";
 import { timeAgo } from "../store";
 import { Markdown } from "./bits";
+import { askConfirm, reportError } from "../dialogs";
 
 const COLUMNS: { id: ItemStatus; label: string }[] = [
 	{ id: "todo", label: "To do" },
@@ -64,7 +65,7 @@ export function BacklogTab({ wsId, missionId, backlog, agents, canEdit, blockers
 			</div>
 		);
 
-	const patch = (id: string, p: Partial<BacklogItem>) => api.patch(`${base}/${id}`, p).catch((e) => alert(e.message));
+	const patch = (id: string, p: Partial<BacklogItem>) => api.patch(`${base}/${id}`, p).catch((e) => reportError(e.message));
 	const columns = tasks.some((t) => t.status === "blocked") ? [...COLUMNS, { id: "blocked" as ItemStatus, label: "Blocked" }] : COLUMNS;
 
 	return (
@@ -132,8 +133,8 @@ export function BacklogTab({ wsId, missionId, backlog, agents, canEdit, blockers
 
 			{open && backlog.items[open] && <ItemPanel key={open} item={backlog.items[open]!} ctx={ctx} agents={agents} canEdit={canEdit} feedback={feedback} onPatch={(p) => patch(open, p)} onDelete={async () => {
 				const n = Object.values(backlog.items).filter((i) => i.parent === open).length;
-				if (!confirm(`Remove ${open}${n ? " and everything under it" : ""}?`)) return;
-				await api.del(`${base}/${open}`).catch((e) => alert(e.message));
+				if (!(await askConfirm({ title: `Remove ${open}${n ? " and everything under it" : ""}?`, danger: true, confirmLabel: "Remove" }))) return;
+				await api.del(`${base}/${open}`).catch((e) => reportError(e.message));
 				setOpen(undefined);
 			}} onOpen={setOpen} onClose={() => setOpen(undefined)} />}
 		</div>
@@ -169,7 +170,7 @@ function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: st
 			setChanges(false);
 			setComment("");
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 		} finally {
 			setBusy(false);
 		}
@@ -251,7 +252,7 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 			setChanges(null);
 			setComment("");
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 		} finally {
 			setBusy(false);
 		}
@@ -344,7 +345,7 @@ function BuildBar({ base, backlog, canEdit }: { base: string; backlog: Backlog; 
 		try {
 			await api.post(base.replace(/\/backlog$/, "/build"), { paused: !b.paused });
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 		} finally {
 			setBusy(false);
 		}

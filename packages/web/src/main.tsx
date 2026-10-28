@@ -8,6 +8,8 @@ import { navigate, useRoute } from "./store";
 import { Login } from "./components/Login";
 import { Shell } from "./components/Shell";
 import { ConnectionUI } from "./components/ConnectionUI";
+import { DialogHost } from "./components/DialogHost";
+import { reportError } from "./dialogs";
 
 function App() {
 	const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -23,7 +25,7 @@ function App() {
 	// Share links: accept, then open the module.
 	useEffect(() => {
 		if (user && route.page === "link") {
-			api.post(`/api/links/${route.token}/accept`).then((r) => navigate(`#/modules/${r.moduleId}`)).catch((e) => alert(e.message));
+			api.post(`/api/links/${route.token}/accept`).then((r) => navigate(`#/modules/${r.moduleId}`)).catch(reportError);
 		}
 	}, [user, route]);
 
@@ -31,18 +33,21 @@ function App() {
 		return (
 			<>
 				<ConnectionUI />
+			<DialogHost />
 			</>
 		);
 	if (!user)
 		return (
 			<>
 				<ConnectionUI />
+			<DialogHost />
 				<Login onAuthed={setUser} />
 			</>
 		);
 	return (
 		<>
 			<ConnectionUI />
+			<DialogHost />
 			<Shell
 			user={user}
 				onSignOut={async () => {

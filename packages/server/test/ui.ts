@@ -432,13 +432,18 @@ async function run() {
 		await press("createItem", "Allow");
 		check("choosing Allow on a write is saved and shown", await until("allow saved", async () => (await pressed("createItem")) === "Allow" && (await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval.createItem === "allow"));
 		check("a changed method offers a reset to the default", !!(await page.$('.conn-reset[aria-label="Reset createItem to its default"]')));
-		let confirmText = "";
-		page.once("dialog", async (d) => { confirmText = d.message(); await d.dismiss(); });
 		await press("deleteItem", "Allow");
-		await sleep(400);
-		check("allowing a destructive method asks you first, and Cancel changes nothing", /can't easily be undone/.test(confirmText) && (await pressed("deleteItem")) === "Ask" && !(await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval.deleteItem);
-		page.once("dialog", (d) => void d.accept());
+		const asked = await until("the confirmation", async () => {
+			const dialog = await page.$(".ask-dialog");
+			return dialog ? (await text(".ask-dialog")).replace(/\s+/g, " ").trim() : undefined;
+		}, 8000);
+		check("allowing a destructive method asks you first", /can't easily be undone/.test(asked ?? ""), asked);
+		await clickText(".ask-dialog button", "Cancel");
+		await sleep(300);
+		check("…and Cancel changes nothing", (await pressed("deleteItem")) === "Ask" && !(await api("GET", `/api/w/${ws}/connections`)).connections.find((c: any) => c.id === connId).approval.deleteItem);
 		await press("deleteItem", "Allow");
+		await until("the confirmation again", () => page.$(".ask-dialog"), 8000);
+		await clickText(".ask-dialog button", "Always allow");
 		check("…confirming allows it", await until("delete allowed", async () => (await pressed("deleteItem")) === "Allow"));
 		await press("listItems", "Ask");
 		check("a read can be set to Ask", await until("read asks", async () => (await pressed("listItems")) === "Ask"));
@@ -627,7 +632,6 @@ async function run() {
 	check("arrows are not captured while typing", (await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "")) === typingCursor);
 	await page.keyboard.press("Escape");
 	await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-
 	console.log("ask agent from files");
 	await go(`#/w/${ws}/files`);
 	await until("the files table", () => page.$(".files-table tbody tr"));
@@ -648,7 +652,7 @@ async function run() {
 	check("the file is attached in that chat", askAttached === "sample.docx", askAttached ?? (await text(".attachments")));
 	check("the composer is ready to send it", Boolean(await page.$(".composer textarea, .composer input")));
 	await shot("ask-agent-attached");
-	// ------------------------------------------------------------------ artifacts in chat
+
 	console.log("artifacts in chat");
 	const upload = (wsId: string, name: string, mime: string, body: string) =>
 		page.evaluate(
@@ -753,6 +757,7 @@ async function run() {
 	check("the artifact cannot reach the network", blocked !== "reached the network", blocked);
 	check("the frame reports its height back to the card", (await page.$eval(`.artifact[data-artifact="${htmlId}"] iframe`, (f) => Number((f as HTMLElement).style.height.replace("px", "")))) > 20);
 	await shot("artifact-html");
+	await archivedChatsAndDialogs(ws);
 
 }
 
@@ -809,6 +814,84 @@ async function seedMission(wsId: string): Promise<string> {
 	await until("T2 briefed", async () => (await item("T2")).briefed);
 	return pid;
 }
+
+/** Archived chats under Archived, restore, and the in-app dialogs: run last, they change what the sidebar shows. */
+async function archivedChatsAndDialogs(ws: string) {
+	// Archived chats belong in the Archived section and come back on Restore (they used to vanish).
+	console.log("archived chats");
+	await go(`#/w/${ws}`);
+	const liveRows = () => page.$$eval(".sidebar [data-chat-id]:not(.archived) a .t", (ts) => ts.map((t) => t.textContent ?? ""));
+	const archivedRows = () => page.$$eval(".sidebar .side-row.archived a .t", (ts) => ts.map((t) => t.textContent ?? ""));
+	const victim = await until("a chat in the sidebar", async () => {
+		const names = await liveRows();
+		return names.length ? names[0] : undefined;
+	});
+	const victimId = await page.$eval(".sidebar [data-chat-id]:not(.archived)", (row) => row.getAttribute("data-chat-id") ?? "");
+	must("found a chat to archive", Boolean(victim) && Boolean(victimId));
+	await api("PATCH", `/api/w/${ws}/chats/${victimId}`, { archived: true });
+	check("an archived chat leaves the live sidebar list", await until("chat gone", async () => !(await liveRows()).includes(victim!), 10000));
+	const shown = await until("the archived section", async () => {
+		const toggle = await page.$(".side-archived-toggle");
+		if (!toggle) return undefined;
+		const expanded = await page.$eval(".side-archived-toggle", (b) => b.getAttribute("aria-expanded") === "true");
+		if (!expanded) await page.click(".side-archived-toggle");
+		const names = await archivedRows();
+		return names.includes(victim!) ? names : undefined;
+	}, 10000);
+	check("…and it is listed under Archived", Boolean(shown), await archivedRows());
+	await shot("archived-chat");
+	await page.evaluate((id) => {
+		const row = document.querySelector(`.sidebar [data-chat-id="${id}"]`);
+		(row?.querySelector(".row-menu-btn") as HTMLElement | undefined)?.click();
+	}, victimId);
+	await sleep(200);
+	await clickText(".row-menu [role=menuitem]", /^▣?\s*Restore|Restore/);
+	check("Restore puts the chat back in the sidebar", await until("chat back", async () => (await liveRows()).includes(victim!), 10000), await liveRows());
+	check("…and Archived no longer lists it", await until("archived gone", async () => !(await archivedRows()).includes(victim!), 10000), await archivedRows());
+
+	console.log("in-app dialogs");
+	await go(`#/w/${ws}/files`);
+	await until("the files table", () => page.$(".files-table tbody tr"));
+	const doomed = await until("a file row", () => page.$$eval(".files-table tbody tr .fname a", (links) => links.map((a) => (a as HTMLElement).innerText.trim()).find((t) => t.length > 0)));
+	check("there is a file to delete", Boolean(doomed), await page.$$eval(".files-table tbody tr .fname a", (links) => links.map((a) => (a as HTMLElement).innerText.trim())));
+	const deleteRow = async (name: string) =>
+		page.evaluate((name) => {
+			const row = [...document.querySelectorAll(".files-table tbody tr")].find((r) => ((r.querySelector(".fname") as HTMLElement | null)?.innerText ?? "").includes(name));
+			[...(row?.querySelectorAll("button") ?? [])].find((b) => (b.getAttribute("title") ?? "") === "Delete")?.click();
+		}, name);
+	await deleteRow(doomed!);
+	const confirmBody = await until("the delete dialog", async () => {
+		const dialog = await page.$(".ask-dialog");
+		return dialog ? (await text(".ask-dialog")).replace(/\s+/g, " ").trim() : undefined;
+	}, 8000);
+	check("deleting a file asks in an in-app dialog", Boolean(confirmBody) && confirmBody!.includes(doomed!.slice(0, 12)), confirmBody);
+	check("…and nothing is deleted until you confirm", (await count(".files-table tbody tr")) > 0);
+	await page.keyboard.press("Escape");
+	check("Escape cancels the dialog", await until("dialog gone", async () => !(await page.$(".ask-dialog")), 5000));
+	check("…and the file is still there", (await page.evaluate((name) => [...document.querySelectorAll(".files-table tbody tr")].some((r) => ((r.querySelector(".fname") as HTMLElement | null)?.innerText ?? "").includes(name)), doomed!)) === true);
+	await deleteRow(doomed!);
+	await until("the delete dialog again", () => page.$(".ask-dialog"), 8000);
+	await clickText(".ask-dialog button", "Delete");
+	check("confirming deletes it", await until("row gone", async () => !(await page.evaluate((name) => [...document.querySelectorAll(".files-table tbody tr")].some((r) => ((r.querySelector(".fname") as HTMLElement | null)?.innerText ?? "").includes(name)), doomed!)), 15000));
+	await shot("dialog-confirm");
+
+	// The text dialog: a workspace name, required, cancellable.
+	await page.select(".ws-switch select", "__new");
+	const named = await until("the name dialog", async () => {
+		const dialog = await page.$(".ask-dialog input.ask-input");
+		return dialog ? true : undefined;
+	}, 8000);
+	check("a new workspace asks for a name in-app", Boolean(named));
+	if (named) {
+		const disabled = await page.$eval(".ask-dialog button[type=submit]", (b) => (b as HTMLButtonElement).disabled);
+		check("the create button waits for a name", disabled === true);
+		await page.type(".ask-dialog input.ask-input", "Second workspace");
+		await page.keyboard.press("Enter");
+		check("Enter submits the dialog", await until("workspace created", async () => /Second workspace/.test(await text(".ws-switch")), 15000), await text(".ws-switch"));
+		await go(`#/w/${ws}/files`);
+	}
+}
+
 // ------------------------------------------------------------------ main
 
 const browser = await puppeteer.launch({ executablePath: browserPath, headless: !process.env.HEADFUL, timeout: 90_000, defaultViewport: { width: 1600, height: 1000 }, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
@@ -821,6 +904,8 @@ try {
 } catch (e) {
 	await browser.close().catch(() => {});
 	await finish(e);
+
+	// ------------------------------------------------------------------ artifacts in chat
 }
 await browser.close().catch(() => {});
 await finish();

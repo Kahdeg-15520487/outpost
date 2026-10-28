@@ -16,6 +16,7 @@ import { UserMenu } from "./UserMenu";
 import { InlineRename, RowMenu } from "./RowMenu";
 import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
 import { NewMissionDialog, MissionPage } from "./MissionPage";
+import { askConfirm, askText, reportError } from "../dialogs";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	useEffect(() => startKeyboardNav(), []);
@@ -75,6 +76,11 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const proposed = useConnections(ws?.id).proposals.filter((p) => p.status === "pending").length;
 	const updated = useAppUpdated();
 	const chats = useMemo(() => Object.values(docs.chats.chats).filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
+	const archivedChats = useMemo(() => Object.values(docs.chats.chats).filter((c) => c.archived).sort((a, b) => b.updatedAt - a.updatedAt), [docs.chats]);
+	const canEditChats = ws?.role !== "viewer";
+	const restoreChat = async (id: string) => {
+		await api.patch(`/api/w/${ws!.id}/chats/${id}`, { archived: false });
+	};
 	const pending = Object.values(docs.approvals.actions).filter((a) => a.status === "pending").length + Object.values(docs.grants.requests).filter((r) => r.status === "pending").length;
 
 	const newChat = async () => {
@@ -83,16 +89,19 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		navigate(chatHref(ws.id, r.id));
 	};
 	const newWorkspace = async () => {
-		const name = prompt("Name the new workspace");
+		const name = await askText({ title: "New workspace", label: "Name", placeholder: "e.g. Delivery team", required: true, confirmLabel: "Create" });
 		if (!name) return;
 		const r = await api.post("/api/workspaces", { name });
 		await loadWorkspaces();
 		navigate(chatHref(r.workspace.id));
 	};
 
-	const copyLink = (hash: string) => navigator.clipboard?.writeText(`${location.origin}${location.pathname}${hash}`).catch(() => prompt("Copy this link", `${location.origin}${location.pathname}${hash}`));
+	const copyLink = (hash: string) => {
+		const link = `${location.origin}${location.pathname}${hash}`;
+		navigator.clipboard?.writeText(link).catch(() => void askText({ title: "Copy this link", label: "The clipboard is blocked in this browser", value: link, confirmLabel: "Done" }));
+	};
 	const archiveChat = async (id: string) => {
-		if (!ws || !confirm("Archive this chat? It's removed from the sidebar for everyone in the workspace.")) return;
+		if (!ws || !(await askConfirm({ title: "Archive this chat?", body: "It is removed from the sidebar for everyone in the workspace.", confirmLabel: "Archive" }))) return;
 		await api.del(`/api/w/${ws.id}/chats/${id}`);
 		if (route.page === "chat" && route.chat === id) navigate(chatHref(ws.id, undefined, route.module));
 	};
@@ -102,8 +111,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 		if (archived && ws && route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, chatId));
 	};
 	const deleteModule = async (g: Module) => {
-		if (!ws || !confirm(`Delete "${g.name}"? Its code and data are removed for everyone it's shared with.`)) return;
-		await api.del(`/api/modules/${g.id}`).catch((e) => alert(e.message));
+		if (!ws || !(await askConfirm({ title: `Delete "${g.name}"?`, body: "Its code and data are removed for everyone it is shared with.", danger: true, confirmLabel: "Delete" }))) return;
+		await api.del(`/api/modules/${g.id}`).catch((e) => reportError(e.message));
 		if (route.page === "chat" && route.module === g.id) navigate(chatHref(ws.id, chatId));
 	};
 	const openModuleId = route.page === "chat" || route.page === "module" ? route.module : undefined;
@@ -295,9 +304,9 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 													},
 												},
 												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/modules/${g.id}`) },
-												{ label: "Archive", icon: "▣", onSelect: () => setArchived(g, true).catch((e) => alert(e.message)), hidden: !canChange },
-												{ label: "Export", icon: "⤓", onSelect: () => exportModule(g.id, false).catch((e) => alert(e.message)), hidden: !canChange },
-												{ label: "Export with data", icon: "⤓", onSelect: () => exportModule(g.id, true).catch((e) => alert(e.message)), hidden: !canChange },
+												{ label: "Archive", icon: "▣", onSelect: () => setArchived(g, true).catch((e) => reportError(e.message)), hidden: !canChange },
+												{ label: "Export", icon: "⤓", onSelect: () => exportModule(g.id, false).catch((e) => reportError(e.message)), hidden: !canChange },
+												{ label: "Export with data", icon: "⤓", onSelect: () => exportModule(g.id, true).catch((e) => reportError(e.message)), hidden: !canChange },
 												{ label: "Delete", icon: "✕", onSelect: () => deleteModule(g), danger: true, hidden: g.role !== "owner" },
 											]}
 										/>
@@ -305,14 +314,33 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								);
 							})}
 					</div>
-					{archived.length > 0 && (
+					{archived.length + archivedChats.length > 0 && (
 						<div className="side-section">
 							<button type="button" className="label side-archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}>
 								<span>Archived</span>
 								<span>
-									{archived.length} {showArchived ? "▾" : "▸"}
+									{archived.length + archivedChats.length} {showArchived ? "▾" : "▸"}
 								</span>
 							</button>
+							{showArchived &&
+								ws &&
+								archivedChats.map((c) => (
+									<div key={c.id} data-chat-id={c.id} className={`side-row archived ${menuOpen === `c:${c.id}` ? "menu-open" : ""}`}>
+										<a className="side-item archived" href={chatHref(ws.id, c.id)} title={`${c.title} — archived ${timeAgo(c.updatedAt)} ago`}>
+											<span className="ico">💬</span>
+											<span className="t">{c.title}</span>
+										</a>
+										<RowMenu
+											label={c.title}
+											onOpenChange={(o) => setMenuOpen(o ? `c:${c.id}` : undefined)}
+											items={[
+												{ label: "Restore", icon: "▣", onSelect: () => restoreChat(c.id), hidden: !canEditChats },
+												{ label: "Open", icon: "⤢", onSelect: () => navigate(chatHref(ws.id, c.id)) },
+												{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/w/${ws.id}/c/${c.id}`) },
+											]}
+										/>
+									</div>
+								))}
 							{showArchived &&
 								ws &&
 								archived.map((g) => {
@@ -327,7 +355,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 												label={g.name}
 												onOpenChange={(o) => setMenuOpen(o ? `g:${g.id}` : undefined)}
 												items={[
-													{ label: "Restore", icon: "▣", onSelect: () => setArchived(g, false).catch((e) => alert(e.message)), hidden: !canChange },
+													{ label: "Restore", icon: "▣", onSelect: () => setArchived(g, false).catch((e) => reportError(e.message)), hidden: !canChange },
 													{ label: "Open", icon: "⤢", onSelect: () => navigate(chatHref(ws.id, undefined, g.id, true)) },
 													{ label: "Copy link", icon: "⧉", onSelect: () => copyLink(`#/modules/${g.id}`) },
 													{ label: "Delete", icon: "✕", onSelect: () => deleteModule(g), danger: true, hidden: g.role !== "owner" },

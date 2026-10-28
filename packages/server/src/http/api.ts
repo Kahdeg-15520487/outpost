@@ -162,7 +162,8 @@ export function createApi(): Router {
 	});
 	r.patch("/api/w/:ws/chats/:chat", async (req) => {
 		const { ws } = await member(req, "editor");
-		const { title, model, thinkingLevel } = await req.body();
+		const { title, model, thinkingLevel, archived } = await req.body();
+		if (typeof archived === "boolean") await ws.archiveChat(req.params.chat!, archived);
 		if (title) await ws.renameChat(req.params.chat!, String(title));
 		if (model || thinkingLevel) {
 			const c = await ws.conversation(req.params.chat!);

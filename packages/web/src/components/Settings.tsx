@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type ModelInfo, type Workspace } from "../api";
 import { OAuthSignIn, type LoginView } from "./OAuthSignIn";
+import { reportError } from "../dialogs";
 
 type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number;
 	/** Present when outpost offers a sign-in flow for this provider (GitHub Copilot). */
@@ -117,7 +118,7 @@ export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace;
 											api.post(`/api/w/${ws.id}/members`, invite).then(() => {
 												setInvite({ ...invite, username: "" });
 												loadMembers();
-											}, (err) => alert(err.message));
+											}, (err) => reportError(err.message));
 										}}
 									>
 										<input className="input grow" placeholder="username" value={invite.username} onChange={(e) => setInvite({ ...invite, username: e.target.value })} />

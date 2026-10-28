@@ -17,15 +17,74 @@
   .cursor svg { display: block; }
   .cursor span { position: absolute; left: 14px; top: 14px; padding: 1px 7px; border-radius: 6px; color: white; font-weight: 600; font-size: 11.5px; white-space: nowrap; }
   .who { position: absolute; right: 14px; bottom: 12px; color: #8a8577; z-index: 3; }
+
+  /* in-module dialogs, so nothing falls back to the browser's confirm/prompt/alert */
+  .ask { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(20, 18, 15, .34); }
+  .ask[hidden] { display: none; }
+  .ask-box { width: min(360px, 88vw); background: #fbf9f3; color: #1b1913; border-radius: 14px; padding: 16px 18px; box-shadow: 0 24px 60px rgba(0,0,0,.28); }
+  .ask-box p { margin: 0 0 14px; font: 14px/1.45 inherit; white-space: pre-wrap; }
+  .ask-row { display: flex; justify-content: flex-end; gap: 8px; }
+  .ask-row button { border-radius: 9px; padding: 6px 12px; font: 600 13px/1.2 inherit; border: 1px solid transparent; cursor: pointer; }
+  .ask-row .ask-no { background: transparent; border-color: rgba(20,18,15,.18); color: inherit; }
+  .ask-row .ask-yes { background: #b42318; border-color: #b42318; color: #fff; }
+  .ask-row .ask-yes.neutral { background: #1b1913; border-color: #1b1913; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div class="tools" id="tools"></div>
 <div class="who" id="who"></div>
+<div class="ask" id="ask" hidden>
+  <div class="ask-box" role="dialog" aria-modal="true">
+    <p id="ask-text"></p>
+    <div class="ask-row">
+      <button class="ask-no" id="ask-no">Cancel</button>
+      <button class="ask-yes" id="ask-yes">Delete</button>
+    </div>
+  </div>
+</div>
 <script>
   const canvas = document.getElementById("c"), g = canvas.getContext("2d");
   const canEdit = module.user.role !== "viewer";
+  /** One in-page dialog: ask() for a yes/no, notify() for a message. No browser prompt/confirm/alert. */
+  function openAsk(text, label) {
+    const box = document.getElementById("ask");
+    const yes = document.getElementById("ask-yes");
+    const no = document.getElementById("ask-no");
+    document.getElementById("ask-text").textContent = text;
+    no.hidden = label === null;
+    yes.textContent = label ?? "Close";
+    yes.classList.toggle("neutral", label === null);
+    box.hidden = false;
+    (label === null ? yes : no).focus();
+    return { box, yes, no };
+  }
+  function ask(text, label = "Delete") {
+    return new Promise((resolve) => {
+      const { box, yes, no } = openAsk(text, label);
+      const done = (value) => {
+        box.hidden = true;
+        yes.onclick = no.onclick = null;
+        removeEventListener("keydown", onKey, true);
+        resolve(value);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") { e.preventDefault(); done(false); }
+        if (e.key === "Enter" && document.activeElement === yes) { e.preventDefault(); done(true); }
+      };
+      yes.onclick = () => done(true);
+      no.onclick = () => done(false);
+      addEventListener("keydown", onKey, true);
+    });
+  }
+  function notify(text) {
+    return new Promise((resolve) => {
+      const { box, yes, no } = openAsk(text, null);
+      const done = () => { box.hidden = true; yes.onclick = no.onclick = null; resolve(); };
+      yes.onclick = no.onclick = done;
+    });
+  }
+
   const COLORS = ["#1d1b16", "#d9480f", "#1971c2", "#2b8a3e", "#9c36b5", "#f59f00"];
   const tint = (s) => COLORS[1 + [...s].reduce((a, c) => a + c.charCodeAt(0), 0) % (COLORS.length - 1)];
   let color = COLORS[0], width = 3, strokes = new Map(), drawing = null;
@@ -47,7 +106,7 @@
     width = 4;
     tools.insertAdjacentHTML("beforeend", '<span class="sep"></span>');
     const undo = document.createElement("button"); undo.className = "t"; undo.textContent = "Undo"; undo.onclick = () => module.api.undo();
-    const clear = document.createElement("button"); clear.className = "t"; clear.textContent = "Clear"; clear.onclick = () => confirm("Clear the board for everyone?") && module.api.clear();
+    const clear = document.createElement("button"); clear.className = "t"; clear.textContent = "Clear"; clear.onclick = async () => { if (await ask("Clear the board for everyone?", "Clear")) await module.api.clear(); };
     tools.append(undo, clear);
   }
 

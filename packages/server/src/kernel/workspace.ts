@@ -323,11 +323,13 @@ export class Workspace {
 		}, ctx);
 	}
 
-	async archiveChat(chatId: string) {
-		await (await this.conversation(chatId)).abort(ctx).catch(() => {});
+	async archiveChat(chatId: string, archived = true) {
+		if (archived) await (await this.conversation(chatId)).abort(ctx).catch(() => {});
 		await this.harness.commit(async (tx) => {
 			const chat = (await tx.doc(ChatsDoc)).chats[chatId];
-			if (chat) chat.archived = true;
+			if (!chat) return;
+			chat.archived = archived;
+			chat.updatedAt = Date.now();
 		}, ctx);
 	}
 

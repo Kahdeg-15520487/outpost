@@ -11,6 +11,7 @@ import { Dialog, Markdown, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
+import { askConfirm, reportError } from "../dialogs";
 
 const STAGES: { id: MissionStage; label: string }[] = [
 	{ id: "kickoff", label: "Kickoff" },
@@ -253,13 +254,15 @@ export function MissionPage({ ws, missionId, tab, models, picker, grants }: { ws
 				)}
 				{canEdit && (
 					<div className="ph-actions">
-						<button className="btn small ph-btn" disabled={!working} onClick={() => confirm("Stop every agent's current work?") && api.post(`/api/w/${ws.id}/missions/${missionId}/stop`, {})}>
+						<button className="btn small ph-btn" disabled={!working} onClick={() => void askConfirm({ title: "Stop every agent's current work?", confirmLabel: "Stop them", danger: true }).then((ok) => {
+							if (ok) void api.post(`/api/w/${ws.id}/missions/${missionId}/stop`, {}).catch(reportError);
+						})}>
 							■ Stop all
 						</button>
 						<button
 							className="btn small ph-btn ghost"
 							onClick={async () => {
-								if (!confirm(`Archive "${mission.name}"? Agents stop; the repo stays on disk.`)) return;
+								if (!(await askConfirm({ title: `Archive "${mission.name}"?`, body: "Agents stop; the repository stays on disk.", confirmLabel: "Archive" }))) return;
 								await api.del(`/api/w/${ws.id}/missions/${missionId}`);
 								navigate(`#/w/${ws.id}`);
 							}}
@@ -492,7 +495,7 @@ function AgentDrawer({ ws, missionId, agent, summary, questions, canEdit, models
 								picker={picker}
 								value={agent.model}
 								disabled={!canEdit}
-								onChange={(model) => api.patch(`/api/w/${ws.id}/missions/${missionId}/agents/${agent.key}`, { model }).catch((e) => alert(e.message))}
+								onChange={(model) => api.patch(`/api/w/${ws.id}/missions/${missionId}/agents/${agent.key}`, { model }).catch((e) => reportError(e.message))}
 							/>
 						</div>
 					</div>
@@ -582,7 +585,7 @@ function MissionModelMenu({ ws, mission, agents, models, picker, onClose }: { ws
 			await api.patch(`/api/w/${ws.id}/missions/${mission.id}`, { model, applyToAgents: all });
 			onClose();
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 			setBusy(false);
 		}
 	};

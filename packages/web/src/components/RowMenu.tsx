@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { reportError } from "../dialogs";
 
 export type MenuItem = { label: string; icon?: string; onSelect: () => void; danger?: boolean; hidden?: boolean };
 
@@ -120,7 +121,7 @@ export function InlineRename({ value, onSave, onDone, className = "side-rename",
 		if (done.current) return;
 		done.current = true;
 		const v = text.trim();
-		if (save && v && v !== value) await onSave(v).catch((e) => alert(e.message));
+		if (save && v && v !== value) await onSave(v).catch((e) => reportError(e.message));
 		onDone();
 	};
 	return (

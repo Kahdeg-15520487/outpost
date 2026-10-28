@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type ConnectionAuth, type ConnectionInfo, type ConnectionMethod, type ConnectionProposal, type Workspace } from "../api";
 import { chatHref, timeAgo, useConnections } from "../store";
 import "../connections.css";
+import { askConfirm } from "../dialogs";
 
 const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
 	none: "No authentication",
@@ -126,10 +127,16 @@ function ConnectionCard({ wsId, conn, isOwner, onEdit, onChanged }: { wsId: stri
 		}
 	};
 	/** Always ask / Always allow for one method; null goes back to the default. Allowing a destructive method needs a confirmation. */
-	const setMode = (m: ConnectionMethod, next: "ask" | "allow" | null) => {
-		if (next === "allow" && m.alwaysAsk && !confirm(`“${m.name}” changes or deletes things and can't easily be undone.
-
-Allow it to run without asking? Any chat, module or mission with access to this connection could then run it on its own.`)) return;
+	const setMode = async (m: ConnectionMethod, next: "ask" | "allow" | null) => {
+		if (next === "allow" && m.alwaysAsk) {
+			const ok = await askConfirm({
+				title: `Let “${m.name}” run without asking?`,
+				body: "It changes or deletes things and can't easily be undone. Any chat, module or mission with access to this connection could then run it on its own.",
+				confirmLabel: "Always allow",
+				danger: true,
+			});
+			if (!ok) return;
+		}
 		return run(() => api.put(`/api/w/${wsId}/connections/${conn.id}/approval`, { method: m.name, mode: next }));
 	};
 
@@ -186,7 +193,9 @@ Allow it to run without asking? Any chat, module or mission with access to this 
 						</button>
 						<button
 							className="btn ghost small"
-							onClick={() => confirm(`Remove “${conn.title}”? Everything granted on it is revoked and its queued actions are rejected.`) && run(() => api.del(`/api/w/${wsId}/connections/${conn.id}`))}
+							onClick={() => void askConfirm({ title: `Remove “${conn.title}”?`, body: "Everything granted on it is revoked and its queued actions are rejected.", danger: true, confirmLabel: "Remove" }).then((ok) => {
+								if (ok) void run(() => api.del(`/api/w/${wsId}/connections/${conn.id}`));
+							})}
 						>
 							Remove
 						</button>

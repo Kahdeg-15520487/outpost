@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type ApprovalAction, type Module, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, timeAgo, useConnections } from "../store";
 import { useAirlocks } from "./Resources";
+import { reportError } from "../dialogs";
 
 export function ApprovalsDrawer({ ws, docs, modules, onClose }: { ws: Workspace; docs: WorkspaceDocs; modules: Module[]; onClose: () => void }) {
 	const gks = useAirlocks();
@@ -25,7 +26,7 @@ export function ApprovalsDrawer({ ws, docs, modules, onClose }: { ws: Workspace;
 		try {
 			await api.post(`/api/w/${ws.id}/approvals/${a.id}/${approve ? "approve" : "reject"}`);
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 		} finally {
 			setBusy(undefined);
 		}

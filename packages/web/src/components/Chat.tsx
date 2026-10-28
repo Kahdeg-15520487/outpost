@@ -5,6 +5,7 @@ import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, ty
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
+import { askConfirm, reportError } from "../dialogs";
 
 const SUGGESTIONS: Suggestion[] = [
 	{ k: "🎞️", t: "Make slides", d: "for my Q3 planning meeting", p: "Make slides for my Q3 planning meeting: goals, risks, timeline, asks." },
@@ -126,7 +127,9 @@ export function ChatView(props: {
 				)}
 				{chatId && <Usage usage={state.usage} />}
 				{chatId && canEdit && (
-					<button className="btn ghost small" title="Archive chat" onClick={() => confirm("Archive this chat?") && api.del(`/api/w/${ws.id}/chats/${chatId}`).then(() => navigate(chatHref(ws.id)))}>
+					<button className="btn ghost small" title="Archive chat" onClick={() => void askConfirm({ title: "Archive this chat?", body: "It leaves the sidebar for everyone in the workspace.", confirmLabel: "Archive" }).then((ok) => {
+						if (ok) void api.del(`/api/w/${ws.id}/chats/${chatId}`).then(() => navigate(chatHref(ws.id))).catch(reportError);
+					})}>
 						Archive
 					</button>
 				)}

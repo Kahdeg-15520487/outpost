@@ -4,6 +4,7 @@ import { chatHref, navigate, timeAgo } from "../store";
 import { Dialog } from "./bits";
 import { toast } from "../toasts";
 import { ParsedViews, PARSABLE } from "./ParsedViews";
+import { askConfirm, reportError } from "../dialogs";
 
 const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
 const isImage = (f: FileMeta) => /^image\/(png|jpeg|gif|webp)$/.test(f.mime);
@@ -107,7 +108,9 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 						⇩
 					</a>
 					{canEdit && (
-						<button className="btn ghost small" title="Delete" onClick={() => confirm(`Delete ${f.name}${kids.length ? ` (its ${kids.length} derived files stay)` : ""}?`) && api.del(`/api/w/${ws.id}/files/${f.id}`)}>
+						<button className="btn ghost small" title="Delete" onClick={() => void askConfirm({ title: `Delete ${f.name}?`, body: kids.length ? `Its ${kids.length} derived file${kids.length === 1 ? "" : "s"} stay.` : undefined, danger: true, confirmLabel: "Delete" }).then((ok) => {
+							if (ok) void api.del(`/api/w/${ws.id}/files/${f.id}`).catch(reportError);
+						})}>
 							✕
 						</button>
 					)}

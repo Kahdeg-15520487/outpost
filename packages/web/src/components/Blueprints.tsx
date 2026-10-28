@@ -4,6 +4,7 @@ import { chatHref, navigate } from "../store";
 import { socket } from "../socket";
 import { useWorkspace } from "../store";
 import { ExportDialog, ImportDialog, exportBlueprint } from "./Transfer";
+import { askConfirm, reportError } from "../dialogs";
 
 export function BlueprintsPage({ ws }: { ws: Workspace }) {
 	const [list, setList] = useState<Blueprint[]>([]);
@@ -77,11 +78,13 @@ function Grid({ list, busy, onUse, canUse, onDelete }: { list: Blueprint[]; busy
 					</div>
 					<div className="row bp-actions">
 						<span className="grow" />
-						<button className="btn ghost small" onClick={() => exportBlueprint(b.id).catch((e) => alert(e.message))} title="Download as a .outpost.json file to import on another Outpost instance">
+						<button className="btn ghost small" onClick={() => exportBlueprint(b.id).catch((e) => reportError(e.message))} title="Download as a .outpost.json file to import on another Outpost instance">
 							Export
 						</button>
 						{onDelete && b.mine && (
-							<button className="btn ghost small" onClick={() => confirm(`Delete blueprint “${b.name}”?`) && onDelete(b)}>
+							<button className="btn ghost small" onClick={() => void askConfirm({ title: `Delete blueprint “${b.name}”?`, body: "Its files are removed for everyone it was published to.", danger: true, confirmLabel: "Delete" }).then((ok) => {
+								if (ok) void onDelete(b);
+							})}>
 								Delete
 							</button>
 						)}

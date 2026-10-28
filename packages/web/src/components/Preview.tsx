@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Backlog, type BacklogItem, type Feedback, type PreviewInfo, type PreviewLogLine } from "../api";
 import { timeAgo } from "../store";
 import { AttachButton, AttachmentTray, pasteInto, useAttachments } from "./Chat";
+import { askText, reportError } from "../dialogs";
 
 const STATUS_TEXT: Record<PreviewInfo["status"], string> = {
 	off: "Stopped",
@@ -67,7 +68,7 @@ export function PreviewTab({ wsId, missionId, preview, canEdit, feedback = {}, b
 		try {
 			await api.post(`${base}/${what}`, {});
 		} catch (e: any) {
-			alert(e.message);
+			reportError(e.message);
 		} finally {
 			setBusy(false);
 		}
@@ -286,8 +287,8 @@ function FeedbackPanel({ wsId, missionId, preview, canEdit, feedback, backlog }:
 											<button
 												className="btn ghost small"
 												disabled={busy}
-												onClick={() => {
-													const reason = prompt(`Decline ${fb.id}? Say why (the team sees it).`);
+												onClick={async () => {
+													const reason = await askText({ title: `Decline ${fb.id}?`, label: "Why (the team sees it)", placeholder: "What is missing or wrong", required: true, confirmLabel: "Decline", multiline: true });
 													if (reason?.trim()) run(() => api.post(`${base}/${fb.id}/decline`, { reason }));
 												}}
 											>

@@ -198,7 +198,14 @@ textarea.input { resize: vertical; }
 .prose a { color: var(--signal-ink); text-underline-offset: 2px; }
 .prose ul, .prose ol { padding-left: 1.3em; } .prose li { margin: .2em 0; }
 .prose blockquote { margin: .6em 0; padding-left: 12px; border-left: 3px solid var(--line-2); color: var(--muted); }
-.prose table { border-collapse: collapse; font-size: 14px; } .prose th, .prose td { border: 1px solid var(--line); padding: 4px 10px; } .prose th { background: var(--paper-2); }
+/* A wide table scrolls inside itself. Left alone it makes the whole document (and the card around
+   it) wider than the column, which cuts the prose off at the edge instead of wrapping it. */
+/* A wide table scrolls inside itself. Left alone it makes the whole document (and the card around
+   it) wider than the column, which cuts the prose off at the edge instead of wrapping it. */
+.prose table { border-collapse: collapse; font-size: 14px; display: block; max-width: 100%; overflow-x: auto; }
+.prose th, .prose td { border: 1px solid var(--line); padding: 4px 10px; }
+.prose th { background: var(--paper-2); }
+.prose { min-width: 0; overflow-wrap: anywhere; }
 .thinking { font-size: 13px; color: var(--muted); border-left: 2px dashed var(--line-2); padding: 2px 0 2px 12px; margin: 6px 0; white-space: pre-wrap; max-height: 160px; overflow: auto; }
 .thinking summary { cursor: pointer; font: 600 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; list-style: none; }
 .cursor-blink::after { content: "▍"; color: var(--signal); animation: blink 1s steps(2) infinite; margin-left: 1px; }

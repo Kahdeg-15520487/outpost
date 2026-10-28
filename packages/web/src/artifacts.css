@@ -108,7 +108,7 @@
 
 /* markdown documents */
 .art-doc { display: flex; gap: 16px; padding: 12px 14px; align-items: flex-start; }
-.art-doc-body { flex: 1; min-width: 0; font-size: 14px; }
+.art-doc-body { flex: 1; min-width: 0; font-size: 14px; overflow-x: hidden; }
 .art-doc-body .prose { font-size: inherit; }
 /* A table of contents that can be read: a fixed column that never scrolls sideways, and headings
    that wrap to as many lines as they need instead of being cut mid-word or clipped mid-glyph. */
@@ -117,6 +117,11 @@
 .art-toc-item {
 	box-sizing: border-box;
 	display: block;
+	/* A flex column squeezes its items to fit max-height: with twenty headings every row collapsed to
+	   13px and hid the text. Rows keep their own height; the column scrolls instead. */
+	flex: 0 0 auto;
+	/* A flex column squeezes its items to fit max-height: with twenty headings every row collapsed to
+ 	  13px and hid the text. Rows keep their own height; the column scrolls instead. */
 	width: 100%;
 	min-width: 0;
 	border: 0;

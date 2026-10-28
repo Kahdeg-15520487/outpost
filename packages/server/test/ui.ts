@@ -752,12 +752,22 @@ async function run() {
 
 	// Two layout regressions: the contents column must not scroll sideways, and the composer must
 	// grow with wrapped text instead of hiding the second line behind the toolbar.
-	const longMd = await upload(
-		ws,
-		"long.md",
-		"text/markdown",
-		"# A blueprint update loop that is long enough to wrap inside a narrow contents column\n\n## Why the loop is broken today and what it costs\n\nBody.\n\n## Proposals, mapped to the friction they remove\n\nBody.\n",
-	);
+	// Twenty-six headings (a flex column squeezes them unless they refuse to shrink) and a table wider
+	// than the column (which used to push the whole document sideways instead of scrolling itself).
+	const longDoc = [
+		"# A blueprint update loop that is long enough to wrap inside a narrow contents column",
+		"",
+		"## Why the loop is broken today and what it costs",
+		"",
+		"Body.",
+		"",
+		"| # | Step | Tool call | Who | Notes |",
+		"|---|---|---|---|---|",
+		...Array.from({ length: 6 }, (_, i) => `| ${i + 1} | Browse blueprints and read a very long step description | \`blueprint_list\` | agent | Returns {id, name, description, icon} and nothing else at all |`),
+		"",
+		...Array.from({ length: 20 }, (_, i) => `### ${i + 1}. Friction item ${i + 1} — a heading long enough to wrap\n\nBody.\n`),
+	].join("\n");
+	const longMd = await upload(ws, "long.md", "text/markdown", longDoc);
 	await ask(longMd);
 	await until("the long document", () => page.$(`.artifact[data-artifact="${longMd}"] .art-toc-item`), 30000);
 	const tocBoxes = () =>
@@ -768,6 +778,15 @@ async function run() {
 	check("no contents row hides its text vertically", wide.every((b) => b.clipped <= 1), wide);
 	check("no contents row hides it sideways either", wide.every((b) => b.sideways <= 1), wide);
 	check("a long heading takes the lines it needs", wide.some((b) => b.height > 30), wide);
+	check("every heading in a long document gets a row", wide.length >= 20, wide.length);
+	const tableBox = await page.$eval(`.artifact[data-artifact="${longMd}"] .art-doc-body`, (body) => {
+		const table = body.querySelector("table")!;
+		return { table: Math.round(table.getBoundingClientRect().width), body: body.clientWidth, scrolls: getComputedStyle(table).overflowX };
+	});
+	check("a wide table stays inside the column", tableBox.table <= tableBox.body + 1, tableBox);
+	check("…and scrolls itself instead of pushing the card", tableBox.scrolls === "auto", tableBox);
+	const cardOverflow = await page.$eval(`.artifact[data-artifact="${longMd}"] .artifact-body`, (e) => e.scrollWidth - e.clientWidth);
+	check("…so the card never scrolls sideways", cardOverflow <= 1, cardOverflow);
 	// The same at the width the report came from: a narrow window is where the clipping showed.
 	await page.setViewport({ width: 1000, height: 760 });
 	await new Promise((r) => setTimeout(r, 300));

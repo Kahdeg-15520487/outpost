@@ -28,7 +28,12 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 				segment.kind === "embed" ? (
 					<Artifact key={`${segment.id}-${i}`} id={segment.id} title={segment.title} />
 				) : (
-					<RawMarkdown key={i} text={segment.text} className={streaming && i === segments.length - 1 ? "cursor-blink" : ""} />
+					<RawMarkdown
+						key={i}
+						text={segment.text}
+						streaming={streaming && i === segments.length - 1}
+						className={streaming && i === segments.length - 1 ? "cursor-blink" : ""}
+					/>
 				),
 			)}
 		</>

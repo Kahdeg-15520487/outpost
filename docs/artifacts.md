@@ -64,6 +64,36 @@ allowing inline styles, scripts and data-URI images, so the page can be interact
 home. The frame reports its height back so the card fits it, and links inside it open in a new tab
 instead of navigating the app away. **Source** shows the bytes; **↻ Run** reloads the frame.
 
+## Diagrams
+
+A `` ```mermaid `` fence is drawn, not printed. It works anywhere the app renders Markdown — a chat reply,
+a Markdown artifact, a mission document — and the code block stays exactly where it was in the
+document (a fence inside a list still sits in its list item), hidden behind the drawing.
+
+The renderer is [pele](https://github.com/obsidianmd/pele), Obsidian's Mermaid renderer: it targets
+Mermaid 12.1 syntax, has no runtime dependencies, is small enough to ship with the app, and takes its
+colours from CSS variables, so a diagram uses the same paper, ink and violet accent as the prose
+around it. It is loaded as a lazy chunk on the first diagram in a workspace and never if nobody
+writes one.
+
+Each drawing sits in a card with the diagram kind (`flowchart`, `sequence`, `state`, …) and three
+controls: **Source** shows the Mermaid text, **Copy** copies it, **SVG** downloads the drawing. Errors
+are shown in place — a half-written or invalid diagram dims what could be drawn and prints pele's
+message, which never includes anything the diagram didn't contain.
+
+Two ways to get one:
+
+- **In a reply.** The agent writes an ordinary fenced block. While a message is still streaming, the
+  fence that is still being typed shows its source, so you watch the code arrive and then see it
+  become a picture when the message settles.
+- **As a file.** A `.mmd` or `.mermaid` file is a diagram everywhere it appears: embedded in a chat
+  with `![[f_…]]`, opened from Files, or handed to the agent with `file_write`. The card names the file
+  and offers the same controls.
+
+SVG output goes through DOMPurify before it reaches the DOM (pele escapes diagram text itself; this is
+the second pair of gloves), with `<style>` and `<foreignObject>` forbidden so a diagram can't inject
+CSS into the app or load anything remote.
+
 ## Where the agent learns this
 
 `FILES_GUIDE` (in `packages/server/src/files/tools.ts`) is part of the agent's system prompt and

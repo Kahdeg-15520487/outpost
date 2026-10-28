@@ -730,6 +730,40 @@ async function run() {
 	check("ticking a checkbox writes the file", Boolean(saved), saved?.slice(0, 80));
 	await shot("artifact-markdown");
 
+	// Diagrams: a .mmd file is drawn, and a ```mermaid fence in a reply is drawn in place.
+	const mmdId = await upload(ws, "flow.mmd", "text/plain", "flowchart LR\n  order --> payment\n  payment --> shipped\n");
+	await ask(mmdId);
+	await until("the diagram", () => page.$(`.artifact[data-artifact="${mmdId}"] .diagram svg`), 30000);
+	check("a .mmd file draws as a diagram instead of printing its source", (await count(`.artifact[data-artifact="${mmdId}"] .diagram svg path`)) >= 2);
+	check("the card names what kind of diagram it is", (await text(`.artifact[data-artifact="${mmdId}"] .diagram-kind`)) === "flowchart", await text(`.artifact[data-artifact="${mmdId}"] .diagram-kind`));
+	check("the source stays hidden until asked for", await page.$eval(`.artifact[data-artifact="${mmdId}"] .diagram-src`, (e) => (e as HTMLElement).hidden));
+	await page.click(`.artifact[data-artifact="${mmdId}"] .diagram-btn`);
+	check("Source reveals the Mermaid text", (await text(`.artifact[data-artifact="${mmdId}"] .diagram-src`)).includes("payment --> shipped"));
+	await page.click(`.artifact[data-artifact="${mmdId}"] .diagram-btn`);
+	await shot("artifact-diagram");
+
+	await page.click(".composer textarea");
+	await page.type(".composer textarea", "draw a diagram of a request going through the app");
+	await page.keyboard.press("Enter");
+	await until("a diagram in the reply", () => page.$(".msg-assistant .diagram svg"), 30000);
+	check("a mermaid fence in a reply is drawn, not printed", (await count(".msg-assistant .diagram svg")) >= 1);
+	check("the diagram keeps its place in the markdown, with the code block hidden", await page.$$eval(".msg-assistant pre", (pres) => pres.some((p) => (p as HTMLElement).hidden && /flowchart/.test(p.textContent ?? ""))));
+	await shot("chat-diagram");
+
+	// A tool call says which module and blueprint it touched, not their ids.
+	await page.click(".composer textarea");
+	await page.type(".composer textarea", "make a todo list for the offsite");
+	await page.keyboard.press("Enter");
+	const createRow = await until(
+		"the module_create call",
+		async () => (await page.$$eval(".msg-assistant .proc", (rows) => rows.map((r) => r.textContent ?? ""))).find((t) => /module_create/.test(t)),
+		30000,
+	);
+	check("the tool row names the module it made", /Todo/.test(createRow ?? ""), createRow);
+	check("…and its blueprint by name", /from the .* blueprint/.test(createRow ?? ""), createRow);
+	check("…never by id", !/(bp|g|mod)_[0-9a-z]{6,}/.test(createRow ?? ""), createRow);
+	await shot("tool-names");
+
 	await ask(htmlId);
 	await until("the frame", () => page.$(`.artifact[data-artifact="${htmlId}"] iframe`), 20000);
 	const sandbox = await page.$eval(`.artifact[data-artifact="${htmlId}"] iframe`, (f) => f.getAttribute("sandbox") ?? "");

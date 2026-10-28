@@ -10,7 +10,9 @@ import { cachedJson, forgetParsed } from "../parsedCache";
 import { navigate, useRoute } from "../store";
 import { toast } from "../toasts";
 import { DataTable } from "../artifacts/DataTable";
+import { DiagramHost } from "../artifacts/Diagram";
 import { DocView } from "../artifacts/DocView";
+import { isDiagramFile } from "../artifacts/mermaid";
 import { HtmlView } from "../artifacts/HtmlView";
 import { JsonView } from "../artifacts/JsonView";
 import { gridFromSheet, type Grid } from "../artifacts/table";
@@ -49,7 +51,7 @@ const BADGE: Record<string, string> = {
 	opaque: "file",
 };
 
-const ICON: Record<string, string> = { table: "▦", json: "{}", doc: "📄", slides: "🖼", pages: "📕", archive: "🗜", text: "📃", html: "◇", md: "📝", file: "📎" };
+const ICON: Record<string, string> = { table: "▦", json: "{}", doc: "📄", slides: "🖼", pages: "📕", archive: "🗜", text: "📃", html: "◇", md: "📝", file: "📎", diagram: "◇" };
 
 const bytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -132,7 +134,9 @@ export function Artifact({ id, title, ws }: { id: string; title?: string; ws?: s
 	const ext = /\.([a-z0-9]+)$/i.exec(data?.name ?? "")?.[1]?.toLowerCase() ?? "";
 	const isMd = ext === "md" || ext === "markdown";
 	const isHtml = ext === "html" || ext === "htm";
-	const badge = data ? (data.kind === "text" ? (isMd ? "md" : isHtml ? "html" : "text") : (BADGE[data.kind] ?? data.kind)) : "file";
+	// A .mmd file is a Mermaid diagram: draw it instead of spilling its source into a <pre>.
+	const isDiagram = isDiagramFile(data?.name ?? "");
+	const badge = data ? (data.kind === "text" ? (isDiagram ? "diagram" : isMd ? "md" : isHtml ? "html" : "text") : (BADGE[data.kind] ?? data.kind)) : "file";
 	const label = title ?? data?.name ?? id;
 	const isImage = data?.kind === "opaque" && /^(png|jpe?g|gif|webp|bmp)$/i.test(data.format);
 	const body = (() => {
@@ -160,6 +164,7 @@ export function Artifact({ id, title, ws }: { id: string; title?: string; ws?: s
 		}
 		if (data.kind === "json") return <JsonView value={model?.value} ws={wsId} fileId={id} name={data.name} />;
 		if (data.kind === "text") {
+			if (isDiagram) return <DiagramHost source={model?.text ?? ""} name={data.name} />;
 			if (isMd) return <DocView text={model?.text ?? ""} editable onChange={saveText} />;
 			return <pre className="preview art-source">{(model?.text ?? "").slice(0, 200_000)}</pre>;
 		}

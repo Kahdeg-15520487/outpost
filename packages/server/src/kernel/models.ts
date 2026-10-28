@@ -65,11 +65,20 @@ function demoProvider() {
 				stopReason: "toolUse",
 			});
 		}
+		// A diagram: a ```mermaid fence, which the client draws as a card.
+		if (/\b(diagram|mermaid|flowchart|sequence diagram)\b/.test(p)) {
+			return fauxAssistantMessage([
+				fauxText(
+					"Here is how a message travels:\n\n```mermaid\nflowchart LR\n  UI[Browser] -->|submit| API[HTTP API]\n  API --> Kernel[Workspace kernel]\n  Kernel --> Store[(SQLite)]\n  Store -->|events| Kernel\n  Kernel --> API\n  API -->|stream| UI\n```\n\nSay the word and I will redraw it.",
+				),
+			]);
+		}
 		return fauxAssistantMessage([
 			fauxText(
 				"I'm the **offline demo model** — I can only follow a few scripts:\n\n" +
 					"- *make a todo list* / *make slides* / *make a whiteboard* / *make a tic tac toe game* / *make notes*\n" +
-					"- *list my modules*\n\n" +
+					"- *list my modules*\n" +
+					"- *draw a diagram*\n\n" +
 					"Pick a real model in the model menu (any provider pi supports: Anthropic, OpenAI, Google, OpenRouter, Groq, …). " +
 					"Configure keys in `outpost.config.json` (`models.providers`), under **Settings → Model providers**, or with the provider's standard env var.",
 			),

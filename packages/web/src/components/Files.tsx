@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Module, type Workspace } from "../api";
 import { chatHref, navigate, timeAgo } from "../store";
+import { DiagramHost } from "../artifacts/Diagram";
+import { isDiagramFile } from "../artifacts/mermaid";
 import { Dialog } from "./bits";
 import { toast } from "../toasts";
 import { ParsedViews, PARSABLE } from "./ParsedViews";
@@ -227,6 +229,9 @@ function PreviewDialog({ ws, file, modules, canEdit, asking, onAsk, onClose }: {
 				<img src={fileUrl(ws.id, file.id, true)} style={{ maxWidth: "100%", maxHeight: "55vh", borderRadius: 10, display: "block", margin: "0 auto" }} />
 			) : PARSABLE.test(file.kind) ? (
 				<ParsedViews ws={ws.id} file={file} />
+			) : isDiagramFile(file.name) ? (
+				// A Mermaid file opens as its drawing; the source is a click away on the card.
+				textBody === undefined ? <div className="preview">Loading…</div> : <DiagramHost source={textBody} name={file.name} />
 			) : isTextual(file) ? (
 				<div className="preview">{textBody ?? "Loading…"}</div>
 			) : (

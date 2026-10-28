@@ -48,6 +48,7 @@ Outpost reads one file, `outpost.config.json` in the directory you start it from
 | **Files** | Any format in, content-addressed storage, attachments ingested as parsed content, byte-level tools for anything unsupported | [files](docs/files.md) |
 | **Ingestion** | docx (mammoth), xlsx (ExcelJS), pdf (pdf.js), pptx (own OOXML walker) and zip/tar/gz/rar/7z — parsed lazily, cached by hash, design model kept | [files](docs/files.md) |
 | **Artifacts** | `![[f_…]]` in a reply renders the file inline: sortable tables and charts, JSON with jq-lite, Markdown that writes back, sandboxed HTML | [artifacts](docs/artifacts.md) |
+| **Diagrams** | `` ```mermaid `` fences and `.mmd` files draw in place — flowcharts, sequences, states and the rest — with the source a click away | [artifacts](docs/artifacts.md#diagrams) |
 | **Modules** | QuickJS server (no network, no timers), sandboxed client, transactional calls, roles, headless screenshots for the agent | [modules](docs/modules.md) |
 | **Airlocks** | Typed methods per resource, read or write; grants per chat/module/mission-role; writes simulated, queued and audited | [airlocks](docs/airlocks.md) |
 | **Connections** | Any MCP server or OpenAPI document becomes an airlock; GitHub and Azure DevOps by hand; Ask/Allow per method | [connections](docs/connections.md) |

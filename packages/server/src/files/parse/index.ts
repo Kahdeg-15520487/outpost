@@ -23,7 +23,7 @@ import {
 } from "./model.ts";
 
 /** Bump when a parser changes shape, so caches from older builds are ignored. */
-export const PARSE_VERSION = 2;
+export const PARSE_VERSION = 3;
 
 const MEMORY_MAX = 20;
 const memory = new Map<string, Parsed>();

@@ -46,6 +46,10 @@ async function upload(name: string, bytes: Buffer, mime = "application/octet-str
 
 const parsed = (id: string, view = "summary") => ana("GET", `/api/w/${ws}/files/${id}/parsed?view=${view}`);
 
+const vendorDir = join(import.meta.dirname, "..", "vendor");
+const vendored = ["pdfjs/pdf.min.mjs", "pdfjs/pdf.worker.min.mjs", "unrar/lib/js/unrar.wasm", "7z/7zz.wasm"];
+check("the vendored decoders are on disk (they are git-ignored by accident once already)", vendored.every((f) => existsSync(join(vendorDir, f))), vendored.filter((f) => !existsSync(join(vendorDir, f))));
+
 // ---------------------------------------------------------------- lazy loading
 const exceljsLoadedBefore = Boolean(require.cache[require.resolve("exceljs")]);
 const mammothLoadedBefore = Boolean(require.cache[require.resolve("mammoth")]);
@@ -145,20 +149,20 @@ check("extraction keeps paths", extracted.files.some((f: any) => f.name === "sam
 
 const tar = await upload("sample.tar", fixture("sample.tar"), "application/x-tar");
 const tarParsed = await parsed(tar.id, "json");
-check("tar is listed", tarParsed.kind === "archive" && tarParsed.parsed.stats.files === 2, tarParsed.summary);
+check("tar is listed", tarParsed.kind === "archive" && tarParsed.parsed?.stats.files === 2, tarParsed.summary);
 
 const targz = await upload("sample.tar.gz", fixture("sample.tar.gz"), "application/gzip");
 const targzParsed = await parsed(targz.id, "json");
-check("a .tar.gz is unpacked twice and listed as a tar", targzParsed.parsed.archive === "tar" && targzParsed.parsed.stats.files === 2, targzParsed.summary);
+check("a .tar.gz is unpacked twice and listed as a tar", targzParsed.parsed?.archive === "tar" && targzParsed.parsed?.stats.files === 2, targzParsed.summary);
 
 const seven = await upload("sample.7z", fixture("sample.7z"), "application/x-7z-compressed");
 const sevenParsed = await parsed(seven.id, "json");
-check("7z lists its entries (LZMA2)", sevenParsed.parsed.stats.files === 2, sevenParsed.summary);
+check("7z lists its entries (LZMA2)", sevenParsed.parsed?.stats.files === 2, sevenParsed.summary);
 check("7z names are correct", sevenParsed.parsed.entries.some((e: any) => e.path === "dir/a.txt"), sevenParsed.parsed.entries.map((e: any) => e.path));
 
 const rar = await upload("sample.rar", fixture("sample.rar"), "application/vnd.rar");
 const rarParsed = await parsed(rar.id, "json");
-check("rar lists its entries", rarParsed.parsed.stats.files === 2, rarParsed.summary);
+check("rar lists its entries", rarParsed.parsed?.stats.files === 2, rarParsed.summary);
 check("rar keeps UTF-8 names", rarParsed.parsed.entries.some((e: any) => e.path.includes("中文")), rarParsed.parsed.entries.map((e: any) => e.path));
 const rarExtract = await ana("POST", `/api/w/${ws}/files/${rar.id}/extract`, { match: "\\.txt$" });
 check("rar entries can be extracted", rarExtract.count >= 1, rarExtract.count);

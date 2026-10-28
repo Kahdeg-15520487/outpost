@@ -108,7 +108,7 @@ type UnrarExtractor = {
 	extract: (opts?: { files?: string[] }) => { files: { fileHeader: { name: string; unpSize: number }; extraction?: Uint8Array }[] };
 };
 
-const unrarModule = () => require(join(VENDOR, "unrar/dist/index.js")) as { createExtractorFromData: (opts: { data: Uint8Array }) => Promise<UnrarExtractor> };
+const unrarModule = () => require(join(VENDOR, "unrar/lib/index.js")) as { createExtractorFromData: (opts: { data: Uint8Array }) => Promise<UnrarExtractor> };
 
 /** unrar's wasm is instantiated once per process, on first archive that needs it. */
 const openRar = async (data: Uint8Array): Promise<UnrarExtractor> => unrarModule().createExtractorFromData({ data });

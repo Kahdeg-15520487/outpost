@@ -110,11 +110,32 @@
 .art-doc { display: flex; gap: 16px; padding: 12px 14px; align-items: flex-start; }
 .art-doc-body { flex: 1; min-width: 0; font-size: 14px; }
 .art-doc-body .prose { font-size: inherit; }
-.art-toc { position: sticky; top: 0; flex: 0 0 168px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); padding-right: 12px; max-height: 420px; overflow: auto; }
-.art-toc .label { margin-bottom: 4px; }
-.art-toc-item { border: 0; background: none; text-align: left; padding: 2px 4px; border-radius: 6px; color: var(--muted); font: 12px/1.4 var(--sans); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A table of contents that can be read: fixed column, no horizontal scroll, headings wrap to two
+   lines and end in an ellipsis instead of being cut mid-word. */
+.art-toc { position: sticky; top: 0; flex: 0 0 190px; min-width: 0; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--line); padding: 2px 12px 2px 0; max-height: 460px; overflow-y: auto; overflow-x: hidden; }
+.art-toc .label { margin-bottom: 2px; }
+.art-toc-item {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	border: 0;
+	background: none;
+	text-align: left;
+	padding: 4px 7px;
+	border-radius: 8px;
+	color: var(--muted);
+	font: 12px/1.4 var(--sans);
+	cursor: pointer;
+	overflow-wrap: anywhere;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	transition: color .12s, background .12s;
+}
 .art-toc-item:hover { color: var(--text); background: var(--paper-2); }
-.art-toc-item.l2 { padding-left: 12px; }
+.art-toc-item.l2 { padding-left: 13px; }
 .art-toc-item.l3 { padding-left: 22px; font-size: 11.5px; }
 .art-doc-body input[type="checkbox"] { accent-color: var(--signal); margin-right: 6px; }
 .art-doc-body input[type="checkbox"].live { cursor: pointer; }

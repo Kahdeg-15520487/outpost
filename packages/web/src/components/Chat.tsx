@@ -428,6 +428,14 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 	const [error, setError] = useState("");
 	const ref = useRef<HTMLTextAreaElement>(null);
 	useEffect(() => ref.current?.focus(), [chatId]);
+	// Grow with the text. Without this the box stays one row tall and the second line is hidden
+	// behind the toolbar, which reads as "my message vanished".
+	useEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+	}, [text]);
 	useEffect(() => {
 		const el = ref.current;
 		if (el) {

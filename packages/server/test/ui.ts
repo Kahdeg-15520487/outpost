@@ -794,6 +794,24 @@ async function run() {
 	check("…and still does at 1000px wide", narrow.every((b) => b.clipped <= 1 && b.sideways <= 1), narrow);
 	const tocOverflow = await page.$eval(`.artifact[data-artifact="${longMd}"] .art-toc`, (e) => e.scrollWidth - e.clientWidth);
 	check("the contents column itself never scrolls sideways", tocOverflow <= 1, tocOverflow);
+	// The contents list and the document are two panes of one row: they must end on the same line, and
+	// scroll on their own rather than making the card scroll as a whole.
+	const panes = await page.$eval(`.artifact[data-artifact="${longMd}"] .art-doc`, (d) => {
+		const toc = d.querySelector(".art-toc") as HTMLElement;
+		const body = d.querySelector(".art-doc-body") as HTMLElement;
+		const outer = d.closest(".artifact-body") as HTMLElement;
+		return {
+			tocBottom: Math.round(toc.getBoundingClientRect().bottom),
+			bodyBottom: Math.round(body.getBoundingClientRect().bottom),
+			tocScrolls: toc.scrollHeight > toc.clientHeight,
+			bodyScrolls: body.scrollHeight > body.clientHeight,
+			outerScrolls: outer.scrollHeight > outer.clientHeight + 1,
+		};
+	});
+	check("the contents list and the document end on the same line", Math.abs(panes.tocBottom - panes.bodyBottom) <= 1, panes);
+	check("each pane scrolls on its own", panes.tocScrolls && panes.bodyScrolls, panes);
+	check("…so the card itself does not scroll", !panes.outerScrolls, panes);
+
 	await page.$eval(`.artifact[data-artifact="${longMd}"]`, (e) => e.scrollIntoView({ block: "center" }));
 	await new Promise((r) => setTimeout(r, 300));
 	await shot("artifact-toc-narrow");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConnectionsPage } from "./Connections";
 import { exportModule } from "./Transfer";
 import { api, type Module, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
-import { chatHref, homeHref, navigate, missionHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
+import { chatHref, homeHref, navigate, missionHref, timeAgo, timeTitle, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
 import { startKeyboardNav } from "../keys";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
@@ -244,7 +244,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 											onDoubleClick={canEdit ? (e) => (e.preventDefault(), getSelection()?.removeAllRanges(), setRenaming(`c:${c.id}`)) : undefined}
 										>
 											<span className="t">{c.title}</span>
-											{related && !on ? <span className="side-related" title="This chat has worked on the open module">Related</span> : <span className="ago">{timeAgo(c.updatedAt)}</span>}
+											{related && !on ? <span className="side-related" title="This chat has worked on the open module">Related</span> : <span className="ago" title={timeTitle(c.updatedAt)}>{timeAgo(c.updatedAt)}</span>}
 										</a>
 										<RowMenu
 											label={c.title}
@@ -326,7 +326,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 								ws &&
 								archivedChats.map((c) => (
 									<div key={c.id} data-chat-id={c.id} className={`side-row archived ${menuOpen === `c:${c.id}` ? "menu-open" : ""}`}>
-										<a className="side-item archived" href={chatHref(ws.id, c.id)} title={`${c.title} — archived ${timeAgo(c.updatedAt)} ago`}>
+										<a className="side-item archived" href={chatHref(ws.id, c.id)} title={`${c.title} — archived ${timeAgo(c.updatedAt)} (${timeTitle(c.updatedAt)})`}>
 											<span className="ico">💬</span>
 											<span className="t">{c.title}</span>
 										</a>
@@ -347,7 +347,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 									const canChange = g.role === "owner" || g.role === "editor";
 									return (
 										<div key={g.id} data-module-id={g.id} className={`side-row archived ${menuOpen === `g:${g.id}` ? "menu-open" : ""}`}>
-											<a className="side-item archived" href={chatHref(ws.id, undefined, g.id, true)} title={`${g.name} — archived ${timeAgo(g.archivedAt ?? g.updatedAt)} ago`}>
+											<a className="side-item archived" href={chatHref(ws.id, undefined, g.id, true)} title={`${g.name} — archived ${timeAgo(g.archivedAt ?? g.updatedAt)}`}>
 												<span className="ico">{g.icon}</span>
 												<span className="t">{g.name}</span>
 											</a>
@@ -394,7 +394,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 				</button>
 			)}
 
-			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${chatId ?? ""}`} ws={ws} chatId={chatId} relatedModules={relatedModules} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
+			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${chatId ?? ""}`} ws={ws} chatId={chatId} relatedModules={relatedModules} modules={[...modules, ...archived]} files={docs.files.files} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
 			{route.page === "chat" && ws && route.module && (
 				<ModuleWindow key={route.module} moduleId={route.module} user={user} grants={docs.grants} tabRequest={tabRequest?.module === route.module ? tabRequest : undefined}
 					chatHidden={chatHidden}

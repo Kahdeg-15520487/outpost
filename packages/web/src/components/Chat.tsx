@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pickerShows, type ModelPicker } from "./ModelPicker";
 import { EditableLabel } from "./RowMenu";
-import { api, fileUrl, formatBytes, uploadFile, type ChatMeta, type FileMeta, type Module, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, uploadFile, type Blueprint, type ChatMeta, type FileMeta, type Module, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
 import { Markdown } from "./bits";
 import { ResourcesDialog } from "./Resources";
 import { askConfirm, reportError } from "../dialogs";
+import { describeArgs, type CallNames } from "../toolargs";
 
 const SUGGESTIONS: Suggestion[] = [
 	{ k: "🎞️", t: "Make slides", d: "for my Q3 planning meeting", p: "Make slides for my Q3 planning meeting: goals, risks, timeline, asks." },
@@ -24,6 +25,10 @@ export function ChatView(props: {
 	models: ModelInfo[];
 	defaultModel?: ModelRef;
 	grants: WorkspaceDocs["grants"];
+	/** Every module in the workspace, archived ones included: tool calls are shown by name. */
+	modules: Module[];
+	/** The workspace's files by id, so a tool call can say which file it touched. */
+	files: Record<string, FileMeta>;
 	openModule?: string;
 	/** The module open beside the chat, when it's in this workspace's list. */
 	module?: Module;
@@ -34,6 +39,16 @@ export function ChatView(props: {
 }) {
 	const { ws, chatId } = props;
 	const state = useChat(ws.id, chatId);
+	// Tool calls are shown by name: the file, module or blueprint the agent actually touched.
+	const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
+	useEffect(() => {
+		let live = true;
+		api.get("/api/blueprints").then((r) => live && setBlueprints(r.blueprints)).catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, []);
+	const names = useMemo<CallNames>(() => ({ files: props.files, modules: props.modules, blueprints }), [props.files, props.modules, blueprints]);
 	const meta = chatId ? props.chats[chatId] : undefined;
 	const [resources, setResources] = useState(false);
 	/** Model picked before the chat exists; the chat is created with it on first send. */
@@ -169,7 +184,7 @@ export function ChatView(props: {
 							</div>
 						)
 					) : (
-						<Transcript state={state} wsId={ws.id} chatId={chatId!} />
+						<Transcript state={state} wsId={ws.id} chatId={chatId!} names={names} />
 					)}
 				</div>
 			</div>
@@ -248,7 +263,7 @@ function textOf(content: any): string {
 	return (content ?? []).map((c: any) => (c.type === "text" ? c.text : c.type === "image" ? "[image]" : "")).join("");
 }
 
-export function Transcript({ state, wsId, chatId }: { state: ChatState; wsId: string; chatId: string }) {
+export function Transcript({ state, wsId, chatId, names }: { state: ChatState; wsId: string; chatId: string; names?: CallNames }) {
 	const results = useMemo(() => {
 		const map = new Map<string, any>();
 		for (const e of state.entries) if (e.kind === "pi.tool-result") for (const m of e.model ?? []) map.set(m.toolCallId, m);
@@ -263,15 +278,15 @@ export function Transcript({ state, wsId, chatId }: { state: ChatState; wsId: st
 	return (
 		<>
 			{state.entries.map((e) => (
-				<EntryView key={e.id} entry={e} results={results} tools={state.tools} nested={nestedByParent} wsId={wsId} chatId={chatId} />
+				<EntryView key={e.id} entry={e} results={results} tools={state.tools} nested={nestedByParent} wsId={wsId} chatId={chatId} names={names} />
 			))}
-			{state.live && <AssistantView content={state.live.content} results={results} tools={state.tools} nested={nestedByParent} streaming wsId={wsId} chatId={chatId} />}
+			{state.live && <AssistantView content={state.live.content} results={results} tools={state.tools} nested={nestedByParent} streaming wsId={wsId} chatId={chatId} names={names} />}
 			{state.error && <div className="notice" style={{ color: "var(--bad)" }}>⚠ {state.error}</div>}
 		</>
 	);
 }
 
-function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>; tools: Record<string, LiveTool>; nested: Map<string, LiveTool[]>; wsId: string; chatId: string }) {
+function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>; tools: Record<string, LiveTool>; nested: Map<string, LiveTool[]>; wsId: string; chatId: string; names?: CallNames }) {
 	switch (entry.kind) {
 		case "outpost.user":
 			return (
@@ -301,7 +316,7 @@ function EntryView({ entry, ...rest }: { entry: Entry; results: Map<string, any>
 	}
 }
 
-function AssistantView({ content, results, tools, nested, streaming, error, stopReason, wsId, chatId }: { content: any[]; results: Map<string, any>; tools: Record<string, LiveTool>; nested: Map<string, LiveTool[]>; streaming?: boolean; error?: string; stopReason?: string; wsId: string; chatId: string }) {
+function AssistantView({ content, results, tools, nested, streaming, error, stopReason, wsId, chatId, names }: { content: any[]; results: Map<string, any>; tools: Record<string, LiveTool>; nested: Map<string, LiveTool[]>; streaming?: boolean; error?: string; stopReason?: string; wsId: string; chatId: string; names?: CallNames }) {
 	const lastText = content.map((c, i) => (c?.type === "text" ? i : -1)).filter((i) => i >= 0).pop();
 	return (
 		<div className="msg-assistant">
@@ -315,7 +330,7 @@ function AssistantView({ content, results, tools, nested, streaming, error, stop
 							{c.thinking}
 						</details>
 					) : null;
-				if (c.type === "toolCall") return <ToolCard key={c.id ?? i} call={c} result={results.get(c.id)} live={tools[c.id]} nested={nested} settled={!streaming} wsId={wsId} chatId={chatId} />;
+				if (c.type === "toolCall") return <ToolCard key={c.id ?? i} call={c} result={results.get(c.id)} live={tools[c.id]} nested={nested} settled={!streaming} wsId={wsId} chatId={chatId} names={names} />;
 				return null;
 			})}
 			{stopReason === "aborted" && <div className="notice">⟲ interrupted — the run continued from its last checkpoint</div>}
@@ -324,19 +339,10 @@ function AssistantView({ content, results, tools, nested, streaming, error, stop
 	);
 }
 
-function argPreview(name: string, args: any): string {
-	if (!args) return "";
-	if (name === "codemode") return String(args.code ?? "").split("\n").find((l: string) => l.trim()) ?? "";
-	if (name === "module_write") return `${args.path} (${String(args.content ?? "").length} chars)`;
-	if (name === "module_call") return `${args.method}(${JSON.stringify(args.args ?? []).slice(1, -1)})`;
-	if (name === "subagent") return args.task;
-	return Object.entries(args)
-		.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
-		.join(" ")
-		.slice(0, 160);
-}
+/** A tool call's one-line summary; the naming rules live in toolargs.ts. */
+const argPreview = (name: string, args: any, names?: CallNames) => describeArgs(name, args, names);
 
-function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call: any; result?: any; live?: LiveTool; nested: Map<string, LiveTool[]>; settled?: boolean; wsId: string; chatId: string }) {
+function ToolCard({ call, result, live, nested, settled, wsId, chatId, names }: { call: any; result?: any; live?: LiveTool; nested: Map<string, LiveTool[]>; settled?: boolean; wsId: string; chatId: string; names?: CallNames }) {
 	const [open, setOpen] = useState(false);
 	const interrupted = !result && !live && settled;
 	const running = !result && !interrupted && live?.status !== "done";
@@ -352,7 +358,7 @@ function ToolCard({ call, result, live, nested, settled, wsId, chatId }: { call:
 			<div className="proc-head" onClick={() => setOpen(!open)}>
 				<span className={`st ${running ? "run" : isError ? "bad" : interrupted ? "" : "ok"}`}>{running ? "●" : isError ? "✕" : interrupted ? "⊘" : "✓"}</span>
 				<span className="name">{call.name}</span>
-				<span className="arg">{argPreview(call.name, args)}</span>
+				<span className="arg">{argPreview(call.name, args, names)}</span>
 				{details?.openModule && (
 					<a className="open" href={chatHref(wsId, chatId, details.openModule)} onClick={(e) => e.stopPropagation()}>
 						open ↗

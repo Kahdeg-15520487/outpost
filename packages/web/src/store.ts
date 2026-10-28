@@ -337,13 +337,7 @@ export function useAppUpdated() {
 	);
 }
 
-export const timeAgo = (t: number) => {
-	const s = (Date.now() - t) / 1000;
-	if (s < 45) return "just now";
-	if (s < 3600) return `${Math.round(s / 60)}m`;
-	if (s < 86400) return `${Math.round(s / 3600)}h`;
-	return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
+export { timeAgo, timeTitle } from "./time";
 
 /** The workspace's connections (MCP servers, REST APIs), refetched when the server says they changed. */
 export function useConnections(ws: string | undefined) {

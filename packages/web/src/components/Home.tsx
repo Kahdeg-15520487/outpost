@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type HomePayload, type User, type Workspace } from "../api";
-import { chatHref, missionHref, timeAgo, useReconnects } from "../store";
+import { chatHref, missionHref, timeAgo, timeTitle, useReconnects } from "../store";
 
 /**
  * The workspace homepage: what you were doing when you left, and what the agents did while you were
@@ -100,7 +100,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 				<header className="home-head">
 					<p className="home-eyebrow">
 						{ws.name}
-						{data && <> · {data.firstVisit ? "first time here" : `you were last here ${timeAgo(data.since)} ago`}</>}
+						{data && <> · {data.firstVisit ? "first time here" : `you were last here ${timeAgo(data.since)}`}</>}
 					</p>
 					<h1>
 						{data?.firstVisit ? "Welcome" : "Welcome back"}, {user.displayName.split(" ")[0]}
@@ -130,21 +130,21 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 										<a className="home-card" href={chatHref(ws.id, data.pickup.lastChat.id)}>
 											<span className="home-card-label">Last chat</span>
 											<span className="home-card-title">{data.pickup.lastChat.title}</span>
-											<span className="home-card-meta">{timeAgo(data.pickup.lastChat.at)} ago</span>
+											<span className="home-card-meta" title={timeTitle(data.pickup.lastChat.at)}>{timeAgo(data.pickup.lastChat.at)}</span>
 										</a>
 									)}
 									{data.pickup.questions.map((q) => (
 										<a key={`${q.missionId}-${q.at}`} className="home-card warn" href={missionHref(ws.id, q.missionId, "overview")}>
 											<span className="home-card-label">Waiting on you · {q.mission}</span>
 											<span className="home-card-title">{q.text}</span>
-											<span className="home-card-meta">{q.agent} asked {timeAgo(q.at)} ago</span>
+											<span className="home-card-meta">{q.agent} asked {timeAgo(q.at)}</span>
 										</a>
 									))}
 									{data.pickup.approvals.map((a) => (
 										<button key={a.id} className="home-card warn" onClick={onApprovals}>
 											<span className="home-card-label">Approval · {a.airlock}</span>
 											<span className="home-card-title">{a.summary}</span>
-											<span className="home-card-meta">{a.requestedBy} · {timeAgo(a.at)} ago</span>
+											<span className="home-card-meta">{a.requestedBy} · {timeAgo(a.at)}</span>
 										</button>
 									))}
 								</div>
@@ -162,7 +162,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 							</div>
 							{summaryNote && <p className="muted home-note">{summaryNote}</p>}
 
-							{nothingHappened && !data.firstVisit && <p className="muted">All quiet. Nothing changed since {timeAgo(data.since)} ago.</p>}
+							{nothingHappened && !data.firstVisit && <p className="muted">All quiet. Nothing changed since {timeAgo(data.since)}.</p>}
 							{data.firstVisit && !totals?.runs && <p className="muted">This is a fresh start — there's no history to catch up on yet.</p>}
 
 							{!!totals?.runs && (
@@ -186,7 +186,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 												{c.tools.length ? ` · ${c.tools.slice(0, 3).map((t) => t.name).join(", ")}` : ""}
 												{c.tools.length > 3 ? "…" : ""}
 											</span>
-											<span className="ago">{timeAgo(c.lastAt)}</span>
+											<span className="ago" title={timeTitle(c.lastAt)}>{timeAgo(c.lastAt)}</span>
 										</div>
 										{c.summary ? <p className="home-run-summary">{c.summary}</p> : c.snippet ? <p className="home-run-snippet">{c.snippet}</p> : null}
 										{c.failed && <span className="home-run-failed">That run ended badly — open the chat to see why.</span>}
@@ -212,7 +212,7 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 										<a key={g.id} className="home-side-row" href={chatHref(ws.id, undefined, g.id)}>
 											<span className="ico">{g.icon}</span>
 											<span className="grow">{g.name}</span>
-											<span className="muted">changed {timeAgo(g.at)} ago</span>
+											<span className="muted">changed {timeAgo(g.at)}</span>
 										</a>
 									))}
 								</div>

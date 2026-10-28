@@ -28,6 +28,8 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "offline", file: "offline.ts", what: "backend disconnect: banner, toast, failed actions, recovery" },
 	{ name: "module-chat", file: "module-chat.ts", what: "durable chat/module links, legacy recovery, sidebar highlighting and Open module navigation" },
 	{ name: "artifacts", file: "artifacts.ts", what: "artifacts in chat: embed markers, table typing and sorting, chart series, jq-lite queries, Markdown write-back" },
+	{ name: "time", file: "time.ts", what: "how the app says time passed: one phrase, one unit, never 'Oct 27 ago'" },
+	{ name: "labels", file: "labels.ts", what: "tool calls read as the file, module and blueprint they touched, never as ids" },
 	{ name: "parse", file: "parse.ts", what: "ingestion: docx, xlsx, pptx, pdf and archives parsed with libraries, design kept, conversions, caches" },
 ];
 

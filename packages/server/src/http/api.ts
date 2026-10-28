@@ -256,6 +256,79 @@ export function createApi(): Router {
 		return { ok: true };
 	});
 
+	// Parsed views of a file (Office, PDF, archives, delimited text). Cached server-side by hash.
+	r.get("/api/w/:ws/files/:id/parsed", async (req) => {
+		const { ws } = await member(req);
+		const meta = await ws.files.get(req.params.id!).catch(() => {
+			throw new HttpError(404, "No such file");
+		});
+		const { publicParsed, markdownFor, htmlFor, imageList } = await import("../files/parse/index.ts");
+		const { summaryOf } = await import("../files/parse/model.ts");
+		const parsed = await ws.parsed(meta, { refresh: req.query.get("refresh") === "1" });
+		const view = req.query.get("view") ?? "summary";
+		const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}
+…[truncated at ${max} characters]` : text);
+		const body: Record<string, unknown> = {
+			id: meta.id,
+			name: meta.name,
+			size: meta.size,
+			kind: parsed.kind,
+			format: parsed.format,
+			engine: parsed.engine ?? "native",
+			summary: summaryOf(parsed),
+			notes: parsed.notes ?? [],
+			images: imageList(parsed).map(({ ref, name, mime, width, height, alt }) => ({ ref, name, mime, width, height, alt })),
+			...(parsed.design ? { design: parsed.design } : {}),
+		};
+		if (view === "markdown") body.markdown = cap(markdownFor(parsed), 400_000);
+		else if (view === "html") body.html = cap(htmlFor(parsed, { inlineImages: false, imgSrc: (image) => `/api/w/${ws.id}/files/${meta.id}/parsed/image/${image.ref}` }), 400_000);
+		else if (view === "json" || view === "structure") body.parsed = publicParsed(parsed);
+		else body.markdown = cap(markdownFor(parsed), 20_000);
+		return body;
+	});
+	// Images extracted while parsing (data URIs are too big to send inline).
+	r.get("/api/w/:ws/files/:id/parsed/image/:ref", async (req) => {
+		const { ws } = await member(req);
+		const meta = await ws.files.get(req.params.id!);
+		const { imageList } = await import("../files/parse/index.ts");
+		const parsed = await ws.parsed(meta);
+		const image = imageList(parsed).find((i) => i.ref === req.params.ref);
+		if (!image) throw new HttpError(404, "No such image in this parse");
+		req.res.writeHead(200, { "content-type": image.mime, "content-length": image.bytes.length, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" });
+		req.res.end(image.bytes);
+	});
+	// Conversion: writes derived files next to the original and returns them.
+	r.post("/api/w/:ws/files/:id/convert", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const meta = await ws.files.get(req.params.id!).catch(() => {
+			throw new HttpError(404, "No such file");
+		});
+		const { to } = await req.body();
+		const allowed = ["markdown", "html", "text", "csv", "json"] as const;
+		const target = allowed.find((t) => t === String(to));
+		if (!target) throw new HttpError(400, `Convert to one of ${allowed.join(", ")}`);
+		const files = await ws.convertFile(meta, target, user.displayName);
+		if (!files.length) throw new HttpError(400, `Nothing to convert for ${meta.kind} → ${target}`);
+		return { files };
+	});
+	// Archive extraction: entries become workspace files, paths preserved.
+	r.post("/api/w/:ws/files/:id/extract", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const meta = await ws.files.get(req.params.id!).catch(() => {
+			throw new HttpError(404, "No such file");
+		});
+		const parsed = await ws.parsed(meta);
+		if (parsed.kind !== "archive") throw new HttpError(400, "Not an archive");
+		const { extractArchive } = await import("../files/parse/archive.ts");
+		const { match } = await req.body();
+		const entries = await extractArchive(parsed.archive, ws.files.all(meta), match ? new RegExp(String(match)) : undefined);
+		const files = [];
+		for (const entry of entries.slice(0, 500)) {
+			files.push(await ws.files.put(entry.bytes, { name: `${meta.name}/${entry.path}`, createdBy: user.displayName, source: "extract", parent: meta.id }));
+		}
+		return { files, count: files.length };
+	});
+
 	// ------------------------------------------------------------ missions (agent teams)
 	r.get("/api/w/:ws/missions", async (req) => {
 		const { ws } = await member(req);

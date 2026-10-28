@@ -13,6 +13,10 @@ import { AIRLOCKS, runMode, type Airlock } from "../airlocks/catalog.ts";
 import { Connections } from "../airlocks/connectors/index.ts";
 import { holds } from "../airlocks/prompt.ts";
 import { FileStore, formatBytes, imageProcessor, looksLikeText } from "../files/store.ts";
+import type { ConvertTarget } from "../files/parse/index.ts";
+
+/** Kinds the ingestion layer understands well enough to inline as content. */
+const PARSABLE = /^(docx|xlsx|pptx|pdf|zip|tar|gzip|gz|rar|7z|csv|tsv|json|xml|html|markdown)$/;
 import { buildFrame } from "../modules/frame.ts";
 import { renderModule, type RenderAction } from "../modules/render.ts";
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
@@ -257,7 +261,25 @@ export class Workspace {
 		return submission.id;
 	}
 
-	/** What the model sees for each attachment: images inline, small text inline, everything else as a handle for the file tools. */
+	/** Parse a file through the ingestion layer (cached in memory and on disk). */
+	async parsed(file: FileMeta, opts: { refresh?: boolean } = {}) {
+		const { parseFile } = await import("../files/parse/index.ts");
+		return parseFile(file, this.files.all(file), { filesDir: this.files.dir, ...opts });
+	}
+
+	/** Convert a file to derived workspace files (markdown, html, csv, json, text). */
+	async convertFile(file: FileMeta, target: ConvertTarget, createdBy: string) {
+		const { convert } = await import("../files/parse/index.ts");
+		const parsed = await this.parsed(file);
+		const created = [];
+		for (const conversion of convert(parsed, target)) {
+			const meta = await this.files.put(conversion.bytes, { name: conversion.name, mime: conversion.mime, createdBy, source: "extract", parent: file.id });
+			created.push(meta);
+		}
+		return created;
+	}
+
+	/** What the model sees for each attachment: images inline, parsed documents inlined, the rest as handles. */
 	async #attachmentParts(files: FileMeta[]) {
 		const parts: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [];
 		for (const f of files) {

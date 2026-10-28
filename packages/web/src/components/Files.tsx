@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Module, type Workspace } from "../api";
 import { chatHref, navigate, timeAgo } from "../store";
 import { Dialog } from "./bits";
+import { ParsedViews, PARSABLE } from "./ParsedViews";
 
 const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
 const isImage = (f: FileMeta) => /^image\/(png|jpeg|gif|webp)$/.test(f.mime);
@@ -55,7 +56,7 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 					<div className="fname">
 						{isImage(f) ? <img className="attachment" style={{ padding: 0, objectFit: "cover", borderRadius: 6 }} src={fileUrl(ws.id, f.id, true)} /> : <span className="attachment ext" style={{ padding: 0, border: 0 }}>{extOf(f.name)}</span>}
 						<div style={{ minWidth: 0 }}>
-							<a href="#" onClick={(e) => (e.preventDefault(), setPreview(f))} style={{ fontWeight: 600, textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+							<a href="#" data-nav onClick={(e) => (e.preventDefault(), setPreview(f))} style={{ fontWeight: 600, textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
 								{child && f.name.includes("/") ? f.name.slice(f.name.indexOf("/") + 1) : f.name}
 							</a>
 							{kids.length > 0 && (
@@ -206,6 +207,8 @@ function PreviewDialog({ ws, file, modules, canEdit, onAsk, onClose }: { ws: Wor
 			</div>
 			{isImage(file) ? (
 				<img src={fileUrl(ws.id, file.id, true)} style={{ maxWidth: "100%", maxHeight: "55vh", borderRadius: 10, display: "block", margin: "0 auto" }} />
+			) : PARSABLE.test(file.kind) ? (
+				<ParsedViews ws={ws.id} file={file} />
 			) : isTextual(file) ? (
 				<div className="preview">{textBody ?? "Loading…"}</div>
 			) : (

@@ -29,16 +29,25 @@
 		"@earendil-works/pi-codemode": "1.4.0",
 		"@earendil-works/pi-durable": "1.4.0",
 		"@modelcontextprotocol/sdk": "^1.32.2",
+		"exceljs": "^4.4.0",
+		"fflate": "^0.8.3",
+		"htmlparser2": "^12.0.0",
+		"mammoth": "^1.13.0",
 		"puppeteer-core": "^25.15.0",
 		"quickjs-wasi": "3.6.2",
+		"tar-stream": "^3.2.2",
 		"ws": "^8.22.0",
-		"yaml": "^2.9.1"
+		"yaml": "^2.9.1",
+		"yauzl": "^3.4.0"
 	},
 	"devDependencies": {
 		"@types/node": "^26.6.5",
 		"@types/ws": "^8.18.2",
+		"@types/yauzl": "^3.4.0",
 		"acorn": "^8.19.0",
 		"acorn-loose": "^8.5.2",
+		"docx": "^9.15.0",
+		"pptxgenjs": "^4.0.1",
 		"tsx": "^4.23.15",
 		"typescript": "^7.0.2"
 	}

@@ -15,7 +15,12 @@ const MAX_B64 = 48_000;
 export const FILES_GUIDE = `# Files
 Workspace files (uploads, your outputs, module outputs) are listed in the user's Files panel. An attachment arrives as \`[Attached file f_…: "name" — kind, mime, size]\`; images and small text files are inlined, everything else is a handle.
 
-You can make sense of **any** format with byte-level primitives, so never answer "I can't open this":
+Documents and archives have native parsers — prefer them over byte work:
+- \`file_parse\` reads docx, xlsx, pptx, pdf, zip/tar/gz/rar/7z, csv, html, json and markdown as structure (Markdown, or the full JSON model with \`view: "json"\`). It keeps the design too: theme fonts and colours, styles, page setup, shape geometry.
+- \`file_convert\` writes Markdown, HTML (self-contained), text, per-sheet CSV or JSON next to the original; \`file_extract\` unpacks archive entries into Files.
+- Attachments of those kinds already arrive parsed in the chat, so you rarely need to ask for them again.
+
+You can still make sense of **any other** format with byte-level primitives, so never answer "I can't open this":
 - \`file_info\` first: sniffed kind, magic bytes, a text or hex preview, and the entry list for zip containers.
 - \`file_read\` (text / hex / base64, by offset and length) and \`file_search\` (text or hex patterns → offsets) for walking structures.
 - Containers: docx/xlsx/pptx/odt/epub/jar are zips → \`file_unzip\`, then read the XML parts (e.g. word/document.xml, xl/sharedStrings.xml + xl/worksheets/sheet1.xml).
@@ -105,6 +110,82 @@ export function createFileTools(ws: Workspace) {
 					count: hits.length,
 					hits: hits.slice(0, 50).map((o) => ({ offset: o, context: JSON.stringify(ws.files.bytes(f, Math.max(0, o - 16), pattern.length + 48).toString("latin1")) })),
 				});
+			},
+		}),
+		defineTool({
+			name: "file_parse",
+			description:
+				"Read a document properly instead of byte by byte: docx, xlsx, pptx, pdf, zip/tar/gz/rar/7z, csv, html, json, markdown. Returns a structural summary plus Markdown, or the full structure with view=json (including the design model: theme, fonts, colours, page setup, shape geometry).",
+			parameters: Type.Object({
+				file: Type.String({ description: "file id or name" }),
+				view: Type.Optional(Type.Union([Type.Literal("markdown"), Type.Literal("json"), Type.Literal("summary")], { description: "markdown (default), json = full structure, summary = one line" })),
+				limit: Type.Optional(Type.Number({ description: "max characters of Markdown, default 40000" })),
+			}),
+			execute: async (args) => {
+				const f = await get(args.file);
+				const parsed = await ws.parsed(f);
+				const { summaryOf } = await import("./parse/model.ts");
+				const { markdownFor, publicParsed } = await import("./parse/index.ts");
+				const summary = summaryOf(parsed);
+				if (parsed.kind === "opaque") return text({ file: f.id, kind: parsed.kind, reason: parsed.reason, hint: "Use file_info/file_read, or build a module for this format." });
+				if (args.view === "summary") return text({ file: f.id, summary, notes: parsed.notes ?? [] });
+				if (args.view === "json") return text({ file: f.id, summary, notes: parsed.notes ?? [], parsed: publicParsed(parsed) });
+				const markdown = markdownFor(parsed);
+				const limit = Math.min(Math.max(args.limit ?? 40_000, 500), 200_000);
+				return text(`${summary}${parsed.notes?.length ? `
+Notes: ${parsed.notes.join("; ")}` : ""}
+
+${markdown.length > limit ? `${markdown.slice(0, limit)}
+…[${markdown.length - limit} more characters; raise limit or use view=json]` : markdown}`);
+			},
+		}),
+		defineTool({
+			name: "file_convert",
+			description: "Convert a file to a derived workspace file: markdown, html (self-contained with images), text, csv (one per sheet) or json (the full structure). The result appears in Files.",
+			parameters: Type.Object({
+				file: Type.String(),
+				to: Type.Union([Type.Literal("markdown"), Type.Literal("html"), Type.Literal("text"), Type.Literal("csv"), Type.Literal("json")]),
+			}),
+			replay: "safe",
+			execute: async (args, api, context) => {
+				const done = await api.memo<any[]>("converted", context);
+				if (done) return text(done);
+				const f = await get(args.file);
+				const created = await ws.convertFile(f, args.to, "Agent");
+				if (!created.length) throw new Error(`Nothing to convert for ${f.kind} → ${args.to}`);
+				const out = created.map(summary);
+				await api.memo("converted", out as any, context);
+				return text(out);
+			},
+		}),
+		defineTool({
+			name: "file_extract",
+			description: "Extract the entries of an archive (zip, tar, gz, rar, 7z) into workspace files, keeping their paths.",
+			parameters: Type.Object({
+				file: Type.String(),
+				match: Type.Optional(Type.String({ description: "regex on entry paths" })),
+				max: Type.Optional(Type.Number({ description: "max entries, default 200" })),
+			}),
+			replay: "safe",
+			execute: async (args, api, context) => {
+				const done = await api.memo<any[]>("extracted", context);
+				if (done) return text(done);
+				const f = await get(args.file);
+				const parsed = await ws.parsed(f);
+				if (parsed.kind !== "archive") throw new Error(`${f.name} is not an archive (${parsed.kind})`);
+				const { extractArchive } = await import("./parse/archive.ts");
+				const entries = await extractArchive(parsed.archive, ws.files.all(f), args.match ? new RegExp(args.match) : undefined);
+				const out: unknown[] = [];
+				for (const entry of entries.slice(0, Math.min(args.max ?? 200, 1000))) {
+					if (entry.bytes.length > 48 << 20) {
+						out.push({ entry: entry.path, error: "larger than 48 MB" });
+						continue;
+					}
+					const meta = await ws.files.put(entry.bytes, { name: `${f.name}/${entry.path}`, createdBy: "Agent", source: "extract", parent: f.id });
+					out.push({ id: meta.id, entry: entry.path, kind: meta.kind, size: formatBytes(meta.size) });
+				}
+				await api.memo("extracted", out as any, context);
+				return text(out);
 			},
 		}),
 		defineTool({

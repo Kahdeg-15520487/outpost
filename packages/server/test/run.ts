@@ -27,6 +27,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "ui", file: "ui.ts", what: "web app in a browser: home page, chat, menus, picker, mission page" },
 	{ name: "offline", file: "offline.ts", what: "backend disconnect: banner, toast, failed actions, recovery" },
 	{ name: "module-chat", file: "module-chat.ts", what: "durable chat/module links, legacy recovery, sidebar highlighting and Open module navigation" },
+	{ name: "parse", file: "parse.ts", what: "ingestion: docx, xlsx, pptx, pdf and archives parsed with libraries, design kept, conversions, caches" },
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

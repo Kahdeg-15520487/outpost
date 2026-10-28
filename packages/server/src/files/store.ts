@@ -95,7 +95,7 @@ export function hexdump(buf: Buffer, base = 0): string {
 	return lines.join("\n");
 }
 
-type ZipEntry = { name: string; method: number; compressedSize: number; size: number; localOffset: number };
+export type ZipEntry = { name: string; method: number; compressedSize: number; size: number; localOffset: number };
 
 /** Minimal ZIP reader (stored + deflate; no zip64, no encryption). Enough for OOXML/ODF/EPUB/JAR. */
 export function zipEntries(data: Buffer): ZipEntry[] {

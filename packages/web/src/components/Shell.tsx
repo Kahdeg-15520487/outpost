@@ -3,6 +3,7 @@ import { ConnectionsPage } from "./Connections";
 import { exportModule } from "./Transfer";
 import { api, type Module, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
 import { chatHref, homeHref, navigate, missionHref, timeAgo, useRoute, useSocketStatus, useWorkspace, useConnections, useAppUpdated } from "../store";
+import { startKeyboardNav } from "../keys";
 import { socket } from "../socket";
 import { ChatView } from "./Chat";
 import { HomePage } from "./Home";
@@ -17,6 +18,7 @@ import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
 import { NewMissionDialog, MissionPage } from "./MissionPage";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+	useEffect(() => startKeyboardNav(), []);
 	const route = useRoute();
 	const online = useSocketStatus();
 	const [workspaces, setWorkspaces] = useState<Workspace[]>([]);

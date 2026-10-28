@@ -517,3 +517,44 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 
 /* A newer web app is being served than this tab runs. */
 .update-banner { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 16px; border-radius: 14px; background: var(--ink); color: var(--ink-text); font-size: 13.5px; box-shadow: var(--shadow); }
+
+/* Parsed file views (Content / Structure / Design) */
+.parsed { display: grid; gap: 10px; }
+.parsed-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.tab { border: 0; background: none; padding: 5px 12px; border-radius: 8px; font: 600 12.5px var(--sans); color: var(--muted); cursor: pointer; }
+.tab:hover:not(:disabled) { color: var(--ink); background: var(--wash); }
+.tab.on { background: var(--ink); color: var(--ink-text); }
+.tab:disabled { opacity: .4; cursor: default; }
+.parsed-summary { font-size: 11.5px; }
+.parsed-note { font-size: 12px; color: var(--muted); border-left: 2px solid var(--signal); padding-left: 8px; }
+.parsed-error { font-size: 13px; color: var(--bad); }
+.parsed-body { max-height: 38vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.parsed-body .preview { border: 0; border-radius: 0; max-height: none; }
+.parsed-html { padding: 16px 18px; font: 14px/1.6 var(--sans); color: var(--ink); }
+.parsed-html h1, .parsed-html h2, .parsed-html h3 { font-family: var(--display); line-height: 1.2; margin: 1.1em 0 .4em; }
+.parsed-html h1 { font-size: 24px; }
+.parsed-html h2 { font-size: 19px; }
+.parsed-html h3 { font-size: 16px; }
+.parsed-html p { margin: .5em 0; }
+.parsed-html ul, .parsed-html ol { margin: .5em 0 .5em 1.3em; }
+.parsed-html table { border-collapse: collapse; width: 100%; margin: .8em 0; font-size: 13px; }
+.parsed-html td, .parsed-html th { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+.parsed-html th { background: var(--paper); font-weight: 700; }
+.parsed-html img { max-width: 100%; height: auto; border-radius: 6px; }
+.parsed-html pre { background: var(--paper); padding: 10px; border-radius: 8px; overflow: auto; }
+.parsed-html blockquote { margin: .6em 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.parsed-html .notes { font-size: 13px; color: var(--muted); }
+.parsed-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.design { display: grid; gap: 16px; padding: 16px 18px; }
+.design section { display: grid; gap: 7px; }
+.design-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.swatch { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.swatch i { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .15); display: inline-block; }
+.design-styles { display: grid; gap: 4px; }
+.design-style { display: flex; gap: 10px; align-items: baseline; font-size: 11.5px; border-bottom: 1px dashed var(--line); padding-bottom: 3px; }
+.design-style b { min-width: 130px; }
+
+/* Keyboard cursor (same keys as the Slides module) */
+.nav-on { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 9px; }
+.side-item.nav-on { background: rgba(124, 58, 237, .18); }

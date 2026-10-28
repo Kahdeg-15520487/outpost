@@ -98,8 +98,11 @@ New chats use `models.default`, unless the workspace sets its own, falling back 
 
 Attach files to a message with 📎, drag-and-drop, or paste (Ctrl+V a screenshot), or drop them on the **Files** page. Any format is accepted, up to `files.maxUploadMB` (default 100). Bytes are stored content-addressed in `<dataDir>/workspaces/<id>.files/`. The index lives in the durable `outpost.files` document.
 
-- **What the model sees:** images are sent inline (resized with Photon when large), small text files are inlined, and everything else arrives as a handle such as `[Attached file f_…: "name" — kind, mime, size]`.
-- **Taking files apart:** the agent never gets a fixed list of supported formats. Instead it has byte-level primitives: `file_info` (sniffed kind, magic bytes, preview, zip entries), `file_read` (text/hex/base64 ranges), `file_search`, `file_unzip` (docx/xlsx/pptx/epub/jar …), `file_inflate` (gzip/zlib/deflate ranges, e.g. PDF streams), `file_view` (images), and `file_write` for outputs.
+- **What the model sees:** images are sent inline (resized with Photon when large), small text files are inlined verbatim, and documents are **ingested**: a docx, xlsx, pptx, pdf, csv or archive attached to a message arrives as its parsed content (a structural summary plus bounded Markdown), not as a handle. Unknown formats fall back to a handle.
+- **Ingestion, natively:** docx through [mammoth](https://github.com/mwilliamson/mammoth.js) with an OOXML fallback, xlsx through [ExcelJS](https://github.com/exceljs/exceljs) with an OOXML fallback, pdf through the vendored [pdf.js](https://mozilla.github.io/pdf.js/), PPTX through a purpose-built OOXML reader (no library preserves shapes and charts), and archives through `yauzl` (zip, zip64), `tar-stream`, `node:zlib`, plus vendored WASM builds of unrar (RAR4/5) and 7-Zip (7z, including LZMA2). Each library is imported **on first use** — nothing heavy loads at boot.
+- **Nothing is thrown away:** the parse keeps a block model (headings, lists with levels, tables with spans, images, notes) *and* a design model — theme fonts and colours, the style catalogue, page setup, per-shape geometry, fills and run formatting — for output generation later. Conversions produce Markdown, self-contained HTML, plain text, per-sheet CSV, or the full JSON structure; archives extract with their paths.
+- **In the browser:** the Files preview has **Content / Structure / Design** tabs. Each tab fetches only what it shows and caches it (memory + Cache API), so reopening a file does not re-download it.
+- **Also scriptable:** `file_parse` (structure, Markdown or JSON), `file_convert`, `file_extract`, plus byte-level primitives for anything unsupported: `file_info`, `file_read` (text/hex/base64 ranges), `file_search`, `file_unzip`, `file_inflate`, `file_view` and `file_write`.
 - **Tooling it builds itself:** when a format needs real parsing or an interactive view, the agent writes a module whose server parses the file and then uses the module's API as its tool. Module servers use `ctx.files.list/info/text/bytes/write`. Files are capabilities: a module reads only files shared with it (`file_share_with_module`, or the checkboxes in the Files preview) and files it wrote itself.
 - **Safe serving:** downloads are always sent with `sandbox` CSP and `nosniff`. Only images, plain text and PDF render inline; HTML and SVG are always downloaded.
 
@@ -197,6 +200,13 @@ worktrees, commit and merge. They run shell commands inside the container, and t
 
 **Size.** ~1.8 GB, most of it Chromium. Skip `chromium` from the `apt-get` line and set
 `render.enabled: false` in the config if you don't need `module_screenshot`.
+
+## Keyboard
+
+The shell takes the same keys as the Slides module: **↓ / → / PageDown / Space / j** move to the next
+item, **↑ / ← / PageUp / k** to the previous, **Home / End** jump to the ends, **Enter** opens the
+highlighted item and **Escape** drops the cursor. The cursor is the violet outline on sidebar chats,
+modules and file rows. Keys never fire while you are typing, and dialogs keep their own keys.
 
 ## The workspace homepage
 

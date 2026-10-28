@@ -5,7 +5,7 @@
  * (pnpm build). Run: pnpm --filter @outpost/server test:ui   (HEADFUL=1 to watch)
  */
 import { check, finish, must, sleep, startServer, until, passDocGates } from "./lib/harness.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import puppeteer, { type Page } from "puppeteer-core";
 
@@ -559,7 +559,72 @@ async function run() {
 	delete process.env.OUTPOST_BUILD_ID;
 
 	check("no errors in the page", errors.length === 0, errors);
+	console.log("parsed file views");
+	// a real docx, uploaded through the same endpoint the browser uses
+	const docxB64 = readFileSync(join(import.meta.dirname, "fixtures/files/sample.docx")).toString("base64");
+	const docxId = await page.evaluate(
+		async (wsId, b64) => {
+			const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+			const res = await fetch(`/api/w/${wsId}/files`, { method: "POST", headers: { "x-file-name": "sample.docx", "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, body: bytes });
+			return ((await res.json()) as any).file.id as string;
+		},
+		ws,
+		docxB64,
+	);
+	await go(`#/w/${ws}/files`);
+	await until("the file row", () => page.$(`a[data-nav]`));
+	await page.evaluate((name) => {
+		const link = [...document.querySelectorAll("a")].find((a) => a.textContent?.includes(name));
+		(link as HTMLElement | undefined)?.click();
+	}, "sample.docx");
+	check("the parsed content renders as HTML", Boolean(await until("parsed html", () => page.$(".parsed-html"))));
+	const parsedText = await text(".parsed-html");
+	check("the document text is there", parsedText.includes("Outpost ingestion fixture"), parsedText.slice(0, 120));
+	check("the table renders in the preview", parsedText.includes("Portal") && Boolean(await page.$(".parsed-html table")));
+	check("the embedded image is served by the parse endpoint", Boolean(await page.$(".parsed-html img")));
+	check("the summary line names the engine", /document · mammoth/.test(await text(".parsed-head")), await text(".parsed-head"));
+	await shot("parsed-docx-content");
+
+	await clickText(".tabs .tab", /Structure/);
+	check("the structure tab shows the block model", await until("structure", async () => /"blocks"/.test(await text(".parsed-body"))));
+	await shot("parsed-docx-structure");
+
+	await clickText(".tabs .tab", /Design/);
+	const designText = await until("design", async () => ((await text(".design")).includes("Theme") ? text(".design") : undefined));
+	check("the design tab shows theme, fonts and colours", Boolean(designText) && /Georgia/.test(String(designText)) && /#/.test(String(designText)), String(designText).slice(0, 200));
+	check("the design tab lists the style catalogue", /styles \(\d+\)/i.test(String(designText)), String(designText).slice(0, 160));
+	await shot("parsed-docx-design");
+
+	await clickText(".parsed-actions button", /Markdown/);
+	check("conversion writes a derived file", Boolean(await until("converted", async () => /derived file/i.test(await text(".files-table")), 20000)), await text(".files-table tbody tr"));
+	await shot("parsed-converted");
+
+	// keyboard navigation, ported from the Slides module keys
+	await page.keyboard.press("Escape");
+	await page.waitForSelector(".parsed-html", { hidden: true }).catch(() => undefined);
+	await page.keyboard.press("ArrowDown");
+	const firstCursor = await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "");
+	check("ArrowDown highlights a navigation item", Boolean(firstCursor), firstCursor);
+	await page.keyboard.press("ArrowDown");
+	const secondCursor = await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "");
+	check("ArrowDown moves the cursor", secondCursor !== firstCursor, `${firstCursor} → ${secondCursor}`);
+	await page.keyboard.press("ArrowUp");
+	check("ArrowUp moves it back", (await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "")) === firstCursor);
+	check("only one item is highlighted at a time", (await page.evaluate(() => document.querySelectorAll(".nav-on").length)) === 1);
+	await shot("keyboard-cursor");
+	// never hijack typing
+	await page.evaluate(() => {
+		const input = document.querySelector("input.input") as HTMLInputElement | undefined;
+		input?.focus();
+	});
+	const typingCursor = await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "");
+	await page.keyboard.press("ArrowDown");
+	check("arrows are not captured while typing", (await page.evaluate(() => document.querySelector(".nav-on")?.textContent?.slice(0, 40) ?? "")) === typingCursor);
+	await page.keyboard.press("Escape");
+	await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
 }
+
 
 /** A mission mid-build: requirements, two attachments, T1 reviewed (changes, then approved) and merged, T2 in progress, preview config on main. */
 async function seedMission(wsId: string): Promise<string> {
@@ -613,7 +678,6 @@ async function seedMission(wsId: string): Promise<string> {
 	await until("T2 briefed", async () => (await item("T2")).briefed);
 	return pid;
 }
-
 // ------------------------------------------------------------------ main
 
 const browser = await puppeteer.launch({ executablePath: browserPath, headless: !process.env.HEADFUL, timeout: 90_000, defaultViewport: { width: 1600, height: 1000 }, args: ["--no-sandbox", "--disable-dev-shm-usage"] });

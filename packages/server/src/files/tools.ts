@@ -28,6 +28,21 @@ You can still make sense of **any other** format with byte-level primitives, so 
 - Images → \`file_view\` to look at them.
 - Save what you derive (extracted text, CSV, JSON, reports) with \`file_write\` so the user gets it in Files.
 
+## Showing a file in the chat
+To put a file in front of the user instead of describing it, write a line of its own:
+
+    ![[f_1a2b3c4d5e6f]]
+
+Add a caption with a pipe — \`![[f_1a2b3c4d5e6f|Q3 revenue]]\`. The client renders the file inline, interactive:
+
+- csv/tsv/xlsx → a table they can sort, filter, copy and chart, with the numbers right-aligned and typed.
+- json → a collapsible tree, a jq-lite query box (\`.items[].name\`, \`. | length\`, \`map(.x)\`), and a table when the shape allows it.
+- md → rendered prose with a contents list; task checkboxes are clickable and write back to the file.
+- html → the document runs in a sandboxed frame (scripts allowed, network blocked, no access to the app).
+- docx/pptx/pdf and archives → a summary with a rendered view or the entry list.
+
+Embed the artifacts you produce — a CSV report, a dataset, a JSON extract, a checklist, a small HTML tool — not the whole working set. One card per file per reply is enough; the file stays in Files either way.
+
 **Build your own tooling.** When a format needs real parsing, repeated access or an interactive view (spreadsheets, logs, datasets, binary records), write a module whose server parses the file with \`ctx.files\`, share the file with it (\`file_share_with_module\`), and then use \`module_call\` as your tool. Its client can visualize the data for the user. Improve the module as you learn the format. Inside a module server: \`ctx.files.list()\`, \`ctx.files.info(id)\`, \`ctx.files.text(id, offset?, length?)\`, \`ctx.files.bytes(id, offset?, length?)\` → Uint8Array (≤16 MB per read), \`await ctx.files.write(name, stringOrUint8Array, mime?)\` → {id}. A module sees only files shared with it, plus files it wrote.`;
 
 export function createFileTools(ws: Workspace) {

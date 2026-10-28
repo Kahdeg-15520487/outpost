@@ -6,7 +6,7 @@
  *   startServer()             boot outpost in this process on a free port (or use $BASE if set)
  *   finish()                  stop everything, print the summary, exit 0/1
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,14 @@ export const testDir = mkdtempSync(join(tmpdir(), "outpost-test-"));
 // this process from deleting it itself.
 console.log(`[harness] dir ${testDir}`);
 process.env.OUTPOST_DATA = join(testDir, "data");
-process.env.OUTPOST_CONFIG = "";
+// A config of our own, so a test can never reach a real provider: no ambient keys (which is how a
+// developer's OpenAI/Anthropic credentials got picked up), no configured providers, and the scripted
+// offline demo as the default model. Tests must be free and hermetic.
+process.env.OUTPOST_CONFIG = join(testDir, "outpost.config.json");
+writeFileSync(
+	process.env.OUTPOST_CONFIG,
+	JSON.stringify({ models: { default: "outpost-demo/demo", demo: true, ambientEnv: false, providers: {} } }),
+);
 // pnpm sets INIT_CWD to where it was invoked (the repo root, next to the developer's config).
 process.env.INIT_CWD = testDir;
 process.env.HOST = "127.0.0.1";

@@ -140,38 +140,43 @@ async function run() {
 	must("signed back in", await until("composer again", () => page.$(".composer textarea")));
 
 	console.log("model picker");
-	// A second provider (never called) so the picker has something to hide. Set only now: the chat above
-	// must keep the demo model as its default.
-	process.env.OPENAI_API_KEY = "sk-test-not-a-real-key";
 	await page.reload();
 	await page.waitForSelector(".composer select");
 	// (1-based so a first-position select isn't falsy)
 	const found = await until("model select", () => page.$$eval(".composer select", (ss) => ss.findIndex((s) => [...(s as HTMLSelectElement).options].some((o) => o.value === "__manage")) + 1));
 	must("the chat has a model dropdown", typeof found === "number" && found > 0);
 	const selectWithManage = found - 1;
-	await page.$$eval(".composer select", (ss, i) => {
-		const s = ss[i] as HTMLSelectElement;
-		s.value = "__manage";
-		s.dispatchEvent(new Event("change", { bubbles: true }));
-	}, selectWithManage);
-	must("Choose models… opens the picker", await until("picker", () => page.$(".mp-dialog")));
-	await page.type(".mp-dialog input.input", "demo");
-	await clickText(".mp-dialog button", /Uncheck all|Uncheck matches/);
-	await page.$eval(".mp-dialog input.input", (i) => {
-		const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-		set.call(i, "");
-		i.dispatchEvent(new Event("input", { bubbles: true }));
-	});
+	const openPicker = async () => {
+		await page.$$eval(".composer select", (ss, i) => {
+			const s = ss[i] as HTMLSelectElement;
+			s.value = "__manage";
+			s.dispatchEvent(new Event("change", { bubbles: true }));
+		}, selectWithManage);
+		must("Choose models… opens the picker", await until("picker", () => page.$(".mp-dialog")));
+		// the dialog lists models it has loaded; saving an empty list would mean "everything"
+		await until("the model list", () => page.$(".mp-provider"), 15000);
+	};
+	const offers = () => page.$$eval(".composer select option", (os) => (os as HTMLOptionElement[]).filter((o) => !o.disabled).map((o) => o.value).filter((v) => v && v !== "__manage"));
+	// The test config has the offline demo and nothing else — by design, so a test run can never call a
+	// paid API. So what we can check here is the picker's own contract: everything checked is stored as
+	// "everything" (the key disappears), and an empty selection cannot be saved at all.
+	await openPicker();
 	await clickText(".mp-dialog button", "Uncheck all");
-	await page.type(".mp-dialog input.input", "demo");
-	await clickText(".mp-dialog button", "Check matches");
+	const saveState = await page.evaluate(() => {
+		const b = [...document.querySelectorAll(".mp-dialog button")].find((x) => /^Save/.test((x as HTMLElement).innerText.trim())) as HTMLButtonElement | undefined;
+		return b ? { disabled: b.disabled, title: b.title } : undefined;
+	});
+	check("an empty picker cannot be saved", Boolean(saveState?.disabled) && /at least one/.test(saveState?.title ?? ""), saveState);
+	await clickText(".mp-dialog button", "Check all");
 	await clickText(".mp-dialog button", "Save");
 	await until("dialog closed", async () => !(await page.$(".mp-dialog")));
 	const picker = (await api("GET", "/api/models")).picker;
-	// A fully checked provider is stored as "everything" (omitted); hidden ones as [].
-	check("picker saved per user: OpenAI hidden, demo kept", Array.isArray(picker.openai) && picker.openai.length === 0 && (picker["outpost-demo"] === undefined || JSON.stringify(picker["outpost-demo"]) === '["demo"]'), picker);
-	const options = await page.$$eval(".composer select option", (os) => (os as HTMLOptionElement[]).filter((o) => !o.disabled).map((o) => o.value).filter((v) => v && v !== "__manage"));
+	check("a fully checked provider is stored as 'everything' (key omitted)", picker["outpost-demo"] === undefined, picker);
+	const options = await offers();
 	check("the dropdown offers only the picked models", options.length > 0 && options.every((v) => v.startsWith("outpost-demo/")), options);
+	const hidden = (await api("PUT", "/api/me/model-picker", { picker: { "outpost-demo": [] } })).picker;
+	check("a hidden provider is stored as an empty list, not 'everything'", Array.isArray(hidden["outpost-demo"]) && hidden["outpost-demo"].length === 0, hidden);
+	await api("PUT", "/api/me/model-picker", { picker: {} });
 
 	console.log("export / import");
 	const bundlePath = join(process.env.OUTPOST_DATA!, "..", "import.outpost.json");
@@ -643,6 +648,111 @@ async function run() {
 	check("the file is attached in that chat", askAttached === "sample.docx", askAttached ?? (await text(".attachments")));
 	check("the composer is ready to send it", Boolean(await page.$(".composer textarea, .composer input")));
 	await shot("ask-agent-attached");
+	// ------------------------------------------------------------------ artifacts in chat
+	console.log("artifacts in chat");
+	const upload = (wsId: string, name: string, mime: string, body: string) =>
+		page.evaluate(
+			async (wsId, name, mime, body) => {
+				const r = await fetch(`/api/w/${wsId}/files`, { method: "POST", headers: { "x-file-name": encodeURIComponent(name), "content-type": mime }, body });
+				const json = await r.json();
+				if (!r.ok) throw new Error(`${r.status} ${JSON.stringify(json)}`);
+				return (json as { file: { id: string } }).file.id;
+			},
+			wsId,
+			name,
+			mime,
+			body,
+		);
+	const csvId = await upload(ws, "revenue.csv", "text/csv", "region,revenue,when\nEMEA,120,2026-01-04\nAPAC,60,2026-02-11\nAMER,300,2026-03-02\n");
+	const jsonId = await upload(ws, "data.json", "application/json", '{"team":{"name":"Outpost"},"items":[{"name":"alpha","score":30},{"name":"beta","score":10}]}');
+	const mdId = await upload(ws, "plan.md", "text/markdown", "# Ship plan\n\n## Steps\n\n- [ ] write the parser\n- [x] wire the view\n");
+	const htmlId = await upload(ws, "demo.html", "text/html", '<html><body><h1>Interactive</h1><button id="b">Count</button><span id="n">0</span><script>let n=0;document.getElementById("b").onclick=function(){n++;document.getElementById("n").textContent=String(n)}</script></body></html>');
+	// The chat the Ask-agent button opened: pin it to the offline demo so this stays hermetic.
+	const chatId = /\/c\/(\d+)/.exec(page.url())?.[1];
+	if (chatId) await api("PATCH", `/api/w/${ws}/chats/${chatId}`, { model: { provider: "outpost-demo", modelId: "demo" } });
+	const ask = async (id: string) => {
+		await page.click(".composer textarea");
+		await page.type(".composer textarea", `show me ${id}`);
+		await page.keyboard.press("Enter");
+		await until(`the card for ${id}`, () => page.$(`.artifact[data-artifact="${id}"]`), 30000);
+	};
+
+	await ask(csvId);
+	await until("the table", () => page.$(`.artifact[data-artifact="${csvId}"] .art-table tbody tr`), 20000);
+	check("a csv embedded in a reply renders as a table", (await count(`.artifact[data-artifact="${csvId}"] .art-table tbody tr`)) === 3);
+	const header = await page.$$eval(`.artifact[data-artifact="${csvId}"] .art-table thead th`, (ths) => ths.map((t) => (t as HTMLElement).innerText.trim()));
+	check("the header row is the table's columns", header.join("|").includes("revenue") && header.join("|").includes("when"), header);
+	const firstRevenue = () => page.$eval(`.artifact[data-artifact="${csvId}"] .art-table tbody tr td:nth-child(3)`, (td) => (td as HTMLElement).innerText.trim());
+	await page.$$eval(`.artifact[data-artifact="${csvId}"] .art-table thead th`, (ths) => (ths[2] as HTMLElement).click());
+	check("clicking a column header sorts it", (await firstRevenue()) === "60", await firstRevenue());
+	await page.type(`.artifact[data-artifact="${csvId}"] .art-filter`, "apac");
+	check("the filter box narrows the rows", (await count(`.artifact[data-artifact="${csvId}"] .art-table tbody tr`)) === 1);
+	await page.click(`.artifact[data-artifact="${csvId}"] .art-filter`);
+	await page.keyboard.down("Control");
+	await page.keyboard.press("KeyA");
+	await page.keyboard.up("Control");
+	await page.keyboard.press("Backspace");
+	await page.evaluate((id) => {
+		const root = document.querySelector(`.artifact[data-artifact="${id}"]`);
+		[...(root?.querySelectorAll("button") ?? [])].find((b) => /Chart/.test(b.innerText))?.click();
+	}, csvId);
+	await until("the chart", () => page.$(`.artifact[data-artifact="${csvId}"] .art-svg rect`), 10000);
+	check("the chart draws a bar per row", (await count(`.artifact[data-artifact="${csvId}"] .art-svg rect`)) === 3);
+	await shot("artifact-table");
+
+	await ask(jsonId);
+	await until("the json tree", () => page.$(`.artifact[data-artifact="${jsonId}"] .jn-row`), 20000);
+	check("json opens as a tree", (await count(`.artifact[data-artifact="${jsonId}"] .jn-row`)) > 2);
+	await page.type(`.artifact[data-artifact="${jsonId}"] .art-query`, ".items[].name");
+	const counted = await until("the query result", async () => {
+		const t = await text(`.artifact[data-artifact="${jsonId}"] .art-count`);
+		return /2 results/.test(t) ? t : undefined;
+	}, 10000);
+	check("the query box runs jq-lite", Boolean(counted), counted);
+	check("the query result renders as values", (await text(`.artifact[data-artifact="${jsonId}"] .art-tree`)).includes("alpha"));
+	await page.type(`.artifact[data-artifact="${jsonId}"] .art-query`, " | flip()");
+	check("a bad query explains itself", Boolean(await until("the query error", async () => ((await text(`.artifact[data-artifact="${jsonId}"] .art-count.bad`)) ? true : undefined), 8000)));
+	await shot("artifact-json");
+
+	await ask(mdId);
+	await until("the markdown", () => page.$(`.artifact[data-artifact="${mdId}"] .art-doc input[type=checkbox]`), 20000);
+	check("markdown renders with a contents list", (await count(`.artifact[data-artifact="${mdId}"] .art-toc-item`)) === 2);
+	check("task checkboxes are live, not disabled", !(await page.$eval(`.artifact[data-artifact="${mdId}"] .art-doc input[type=checkbox]`, (i) => (i as HTMLInputElement).disabled)));
+	await page.click(`.artifact[data-artifact="${mdId}"] .art-doc input[type=checkbox]`);
+	const saved = await until("the file to be written back", async () => {
+		const r = await api("GET", `/api/w/${ws}/files/${mdId}/parsed?view=json`);
+		return /- \[x\] write the parser/.test(r.parsed?.text ?? "") ? r.parsed.text : undefined;
+	}, 15000);
+	check("ticking a checkbox writes the file", Boolean(saved), saved?.slice(0, 80));
+	await shot("artifact-markdown");
+
+	await ask(htmlId);
+	await until("the frame", () => page.$(`.artifact[data-artifact="${htmlId}"] iframe`), 20000);
+	const sandbox = await page.$eval(`.artifact[data-artifact="${htmlId}"] iframe`, (f) => f.getAttribute("sandbox") ?? "");
+	check("html runs sandboxed without same-origin", sandbox.includes("allow-scripts") && !sandbox.includes("allow-same-origin"), sandbox);
+	const frame = await until("the frame's document", async () => {
+		const found = page.frames().find((f) => f.url() === "about:srcdoc");
+		return found ?? undefined;
+	}, 15000);
+	const clicked = await frame!.evaluate(() => {
+		const button = document.getElementById("b") as HTMLButtonElement | null;
+		if (!button) return "no button";
+		button.click();
+		button.click();
+		return (document.getElementById("n") as HTMLElement | null)?.textContent ?? "no counter";
+	});
+	check("scripts inside the artifact run", clicked === "2", clicked);
+	const blocked = await frame!.evaluate(async () => {
+		try {
+			await fetch("http://127.0.0.1:9/", { mode: "no-cors" });
+			return "reached the network";
+		} catch (e) {
+			return (e as Error).message;
+		}
+	});
+	check("the artifact cannot reach the network", blocked !== "reached the network", blocked);
+	check("the frame reports its height back to the card", (await page.$eval(`.artifact[data-artifact="${htmlId}"] iframe`, (f) => Number((f as HTMLElement).style.height.replace("px", "")))) > 20);
+	await shot("artifact-html");
 
 }
 

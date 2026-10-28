@@ -250,6 +250,20 @@ export function createApi(): Router {
 		});
 		return { ok: true };
 	});
+	// Write a text file back in place — a Markdown checklist ticked in the chat, a fixed typo. The
+	// id, name, shares and any embeddings stay the same; the parse cache for both hashes is dropped.
+	r.put("/api/w/:ws/files/:id/content", async (req) => {
+		const { ws } = await member(req, "editor");
+		const { text } = await req.body();
+		if (typeof text !== "string") throw new HttpError(400, "text is required");
+		const meta = await ws.files.get(req.params.id!);
+		if (!/^text\/|^application\/(json|xml|javascript|x-yaml)$/.test(meta.mime)) throw new HttpError(400, `${meta.name} is not a text file`);
+		const next = await ws.files.replaceText(meta.id, Buffer.from(text, "utf8"));
+		const { clearParseCache } = await import("../files/parse/index.ts");
+		clearParseCache(ws.files.dir, meta.sha256);
+		clearParseCache(ws.files.dir, next.sha256);
+		return { ok: true, size: next.size };
+	});
 	r.delete("/api/w/:ws/files/:id", async (req) => {
 		const { ws } = await member(req, "editor");
 		await ws.files.delete(req.params.id!);

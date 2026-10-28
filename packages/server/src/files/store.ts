@@ -240,6 +240,33 @@ export class FileStore {
 		if (sha && !stillUsed && existsSync(this.#path(sha))) rmSync(this.#path(sha));
 	}
 
+	/**
+	 * Rewrite a file's bytes in place, keeping its id, name, shares and place in the chat.
+	 * Used when the reader edits the file itself (ticking a checkbox in a Markdown checklist).
+	 */
+	async replaceText(id: string, bytes: Buffer): Promise<FileMeta> {
+		const sha256 = createHash("sha256").update(bytes).digest("hex");
+		if (!existsSync(this.#path(sha256))) writeFileSync(this.#path(sha256), bytes);
+		let old: string | undefined;
+		let meta: FileMeta | undefined;
+		await this.harness.commit(async (tx) => {
+			const doc = await tx.doc(FilesDoc);
+			const file = doc.files[id];
+			if (!file) return;
+			old = file.sha256;
+			file.sha256 = sha256;
+			file.size = bytes.length;
+			file.kind = sniff(bytes.subarray(0, 8192), file.name);
+			meta = { ...file };
+		}, ctx);
+		if (!meta) throw new Error(`No file "${id}"`);
+		if (old && old !== sha256) {
+			const stillUsed = (await this.harness.snapshot(FilesDoc, ctx))?.files;
+			if (!Object.values(stillUsed ?? {}).some((f) => f.sha256 === old) && existsSync(this.#path(old))) rmSync(this.#path(old));
+		}
+		return meta;
+	}
+
 	/** Byte offsets of a text or hex pattern, from `from`, up to `max` hits. */
 	search(meta: FileMeta, pattern: Buffer, from = 0, max = 50): number[] {
 		const hits: number[] = [];

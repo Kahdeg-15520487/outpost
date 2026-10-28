@@ -50,6 +50,16 @@ function demoProvider() {
 				stopReason: "toolUse",
 			});
 		}
+		// An artifact in the chat: name a file id and the demo shows it, the same way a real
+		// model would after writing one.
+		const fileId = /(f_[0-9a-f]{8,16})/.exec(prompt)?.[1];
+		if (fileId) {
+			return fauxAssistantMessage([
+				fauxText(
+					`Here it is, straight from the file:\n\n![[${fileId}]]\n\nTell me what to change, or ask a question about it.`,
+				),
+			]);
+		}
 		if (/\b(list|show)\b.*\bmodules?\b/.test(p)) {
 			return fauxAssistantMessage([fauxToolCall("codemode", { code: "const r = await tools.module_list({}); console.log(JSON.stringify(r, null, 2));" })], {
 				stopReason: "toolUse",

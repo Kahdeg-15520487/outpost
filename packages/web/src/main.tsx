@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import "./artifacts.css";
 import { api, type User } from "./api";
 import { socket } from "./socket";
 import { navigate, useRoute } from "./store";

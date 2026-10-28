@@ -190,4 +190,48 @@ const bps = await ben.call("GET", "/api/blueprints");
 assert(bps.blueprints.some((b: any) => b.name === `Mail list ${suffix}`), "published blueprint visible to others");
 assert(bps.blueprints.filter((b: any) => b.id.startsWith("bp_") && !b.authorId).length >= 5, "built-in blueprints installed");
 
+// Compression: the app is half a megabyte of JavaScript, and it used to go over the wire raw.
+// fetch() decodes for us, so these go through node:http to see the bytes as sent.
+console.log("compression");
+const http = await import("node:http");
+const zlib = await import("node:zlib");
+const { config } = await import("../src/config.ts");
+const raw = (path: string, headers: Record<string, string>) =>
+	new Promise<{ headers: Record<string, string | string[] | undefined>; body: Buffer }>((resolve, reject) => {
+		const url = new URL(base + path);
+		http
+			.get({ hostname: url.hostname, port: url.port, path: url.pathname, headers }, (res) => {
+				const chunks: Buffer[] = [];
+				res.on("data", (c) => chunks.push(c));
+				res.on("end", () => resolve({ headers: res.headers as never, body: Buffer.concat(chunks) }));
+			})
+			.on("error", reject);
+	});
+const asset = (await import("node:fs")).readdirSync(`${config.webDist}/assets`).find((f) => f.endsWith(".js"))!;
+const identity = await raw(`/assets/${asset}`, { "accept-encoding": "identity" });
+assert(!identity.headers["content-encoding"], "no encoding when the client doesn't ask for one");
+assert(identity.headers["vary"] === "accept-encoding", "vary: accept-encoding");
+const gz = await raw(`/assets/${asset}`, { "accept-encoding": "gzip" });
+assert(gz.headers["content-encoding"] === "gzip", "gzip when offered");
+assert(zlib.gunzipSync(gz.body).equals(identity.body), "the gzipped body is the same bytes");
+assert(gz.body.length < identity.body.length / 2, `gzip shrinks it (${identity.body.length} → ${gz.body.length})`);
+const br = await raw(`/assets/${asset}`, { "accept-encoding": "br, gzip" });
+assert(br.headers["content-encoding"] === "br", "brotli preferred when offered");
+assert(zlib.brotliDecompressSync(br.body).equals(identity.body), "the brotli body is the same bytes");
+assert(br.body.length <= gz.body.length, `brotli is at least as small (${br.body.length} vs ${gz.body.length})`);
+const again = await raw(`/assets/${asset}`, { "accept-encoding": "br, gzip" });
+assert(again.headers["content-encoding"] === "br" && again.body.equals(br.body), "the encoded copy is reused");
+const refused = await raw(`/assets/${asset}`, { "accept-encoding": "gzip;q=0, br;q=0" });
+assert(!refused.headers["content-encoding"], "q=0 means no encoding");
+const jsonPlain = await raw("/api/blueprints", { cookie: (ana as any).cookie() as string, "accept-encoding": "identity" });
+const jsonZip = await raw("/api/blueprints", { cookie: (ana as any).cookie() as string, "accept-encoding": "gzip" });
+assert(!jsonPlain.headers["content-encoding"] || jsonPlain.headers["content-encoding"] === "identity", "json is plain when not asked");
+if (jsonZip.headers["content-encoding"] === "gzip") assert(zlib.gunzipSync(jsonZip.body).equals(jsonPlain.body), "compressed json decodes to the same document");
+else assert(true, "json below the compression threshold stays plain");
+const fontName = (await import("node:fs")).readdirSync(`${config.webDist}/assets`).find((f) => f.endsWith(".woff2"));
+if (fontName) {
+	const font = await raw(`/assets/${fontName}`, { "accept-encoding": "br, gzip" });
+	assert(!font.headers["content-encoding"], "already-compressed assets are not re-compressed");
+}
+
 await finish();

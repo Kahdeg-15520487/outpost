@@ -4,6 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { config } from "./config.ts";
 import { createApi } from "./http/api.ts";
 import { sendJson } from "./http/util.ts";
+import { compressible, encodedFile, pickEncoding } from "./http/compress.ts";
 import { attachSockets } from "./collab/socket.ts";
 import { installBuiltinBlueprints } from "./modules/blueprints.ts";
 import { Workspace } from "./kernel/workspace.ts";
@@ -39,12 +40,20 @@ const server = createServer(async (req, res) => {
 			res.writeHead(200, { "content-type": "text/plain" });
 			return res.end("Outpost API is running. Build the web app (pnpm build) or run `pnpm dev` and open http://localhost:5173");
 		}
+		const mime = MIME[extname(file)] ?? "application/octet-stream";
+		const { size } = statSync(file);
+		// Compress text (JS, CSS, SVG, JSON): assets are immutable, so the encoded copy is built once.
+		const encoding = compressible(mime, size) ? pickEncoding(req.headers["accept-encoding"] as string | undefined) : undefined;
+		const body = encoding ? encodedFile(file, encoding) : undefined;
 		res.writeHead(200, {
-			"content-type": MIME[extname(file)] ?? "application/octet-stream",
+			"content-type": mime,
 			"cache-control": file.includes(`${join("assets", "")}`) ? "public, max-age=31536000, immutable" : "no-cache",
 			"x-frame-options": "DENY",
+			vary: "accept-encoding",
+			...(encoding && body ? { "content-encoding": encoding, "content-length": String(body.length) } : { "content-length": String(size) }),
 		});
-		createReadStream(file).pipe(res);
+		if (body) res.end(body);
+		else createReadStream(file).pipe(res);
 	} catch (error) {
 		console.error(error);
 		if (!res.headersSent) sendJson(res, 500, { error: "Internal error" });

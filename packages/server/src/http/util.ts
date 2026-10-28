@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { HttpError, sessions, type User } from "../kernel/system-db.ts";
+import { encodeBody } from "./compress.ts";
 
 export function parseCookies(header: string | undefined): Record<string, string> {
 	const out: Record<string, string> = {};
@@ -107,8 +108,16 @@ export async function readRaw(req: Req, limit: number): Promise<Buffer> {
 	return Buffer.concat(chunks);
 }
 
-export function sendJson(res: ServerResponse, status: number, value: unknown) {
-	const body = JSON.stringify(value);
-	res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+export function sendJson(res: ServerResponse, status: number, value: unknown, acceptEncoding?: string) {
+	const raw = JSON.stringify(value);
+	// A module's files or a blueprint's source can be hundreds of kilobytes of JSON: compress it when
+	// the client says it can take it.
+	const { body, encoding } = encodeBody(raw, acceptEncoding ?? (res.req?.headers["accept-encoding"] as string | undefined));
+	res.writeHead(status, {
+		"content-type": "application/json; charset=utf-8",
+		"cache-control": "no-store",
+		vary: "accept-encoding",
+		...(encoding ? { "content-encoding": encoding } : {}),
+	});
 	res.end(body);
 }

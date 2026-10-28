@@ -623,6 +623,27 @@ async function run() {
 	await page.keyboard.press("Escape");
 	await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
+	console.log("ask agent from files");
+	await go(`#/w/${ws}/files`);
+	await until("the files table", () => page.$(".files-table tbody tr"));
+	const askClicked = await page.evaluate(() => {
+		const rows = [...document.querySelectorAll(".files-table tbody tr")];
+		const row = rows.find((r) => r.textContent?.includes("sample.docx"));
+		const button = [...(row?.querySelectorAll("button") ?? [])].find((b) => /Ask agent/.test(b.textContent ?? ""));
+		button?.click();
+		return Boolean(button);
+	});
+	check("the row has an Ask agent button", askClicked);
+	const askChatUrl = await until("a chat URL", async () => (/^https?:.+\/w\/[^/]+\/c\/\d+/.test(page.url()) ? page.url() : undefined), 20000);
+	check("Ask agent opens a real chat, not the homepage", Boolean(askChatUrl), page.url());
+	const askAttached = await until("the attachment tray", async () => {
+		const name = await page.evaluate(() => document.querySelector(".attachments .attachment .n")?.textContent ?? "");
+		return name || undefined;
+	}, 20000);
+	check("the file is attached in that chat", askAttached === "sample.docx", askAttached ?? (await text(".attachments")));
+	check("the composer is ready to send it", Boolean(await page.$(".composer textarea, .composer input")));
+	await shot("ask-agent-attached");
+
 }
 
 

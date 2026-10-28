@@ -32,7 +32,7 @@ function start(): ChildProcess {
 	return child;
 }
 const base = `http://127.0.0.1:${port}`;
-const up = async (ms = 40000) => {
+const up = async (ms = 90000) => {
 	const end = Date.now() + ms;
 	while (Date.now() < end) {
 		try {
@@ -47,7 +47,7 @@ const up = async (ms = 40000) => {
 let server = start();
 if (!(await up())) {
 	server.kill();
-	await finish(new Error(`server didn't start: ${log.slice(-400)}`));
+	await finish(new Error(`server didn't start in 90s: ${log.slice(-800)}`));
 }
 process.on("exit", () => server.kill());
 

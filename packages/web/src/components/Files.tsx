@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Module, type Workspace } from "../api";
 import { chatHref, navigate, timeAgo } from "../store";
 import { Dialog } from "./bits";
+import { toast } from "../toasts";
 import { ParsedViews, PARSABLE } from "./ParsedViews";
 
 const extOf = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name)?.[1] ?? "file").toUpperCase();
@@ -15,6 +16,7 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 	const [preview, setPreview] = useState<FileMeta>();
 	const [uploads, setUploads] = useState<{ key: string; name: string; progress: number; error?: string }[]>([]);
 	const [over, setOver] = useState(false);
+	const [asking, setAsking] = useState<string>();
 	const picker = useRef<HTMLInputElement>(null);
 	const canEdit = ws.role !== "viewer";
 
@@ -43,9 +45,22 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 				.catch((e) => set({ error: e.message }));
 		}
 	};
-	const ask = (f: FileMeta) => {
-		sessionStorage.setItem("outpost.attach", JSON.stringify([f]));
-		navigate(chatHref(ws.id));
+	/**
+	 * "Ask agent" has to land in a chat that exists: an empty chat is created first, then the file
+	 * is handed to it through sessionStorage (Chat reads the handoff on mount).
+	 */
+	const ask = async (f: FileMeta) => {
+		if (asking) return;
+		setAsking(f.id);
+		try {
+			const chat = await api.post<{ id: string }>(`/api/w/${ws.id}/chats`, {});
+			sessionStorage.setItem("outpost.attach", JSON.stringify([f]));
+			navigate(chatHref(ws.id, chat.id));
+		} catch (e) {
+			toast({ text: `Could not start a chat — ${(e as Error).message}` });
+		} finally {
+			setAsking(undefined);
+		}
 	};
 
 	const row = (f: FileMeta, child = false): ReactNode[] => {
@@ -84,8 +99,8 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 				</td>
 				<td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
 					{canEdit && (
-						<button className="btn small" onClick={() => ask(f)} title="Start a chat with this file attached">
-							Ask agent
+						<button className="btn small" disabled={asking === f.id} onClick={() => ask(f)} title="Start a chat with this file attached">
+							{asking === f.id ? "…" : "Ask agent"}
 						</button>
 					)}{" "}
 					<a className="btn ghost small" href={fileUrl(ws.id, f.id)} title="Download">
@@ -170,12 +185,12 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 					)}
 				</div>
 			</div>
-			{preview && <PreviewDialog ws={ws} file={files[preview.id] ?? preview} modules={modules} canEdit={canEdit} onAsk={() => ask(preview)} onClose={() => setPreview(undefined)} />}
+			{preview && <PreviewDialog ws={ws} file={files[preview.id] ?? preview} modules={modules} canEdit={canEdit} asking={asking} onAsk={() => ask(preview)} onClose={() => setPreview(undefined)} />}
 		</div>
 	);
 }
 
-function PreviewDialog({ ws, file, modules, canEdit, onAsk, onClose }: { ws: Workspace; file: FileMeta; modules: Module[]; canEdit: boolean; onAsk: () => void; onClose: () => void }) {
+function PreviewDialog({ ws, file, modules, canEdit, asking, onAsk, onClose }: { ws: Workspace; file: FileMeta; modules: Module[]; canEdit: boolean; asking?: string; onAsk: () => void; onClose: () => void }) {
 	const [textBody, setTextBody] = useState<string>();
 	const [name, setName] = useState(file.name);
 	useEffect(() => {
@@ -235,8 +250,8 @@ function PreviewDialog({ ws, file, modules, canEdit, onAsk, onClose }: { ws: Wor
 					Download
 				</a>
 				{canEdit && (
-					<button className="btn primary" onClick={onAsk}>
-						Ask the agent about it
+					<button className="btn primary" disabled={Boolean(asking)} onClick={onAsk}>
+						{asking ? "Starting…" : "Ask the agent about it"}
 					</button>
 				)}
 			</div>

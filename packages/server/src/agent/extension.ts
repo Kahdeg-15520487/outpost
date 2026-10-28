@@ -127,9 +127,13 @@ export function createOutpostExtension(ws: Workspace): Extension {
 			name: "blueprint_read",
 			description:
 				"Read a blueprint without creating anything: its files (sizes, or one file's source with `path`), its declared server API, its versions, and which modules use it. This answers \"does it have X?\" and \"what changed?\" without cloning.",
-			parameters: Type.Object({ blueprint: Type.String({ description: "blueprint id (any version)" }), path: Type.Optional(Type.String({ description: "one file's source" })) }),
+			parameters: Type.Object({
+				blueprint: Type.String({ description: "blueprint id: a root reads the current version, a version id reads that version" }),
+				version: Type.Optional(Type.Number({ description: "read this version explicitly" })),
+				path: Type.Optional(Type.String({ description: "one file's source" })),
+			}),
 			execute: async (args) => {
-				const info = ws.blueprintInfo(args.blueprint);
+				const info = ws.blueprintInfo(args.blueprint, args.version);
 				if (args.path) {
 					const source = info.source[args.path];
 					if (source === undefined) throw new Error(`No file ${args.path}. Files: ${Object.keys(info.source).join(", ")}`);
@@ -178,13 +182,33 @@ export function createOutpostExtension(ws: Workspace): Extension {
 		defineTool({
 			name: "module_read",
 			description: "Without path: list a module's files and its server API. With path: read one file.",
-			parameters: Type.Object({ module: Type.String({ description: "module id or name" }), path: Type.Optional(Type.String()) }),
+			parameters: Type.Object({
+				module: Type.String({ description: "module id or name" }),
+				path: Type.Optional(Type.String()),
+				offset: Type.Optional(Type.Number({ description: "start character, for reading a large file in pieces" })),
+				length: Type.Optional(Type.Number({ description: "how many characters; default 40000, max 200000" })),
+			}),
 			execute: async (args, api) => {
 				const g = await usedModule(args.module, api);
 				const files = await ws.moduleFiles(g.id);
 				if (args.path) {
-					if (files[args.path] === undefined) throw new Error(`No file ${args.path}. Files: ${Object.keys(files).join(", ")}`);
-					return text(files[args.path]!);
+					const body = files[args.path];
+					if (body === undefined) throw new Error(`No file ${args.path}. Files: ${Object.keys(files).join(", ")}`);
+					// A big file comes back in pieces, and says so: silently returning the first few hundred
+					// characters made a vendored 460 KB bundle look like a one-line file.
+					const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+					const length = Math.min(200_000, Math.max(1, Math.trunc(args.length ?? 40_000)));
+					if (body.length <= length && offset === 0) return text(body);
+					const slice = body.slice(offset, offset + length);
+					return text({
+						path: args.path,
+						bytes: body.length,
+						offset,
+						chars: slice.length,
+						truncated: offset + slice.length < body.length,
+						nextOffset: offset + slice.length < body.length ? offset + slice.length : undefined,
+						text: slice,
+					});
 				}
 				return text({ id: g.id, name: g.name, files: Object.fromEntries(Object.entries(files).map(([p, c]) => [p, `${c.length} chars`])), server: await ws.host(g.id).describe() });
 			},
@@ -331,27 +355,73 @@ export function createOutpostExtension(ws: Workspace): Extension {
 		defineTool({
 			name: "blueprint_update_modules",
 			description:
-				"Move modules built from a blueprint onto its current version. Without `modules`, every module on that blueprint is updated. Local edits are replaced, so report what changed per module to the user.",
+				"Move modules onto a blueprint's current version. Without `modules`, every module built from it is updated (drafts are left alone unless `includeDrafts`). Each module gets a status: updated, skipped (with the reason) or adopted. `adopt: true` moves a module built from a different or deleted blueprint onto this one, keeping its data and shares.",
 			parameters: Type.Object({
-				blueprint: Type.String({ description: "blueprint id (any version of it)" }),
-				modules: Type.Optional(Type.Array(Type.String(), { description: "limit to these module ids; default: all of them" })),
+				blueprint: Type.String({ description: "blueprint id — a root means its current version" }),
+				modules: Type.Optional(Type.Array(Type.String(), { description: "limit to these module ids" })),
+				adopt: Type.Optional(Type.Boolean({ description: "take modules that came from another (or a deleted) blueprint" })),
+				includeDrafts: Type.Optional(Type.Boolean({ description: "also move drafts" })),
 			}),
 			execute: async (args) => {
 				const info = ws.blueprintInfo(args.blueprint);
-				const targets = info.modulesUsing.map((m) => m.id).filter((id) => !args.modules || args.modules.includes(id));
-				const updated = [];
-				for (const id of targets) updated.push({ module: id, ...(await ws.updateModuleFromBlueprint(id)) });
-				return text({ version: info.blueprint.version, updated });
+				const root = info.blueprint.rootId;
+				const listed = args.modules?.map(String);
+				const candidates = listed ?? [...info.modulesUsing.map((m) => m.id), ...(args.includeDrafts ? info.draftsUsing.map((m) => m.id) : [])];
+				const results: { module: string; status: string; reason?: string; from?: number; to?: number; changed?: unknown }[] = [];
+				for (const id of candidates) {
+					const m = moduleDb.get(id);
+					if (!m) {
+						results.push({ module: id, status: "missing", reason: "no such module" });
+						continue;
+					}
+					const origin = m.blueprintId ? blueprintDb.get(m.blueprintId) : undefined;
+					const onRoot = origin?.rootId === root;
+					if (!onRoot) {
+						if (args.adopt) {
+							const r = await ws.adoptModule(id, info.current.id);
+							results.push({ module: id, status: "adopted", to: r.version, changed: r.changed });
+						} else {
+							results.push({ module: id, status: "skipped", reason: origin ? `built from a different blueprint (${origin.name} v${origin.version})` : m.blueprintId ? "its blueprint no longer exists" : "not built from a blueprint" });
+						}
+						continue;
+					}
+					if (m.hidden && !args.includeDrafts) {
+						results.push({ module: id, status: "skipped", reason: "draft (pass includeDrafts to move it)" });
+						continue;
+					}
+					const r = await ws.updateModuleFromBlueprint(id);
+					results.push({ module: id, status: "updated", from: r.from, to: r.version, changed: r.changed });
+				}
+				const moved = results.filter((r) => r.status === "updated" || r.status === "adopted");
+				if (listed && !moved.length) throw new Error(`Nothing was moved. ${results.map((r) => `${r.module}: ${r.reason ?? r.status}`).join("; ")}`);
+				return text({ blueprint: root, version: info.current.version, moved: moved.length, results });
+			},
+		}),
+		defineTool({
+			name: "module_set_blueprint",
+			description:
+				"Point an existing module at a blueprint and take its code, keeping the module's data, files and shares. This is how a module stranded on a deleted or superseded blueprint is rescued without creating a new module id.",
+			parameters: Type.Object({ module: Type.String(), blueprint: Type.String(), version: Type.Optional(Type.Number()) }),
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
+				return text(await ws.adoptModule(g.id, args.blueprint, args.version));
 			},
 		}),
 		defineTool({
 			name: "blueprint_delete",
 			description: "Delete a blueprint — the whole thing, or one version with `version`. Only its author may delete it; built-ins cannot be deleted.",
-			parameters: Type.Object({ blueprint: Type.String(), version: Type.Optional(Type.Number({ description: "delete only this version" })) }),
+			parameters: Type.Object({
+				blueprint: Type.String(),
+				version: Type.Optional(Type.Number({ description: "delete only this version" })),
+				force: Type.Optional(Type.Boolean({ description: "delete even though modules are built from it" })),
+			}),
 			execute: async (args) => {
 				const info = ws.blueprintInfo(args.blueprint);
 				if (info.blueprint.authorId === null) throw new Error("Built-in blueprints cannot be deleted");
 				if (info.blueprint.authorId !== ws.row.ownerId) throw new Error("Only the author can delete a blueprint");
+				const users = [...info.modulesUsing, ...info.draftsUsing];
+				if (users.length && !args.force && args.version === undefined)
+					throw new Error(`Still used by ${users.map((m) => m.name).join(", ")}. They keep running but could never be updated again — pass force: true to delete anyway.`);
 				if (args.version === undefined) blueprintDb.deleteRoot(info.blueprint.rootId);
 				else {
 					const version = info.versions.find((v) => v.version === args.version);

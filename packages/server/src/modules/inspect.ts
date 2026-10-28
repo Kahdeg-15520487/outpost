@@ -1,12 +1,10 @@
 /**
- * What a blueprint reader and a module owner need to compare code: file-level diff counts, the API a
- * blueprint declares, and the compat assessment of a set of files.
- *
- * Nothing here executes the blueprint — comparing two versions must never be a side effect (that was
- * the whole complaint: asking "does it have the field?" created a module).
+ * What a blueprint reader and a module owner need to compare code, resolve ids, and judge whether the
+ * code will run — all of it without executing anything. Comparing two versions must never be a side
+ * effect; that was the whole complaint (asking "does it have the field?" used to create a module).
  */
 
-import { detectRequires, MODULE_RUNTIME, OUTPOST_VERSION, type Assessment } from "./compat.ts";
+import { assess, detectRequires, type Assessment } from "./compat.ts";
 import { blueprints, modules, type BlueprintRow } from "../kernel/system-db.ts";
 
 export type FileChange = {
@@ -46,33 +44,64 @@ export function declaredApi(files: Record<string, string>): { methods: string[];
 	return { methods: unique, readonly: readonly.filter((name) => unique.includes(name)).sort() };
 }
 
-/** Would this code run on this instance? The same check import runs, for publish time. */
+/**
+ * Would this code run on this instance? The same assessment import uses, so writing a file and
+ * publishing a blueprint can never disagree about the same code.
+ */
 export function assessFiles(files: Record<string, string>): Assessment {
 	const requires = detectRequires(files);
-	const issues: string[] = [];
-	const notes: string[] = [];
-	if (requires.runtime !== MODULE_RUNTIME) issues.push(`Built for module runtime ${requires.runtime}; this instance runs ${MODULE_RUNTIME}.`);
+	const base = assess(requires);
+	const issues = [...base.issues];
+	const notes = [...base.notes];
 	if (!files["index.html"]) issues.push("No index.html: the module would have no client.");
 	if (!files["server.js"]) notes.push("No server.js: the module has no server API.");
-	const unknown = requires.airlocks.filter((g) => !g.methods.length);
-	if (unknown.length) notes.push(`Uses airlocks: ${requires.airlocks.map((g) => g.id).join(", ")}.`);
-	return { status: issues.length ? "blocked" : notes.length ? "warn" : "ok", issues, notes: [...notes, `for Outpost ${OUTPOST_VERSION}`] };
+	if (requires.vendored?.length) notes.push(`Shipped as-is, not scanned: ${requires.vendored.join(", ")}`);
+	const status: Assessment["status"] = issues.length ? "blocked" : base.status === "warn" || notes.length ? "warn" : "ok";
+	return { status, issues, notes };
 }
 
 /**
- * Everything a reader needs to judge a blueprint without cloning it: files with sizes, the source,
- * the API it declares, every version, and which modules are sitting on one. Read-only, no execution.
+ * Resolve whatever id a caller has to the version they mean.
+ *
+ * Three kinds of id exist and callers mix them: a root (`bp_…` naming the blueprint), a version id (one
+ * build, or the id stored on a module), and — because a first version's id *is* its root — an id that is
+ * both. Reading "the blueprint" by a root id must give the current version; a version id must give that
+ * version. Resolving the other way round silently returns stale code, and editing stale code then
+ * publishing it reverts whatever was improved.
+ */
+export function findBlueprint(id: string, version?: number | "latest"): BlueprintRow | undefined {
+	const byId = blueprints.get(id);
+	if (!byId) return undefined;
+	const versions = blueprints.versions(byId.rootId);
+	if (typeof version === "number") return versions.find((v) => v.version === version);
+	if (version === "latest") return versions.at(-1);
+	return byId.rootId === id ? versions.at(-1) : byId;
+}
+
+/**
+ * Everything a reader needs to judge a blueprint without cloning it: files with sizes, the source, the
+ * API it declares, every version, who is using it, and which version it came from.
  */
 export function blueprintInfo(bp: BlueprintRow) {
 	const versions = blueprints.versions(bp.rootId);
+	const current = versions.at(-1)!;
 	const using = modules.fromRoot(bp.rootId, versions.map((v) => v.id));
+	const drafts = using.filter((m) => m.hidden === true);
+	const live = using.filter((m) => m.hidden !== true);
 	return {
 		blueprint: { ...bp, files: undefined },
+		// Which version this answer is about, and which one is current: they differ when an old version
+		// was asked for explicitly, and a caller must be able to see that rather than guess.
+		requested: { id: bp.id, version: bp.version },
+		current: { id: current.id, version: current.version, changelog: current.changelog, updatedAt: current.updatedAt },
 		files: Object.fromEntries(Object.entries(bp.files).map(([path, body]) => [path, { size: body.length, lines: body.split("\n").length }])),
 		source: bp.files,
 		api: declaredApi(bp.files),
 		versions: versions.map(({ files: _files, ...v }) => v),
-		modulesUsing: using.map((m) => ({ id: m.id, name: m.name, workspaceId: m.workspaceId, current: m.blueprintId === bp.id, hidden: m.hidden === true })),
+		modulesUsing: live.map((m) => ({ id: m.id, name: m.name, workspaceId: m.workspaceId, current: m.blueprintId === bp.id })),
+		// Drafts are working copies, not the user's modules: counted apart so they neither inflate "used
+		// by" nor get swept up by a rollout.
+		draftsUsing: drafts.map((m) => ({ id: m.id, name: m.name, workspaceId: m.workspaceId, current: m.blueprintId === bp.id })),
 		compat: assessFiles(bp.files),
 	};
 }

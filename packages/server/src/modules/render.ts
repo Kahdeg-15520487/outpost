@@ -205,7 +205,7 @@ export function renderModule(opts: RenderOptions): Promise<RenderResult> {
 			const frame = page.frames().find((f) => f !== page.mainFrame());
 			for (const action of opts.actions.slice(0, 20)) {
 				try {
-					await runAction(frame, page, action);
+					await runAction(frame, page, action, actionErrors);
 				} catch (error) {
 					actionErrors.push(`${JSON.stringify(action)}: ${error instanceof Error ? error.message.split("\n")[0] : error}`);
 				}
@@ -234,13 +234,51 @@ export function renderModule(opts: RenderOptions): Promise<RenderResult> {
 	});
 }
 
-async function runAction(frame: Frame | undefined, page: import("puppeteer-core").Page, action: RenderAction) {
+/**
+ * Pressing a key only works if something in the module has focus, and a freshly loaded frame has none:
+ * the press landed on the host page instead, the module looked like it ignored the keyboard, and the
+ * test concluded the feature was broken. Focus the frame first — unless the module is deliberately
+ * typing into a field, where the keys must reach that field.
+ */
+async function pressInFrame(frame: Frame, page: import("puppeteer-core").Page, key: string, errors: string[]) {
+	const state = await frame.evaluate(() => {
+		const el = document.activeElement as HTMLElement | null;
+		const typing = !!el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName));
+		(window as unknown as { __outpostKeys: number }).__outpostKeys = 0;
+		document.addEventListener("keydown", () => ((window as unknown as { __outpostKeys: number }).__outpostKeys += 1), { capture: true, once: false });
+		return typing;
+	});
+	if (!state) {
+		// The host page owns the iframe; focusing that element routes keyboard input into the frame.
+		// Trying it directly on the document does nothing, and the press then goes to the host.
+		await page
+			.evaluate(() => {
+				const el = document.getElementById("g") as HTMLElement | null;
+				el?.focus();
+				(el?.firstElementChild as HTMLIFrameElement | null)?.focus?.();
+			})
+			.catch(() => {});
+	}
+	await page.keyboard.press(key as never);
+	let reached = await frame.evaluate(() => (window as unknown as { __outpostKeys: number }).__outpostKeys);
+	if (!reached) {
+		// Still nothing: dispatch inside the frame so the module sees the key, and say so, because a
+		// synthetic event skips anything the browser would do (scrolling, tabbing).
+		await frame.evaluate((k) => document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })), key);
+		await sleep(30);
+		reached = await frame.evaluate(() => (window as unknown as { __outpostKeys: number }).__outpostKeys);
+		if (reached) errors.push(`press "${key}" was delivered to the frame directly (the page had no keyboard focus)`);
+	}
+	if (!reached) errors.push(`press "${key}" never reached the module page — give it focus with a click action first`);
+}
+
+async function runAction(frame: Frame | undefined, page: import("puppeteer-core").Page, action: RenderAction, errors: string[] = []) {
 	if (!frame) throw new Error("module frame did not load");
 	if ("wait" in action) return sleep(Math.min(action.wait, 5_000));
 	if ("click" in action) return frame.click(action.click);
 	if ("hover" in action) return frame.hover(action.hover);
 	if ("type" in action) return frame.type(action.type.selector, action.type.text);
-	if ("press" in action) return page.keyboard.press(action.press as any);
+	if ("press" in action) return pressInFrame(frame, page, action.press, errors);
 	if ("scroll" in action)
 		return frame.evaluate(
 			(sel, y) => {

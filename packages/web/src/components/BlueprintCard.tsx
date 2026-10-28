@@ -20,6 +20,8 @@ export function BlueprintCard({ moduleId, workspaceId, name, canEdit }: { module
 	const [busy, setBusy] = useState("");
 	const [published, setPublished] = useState<{ version: number; name: string; compat: { status: string; issues: string[]; notes: string[] }; modules: number }>();
 	const [form, setForm] = useState({ changelog: "", description: "", visibility: "public" });
+	const [offered, setOffered] = useState<Blueprint[]>([]);
+	const [adoptId, setAdoptId] = useState("");
 
 	const load = () =>
 		api
@@ -29,7 +31,23 @@ export function BlueprintCard({ moduleId, workspaceId, name, canEdit }: { module
 
 	useEffect(() => {
 		void load();
+		// Only needed for the orphan case, but the list is small and this keeps the card self-contained.
+		api.get("/api/blueprints").then((r) => setOffered(r.blueprints)).catch(() => {});
 	}, [moduleId]);
+
+	const adopt = async () => {
+		if (!adoptId) return;
+		setBusy("adopt");
+		try {
+			const r = await api.post(`/api/w/${workspaceId}/modules/${moduleId}/blueprint`, { blueprintId: adoptId });
+			await load();
+			toast({ kind: "info", text: `Adopted ${r.version === undefined ? "the blueprint" : `v${r.version}`} — ${r.changed?.length ?? 0} file(s) replaced.` });
+		} catch (e) {
+			reportError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy("");
+		}
+	};
 
 	const publish = async () => {
 		if (!form.changelog.trim()) return reportError("Say what changed in this version — one line is enough.");
@@ -73,12 +91,36 @@ export function BlueprintCard({ moduleId, workspaceId, name, canEdit }: { module
 	const builtFrom = info?.builtFrom;
 	const current = info?.current;
 	const behind = info?.behind ?? 0;
+	/** Its blueprint was deleted: the module runs, but nothing can ever update it again. */
+	const orphan = info && !builtFrom && info.missing === true;
 
 	return (
 		<div className="card">
 			<h3>Blueprint</h3>
 			{!info && <div className="muted" style={{ fontSize: 13 }}>Loading…</div>}
-			{info && !builtFrom && <div className="muted" style={{ fontSize: 13 }}>This module was written from scratch. Publishing it creates a blueprint other people can build on.</div>}
+			{info && !builtFrom && !orphan && <div className="muted" style={{ fontSize: 13 }}>This module was written from scratch. Publishing it creates a blueprint other people can build on.</div>}
+			{orphan && (
+				<div className="bp-note">
+					<div>
+						<b>Its blueprint no longer exists.</b> The module keeps running, but no version can reach it. Adopt a blueprint to take its code — the module keeps its data, files and shares.
+					</div>
+					{canEdit && (
+						<div className="row">
+							<select className="input" style={{ maxWidth: 260 }} value={adoptId} onChange={(e) => setAdoptId(e.target.value)}>
+								<option value="">Choose a blueprint…</option>
+								{offered.map((b) => (
+									<option key={b.id} value={b.id}>
+										{b.name} v{b.version}
+									</option>
+								))}
+							</select>
+							<button className="btn small" disabled={!adoptId || busy === "adopt"} onClick={adopt}>
+								{busy === "adopt" ? "Adopting…" : "Adopt"}
+							</button>
+						</div>
+					)}
+				</div>
+			)}
 			{builtFrom && (
 				<>
 					<div className="row bp-from">

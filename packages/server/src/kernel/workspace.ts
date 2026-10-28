@@ -19,7 +19,7 @@ import type { ConvertTarget } from "../files/parse/index.ts";
 const PARSABLE = /^(docx|xlsx|pptx|pdf|zip|tar|gzip|gz|rar|7z|csv|tsv|json|xml|html|markdown)$/;
 import { buildFrame } from "../modules/frame.ts";
 import { renderModule, type RenderAction } from "../modules/render.ts";
-import { assessFiles, blueprintInfo, diffFiles, type FileChange } from "../modules/inspect.ts";
+import { assessFiles, blueprintInfo, diffFiles, findBlueprint, type FileChange } from "../modules/inspect.ts";
 import type { Assessment } from "../modules/compat.ts";
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
 import {
@@ -509,17 +509,18 @@ export class Workspace {
 			intro,
 		};
 		blueprints.upsert(bp);
-		// The source module is now running this version: point it here, so it does not look "behind"
-		// the version it just published.
-		if (keepRoot) modules.setBlueprint(moduleId, bp.id);
+		// The source module is now running this version: point it here, so it does not look "behind" the
+		// version it just published — and so its *next* publish appends to this blueprint rather than
+		// forking again off the built-in it originally came from.
+		modules.setBlueprint(moduleId, bp.id);
 		hub.publish("blueprints", { t: "blueprints.changed" });
 		return { blueprint: bp, compat: assessFiles(files) };
 	}
 
 	/** Everything a reader needs to judge a blueprint without cloning it (see modules/inspect.ts). */
-	blueprintInfo(id: string) {
-		const bp = blueprints.get(id);
-		if (!bp) throw new HttpError(404, "No such blueprint");
+	blueprintInfo(id: string, version?: number | "latest") {
+		const bp = findBlueprint(id, version);
+		if (!bp) throw new HttpError(404, version === undefined ? "No such blueprint" : `No version ${version} of this blueprint`);
 		return blueprintInfo(bp);
 	}
 
@@ -549,7 +550,9 @@ export class Workspace {
 		const g = modules.get(moduleId);
 		if (!g) throw new HttpError(404, "No such module");
 		const origin = g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
-		if (!origin) return { builtFrom: null as null | { id: string; name: string; version: number; rootId: string }, current: null, changed: [], behind: 0 };
+		// A module whose blueprint was deleted keeps running but can never be updated again: say so
+		// instead of reporting "not from a blueprint", which hides the orphan.
+		if (!origin) return { builtFrom: null, current: null, changed: [], behind: 0, missing: Boolean(g.blueprintId) };
 		const versions = blueprints.versions(origin.rootId);
 		const current = versions.at(-1)!;
 		const files = await this.moduleFiles(moduleId);
@@ -570,7 +573,8 @@ export class Workspace {
 	async updateModuleFromBlueprint(moduleId: string) {
 		const info = await this.moduleBlueprint(moduleId);
 		if (!info.current) throw new HttpError(400, "This module wasn't built from a blueprint");
-		if (info.behind <= 0 && !info.changed.length) return { changed: [], version: info.current.version };
+		const from = info.builtFrom?.version ?? 0;
+		if (info.behind <= 0 && !info.changed.length) return { changed: [], from, version: info.current.version };
 		const bp = blueprints.get(info.current.id)!;
 		const files = { ...bp.files };
 		await this.harness.commit(async (tx) => {
@@ -581,10 +585,38 @@ export class Workspace {
 		modules.setBlueprint(moduleId, bp.id);
 		this.host(moduleId).reload();
 		this.publishModules();
-		return { changed: info.changed, version: bp.version };
+		return { changed: info.changed, from, version: bp.version };
 	}
 
-	// ------------------------------------------------------------------ airlocks
+	/**
+	 * Move a module onto a blueprint it did not come from — the missing verb when blueprints are
+	 * consolidated. Its code is replaced; its storage, its files and its shares stay, which is why this
+	 * is not "create a new module and copy things across" (that breaks shares, links and open tabs).
+	 */
+	async adoptModule(moduleId: string, blueprintId: string, version?: number | "latest") {
+		const g = modules.get(moduleId);
+		if (!g) throw new HttpError(404, "No such module");
+		const bp = findBlueprint(blueprintId, version);
+		if (!bp) throw new HttpError(404, "No such blueprint");
+		const changed = diffFiles(await this.moduleFiles(moduleId), bp.files);
+		await this.harness.commit(async (tx) => {
+			const src = await tx.doc(ModuleSourceDoc, moduleId, null);
+			src.files = { ...bp.files };
+			src.revision = (src.revision ?? 0) + 1;
+		}, ctx);
+		modules.setBlueprint(moduleId, bp.id);
+		this.host(moduleId).reload();
+		this.publishModules();
+		return { module: moduleId, blueprint: bp.id, version: bp.version, changed };
+	}
+
+	/** Modules whose blueprint no longer exists: they keep running, but nothing can update them. */
+	orphans(workspaceId: string) {
+		return modules
+			.inWorkspace(workspaceId)
+			.filter((m) => m.blueprintId && !blueprints.get(m.blueprintId))
+			.map((m) => ({ id: m.id, name: m.name, blueprint: m.blueprintId }));
+	}
 
 	// ------------------------------------------------------------------ airlocks
 

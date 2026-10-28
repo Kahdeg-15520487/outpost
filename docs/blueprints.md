@@ -37,7 +37,15 @@ The inspector opens from the Blueprints page: nothing is created, nothing runs, 
 
 `Compare` (in History, and the `blueprint_diff` tool) reports per-path additions, removals and size
 changes plus which API methods appeared or disappeared — the answer to "what's the difference
-between these two?" without 22 KB of HTML diffing by hand.
+between these two?" without 22 KB of HTML diffing by hand. A comparison is between two *specific*
+versions, so it takes version ids, not a root.
+
+**Which version you get.** Any id a caller holds resolves to the version they mean: a root id (`bp_…`
+naming the blueprint) gives the current version, a version id gives that version, and `version: 1`
+asks explicitly. Because a first version's id *is* its root, an id can be both — that case reads as
+the root, which is what "read the blueprint" means. The answer says which version it answered with
+(`requested`) and which one is current (`current`), and the inspector warns when you are looking at
+an older version, because publishing from a stale copy would move the blueprint backwards.
 
 The same information is available to the agent as `blueprint_read` and `blueprint_diff`, so questions
 like "does this template have a title image?" cost a read, not a module.
@@ -69,24 +77,63 @@ A module remembers the version it was built from. **Module → Blueprint** shows
 
 Published a version and want everyone on it? The inspector's Overview tab offers **Move them to vN**
 for every module on the blueprint; `blueprint_update_modules` does the same from a chat, with an
-optional list of module ids. Each module reports what was replaced, so the human hears about local
-edits rather than discovering them later.
+optional list of module ids. Each module comes back with a status — `updated` (with `from` and `to`),
+`adopted`, `skipped` (with the reason) or `missing` — and the response reports the version it actually
+applied. A list you asked for explicitly that cannot be satisfied is an error naming why, not an
+empty success.
+
+Drafts are working copies, not the user's modules: they are counted separately, they are not in
+"used by", and a rollout leaves them alone unless `includeDrafts` asks for them.
+
+## Adopting: rescuing a module whose blueprint is gone
+
+Deleting a blueprint used to strand its modules: they kept running, and nothing could ever update
+them again. Now deleting a blueprint that modules use is refused (the error names them) unless it is
+forced, and stranded modules can be rescued in place:
+
+- **In the module's Blueprint card**, an orphan says so and offers a blueprint to adopt.
+- **`module_set_blueprint(module, blueprint)`** takes the blueprint's code and keeps the module's own
+  storage, its file shares, its links and its id — so shares and open tabs survive, which is exactly
+  what "create a new module and copy the data across" destroys.
+- **`blueprint_update_modules({blueprint, modules, adopt: true})`** does the same for a list.
+- `GET /api/w/:ws/modules/orphans` lists the modules whose blueprint no longer exists.
 
 ## Tools the agent uses
 
 | Tool | What it does |
 |---|---|
 | `blueprint_list` | current version of each blueprint, with `version`, `changelog`, `updatedAt`, `visibility`, `modulesUsing` |
-| `blueprint_read` | files, sizes, source (with `path`), declared API, versions, users — no module created |
+| `blueprint_read` | files, sizes, source (with `path`), declared API, versions, users — no module created; any id resolves, `version:` asks explicitly |
 | `blueprint_diff` | file-level and API-level comparison of two versions |
 | `blueprint_publish` | appends the next version (or forks), requires a `changelog`, returns a compat report |
-| `blueprint_update_modules` | moves modules onto the current version |
+| `blueprint_update_modules` | moves modules onto the current version, per-module status, `adopt` for a different or deleted origin |
 | `blueprint_delete` | removes a blueprint, or one version of it |
 | `module_draft` | a working copy that is not one of the user's modules |
 | `module_delete` | deletes a module, its data and its shares |
+| `module_set_blueprint` | re-homes a module onto a blueprint, keeping its data and shares |
 
 `OUTPOST_GUIDE` teaches this loop in the system prompt: look before you touch, improve in a draft,
 publish with a changelog, then roll out.
+
+## Vendored files
+
+A module may ship somebody else's library — PptxGenJS, a charting bundle, a UMD shim. Those files are
+full of legitimate Node-isms (`module.exports` behind a UMD guard) that say nothing about how the
+module uses *our* API, and scanning them turned every edit of a deck into a blocking "won't run"
+warning that contradicted publish-time.
+
+Feature detection now skips a file when any of these hold: it carries a `/* outpost:vendor */` banner,
+its name looks minified (`.bundle.js`, `.min.js`, `.vendor.js`, or it lives under `vendor/`,
+`third-party/`, `lib/`), it is larger than 120 KB, or its first line is longer than 5,000 characters.
+Skipped files are named in the compat notes ("shipped as-is, not scanned"), so the exemption is
+visible rather than silent. Writing a file and publishing a blueprint now run the *same* assessment,
+so they cannot disagree about the same code.
+
+## Big files
+
+`module_read` returns a file whole when it is small; for anything larger it returns the slice you asked
+for (`offset`, `length`, up to 200 KB) along with `bytes`, `truncated` and `nextOffset`. Silently
+returning the first 49 characters of a 460 KB bundle made the file look like a one-line stub.
 
 ## Limits
 
@@ -95,6 +142,10 @@ publish with a changelog, then roll out.
 - **No live preview of a blueprint.** The inspector shows code, not a running app: running it means a
   module, so the honest path is a draft (hidden) or **Use** (a real module).
 - **Local edits are replaced on update.** There is no three-way merge; the confirm lists the files.
+- **Adoption replaces code, not data.** Storage, shares and links survive; module *source* files are
+  the blueprint's afterwards, so a file you added to the module goes away.
+- **`file_write` does not overwrite by name.** A second write with the same name adds a file and warns
+  with the id of the existing one; pass `replace: true` to update it in place instead.
 - **Rollout is all-or-per-module.** There is no "update modules that have not diverged" filter.
 - **Built-ins cannot be deleted or written over** — they are files on disk, re-seeded at boot.
 - **Visibility is per blueprint identity**, set at publish time; changing it means publishing again.

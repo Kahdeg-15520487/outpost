@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { api, formatBytes, type Blueprint, type BlueprintInfo, type FileChange } from "../api";
+import { api, formatBytes, type Blueprint, type BlueprintInfo, type FileChange, type RolloutResult } from "../api";
 import { navigate, chatHref } from "../store";
 import { askConfirm, reportError } from "../dialogs";
 import { toast } from "../toasts";
@@ -90,17 +90,21 @@ export function BlueprintSheet({
 
 	const updateModules = () =>
 		run("rollout", async () => {
-			const behind = info!.modulesUsing.filter((m) => !m.hidden);
+			// Drafts are working copies, not the user's modules: the server skips them, and the list here
+			// already excludes them.
+			const behind = info!.modulesUsing.filter((m) => !m.current);
 			if (!behind.length) return;
 			const ok = await askConfirm({
-				title: `Move ${behind.length} module${behind.length === 1 ? "" : "s"} to v${bp.version}?`,
+				title: `Move ${behind.length} module${behind.length === 1 ? "" : "s"} to v${info!.current.version}?`,
 				body: `They take this blueprint's files. Local edits in those modules are replaced.\n\n${behind.map((m) => m.name).join(", ")}`,
 				confirmLabel: "Update them",
 			});
 			if (!ok) return;
-			const r = await api.post(`/api/w/${ws}/blueprints/${bp.id}/update-modules`, { modules: behind.map((m) => m.id) });
+			const r = (await api.post(`/api/w/${ws}/blueprints/${bp.id}/update-modules`, { modules: behind.map((m) => m.id) })) as RolloutResult;
 			onChanged();
-			toast({ kind: "info", text: `Updated ${r.updated.length} module${r.updated.length === 1 ? "" : "s"} to v${r.version}.` });
+			const moved = r.results.filter((x) => x.status === "updated" || x.status === "adopted").length;
+			const skipped = r.results.filter((x) => x.status === "skipped" || x.status === "missing").length;
+			toast({ kind: "info", text: `Moved ${moved} module${moved === 1 ? "" : "s"} to v${r.version}${skipped ? `, skipped ${skipped}` : ""}.` });
 		});
 
 	const remove = async () => {
@@ -158,7 +162,7 @@ export function BlueprintSheet({
 							["overview", "Overview"],
 							["code", "Code"],
 							["api", `API${info ? ` ${info.api.methods.length}` : ""}`],
-							["used", `Used by ${info?.modulesUsing.filter((m) => !m.hidden).length ?? 0}`],
+							["used", `Used by ${info?.modulesUsing.length ?? 0}${info?.draftsUsing.length ? ` +${info.draftsUsing.length} draft` : ""}`],
 							["history", `History ${info?.versions.length ?? 1}`],
 						] as [Tab, string][]
 					).map(([id, label]) => (
@@ -185,6 +189,13 @@ export function BlueprintSheet({
 					{info && tab === "overview" && (
 						<>
 							{bp.changelog && <p className="bp-changelog">v{bp.version} — {bp.changelog}</p>}
+							{info.current.version !== info.requested.version && (
+								<div className="bp-note">
+									<div>
+										You are reading <b>v{info.requested.version}</b>; the current version is <b>v{info.current.version}</b>. Publishing from this copy would move the blueprint backwards.
+									</div>
+								</div>
+							)}
 							{bp.description && <p className="bp-description">{bp.description}</p>}
 							<div className={`bp-compat ${info.compat.status}`}>
 								<b>{info.compat.status === "ok" ? "Runs here" : info.compat.status === "warn" ? "Runs here, with notes" : "Not runnable here"}</b>
@@ -202,22 +213,20 @@ export function BlueprintSheet({
 									</button>
 								))}
 							</div>
-							{info.modulesUsing.filter((m) => !m.hidden).length > 0 && (
+							{info.modulesUsing.length > 0 && (
 								<>
 									<div className="label">On this blueprint</div>
 									<div className="bp-used">
-										{info.modulesUsing
-											.filter((m) => !m.hidden)
-											.map((m) => (
-												<div key={m.id} className="bp-used-row">
-													<span className="grow">{m.name}</span>
-													<span className={`pill ${m.current ? "ok" : ""}`}>{m.current ? `v${bp.version}` : "older version"}</span>
-												</div>
-											))}
+										{info.modulesUsing.map((m) => (
+											<div key={m.id} className="bp-used-row">
+												<span className="grow">{m.name}</span>
+												<span className={`pill ${m.current ? "ok" : ""}`}>{m.current ? `v${info.current.version}` : "older version"}</span>
+											</div>
+										))}
 									</div>
 									{canEdit && (
 										<button className="btn small" onClick={updateModules} disabled={busy === "rollout"}>
-											{busy === "rollout" ? "Updating…" : `Move them to v${bp.version}`}
+											{busy === "rollout" ? "Updating…" : `Move them to v${info.current.version}`}
 										</button>
 									)}
 								</>
@@ -264,13 +273,23 @@ export function BlueprintSheet({
 							{info.modulesUsing.length === 0 && <div className="bp-empty">Nothing is built from this blueprint yet.</div>}
 							{info.modulesUsing.map((m) => (
 								<div key={m.id} className="bp-used-row">
-									<span className="grow">
-										{m.name}
-										{m.hidden ? <span className="pill">draft</span> : null}
-									</span>
-									<span className={`pill ${m.current ? "ok" : ""}`}>{m.current ? `v${bp.version}` : "older"}</span>
+									<span className="grow">{m.name}</span>
+									<span className={`pill ${m.current ? "ok" : ""}`}>{m.current ? `v${info.current.version}` : "older"}</span>
 								</div>
 							))}
+							{info.draftsUsing.length > 0 && (
+								<>
+									<div className="label" style={{ marginTop: 10 }}>
+										Drafts — working copies, left alone by a rollout
+									</div>
+									{info.draftsUsing.map((m) => (
+										<div key={m.id} className="bp-used-row">
+											<span className="grow">{m.name}</span>
+											<span className="pill">draft</span>
+										</div>
+									))}
+								</>
+							)}
 						</div>
 					)}
 
@@ -279,14 +298,14 @@ export function BlueprintSheet({
 							{info.versions.length === 1 && <div className="bp-empty">Only one version so far.</div>}
 							{[...info.versions].reverse().map((v) => (
 								<div key={v.id} className="bp-version">
-									<span className={`pill ${v.version === bp.version ? "ok" : ""}`}>v{v.version}</span>
+									<span className={`pill ${v.version === info.current.version ? "ok" : ""}`}>v{v.version}</span>
 									<div className="grow">
 										<div>{v.changelog || <span className="muted">no changelog</span>}</div>
 										<div className="mono muted" style={{ fontSize: 11 }}>
 											{new Date(v.updatedAt || v.createdAt || Date.now()).toLocaleString()} · {v.author ?? "outpost"}
 										</div>
 									</div>
-									{v.version !== bp.version && (
+									{v.version !== info.current.version && (
 										<button className="btn ghost small" onClick={() => setCompare(v.id)}>
 											Compare
 										</button>

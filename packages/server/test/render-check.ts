@@ -38,4 +38,17 @@ ok(r2.calls.some((c) => c.method === "nope" && !c.ok), "failed RPC calls reporte
 ok(r2.actionErrors.some((e) => e.includes("#missing")), "bad action selectors reported");
 const full = await ws.renderModule(g.id, caller, { width: 400, height: 300, fullPage: true, waitMs: 0, actions: [] });
 ok(full.height >= 300, "full-page capture");
+
+// Keyboard: a press with nothing focused used to land on the host page, so a working feature looked
+// broken. The module answers ArrowRight by calling its server, which shows up in the RPC log.
+await ws.writeModuleFiles(g.id, {
+	"index.html": `<h1 id="n">0</h1><script>
+		let n = 0;
+		document.addEventListener("keydown", (e) => { if (e.key === "ArrowRight") module.api.add("key " + ++n, "ana"); });
+	</script>`,
+});
+const keys = await ws.renderModule(g.id, caller, { width: 400, height: 300, fullPage: false, waitMs: 300, actions: [{ press: "ArrowRight" }, { press: "ArrowRight" }] });
+const handled = keys.calls.filter((c) => c.method === "add" && c.ok).length;
+ok(handled === 2, `a press with nothing focused reaches the module (${handled} of 2 seen by the page)`);
+ok(keys.actionErrors.length === 0, `no action errors (${keys.actionErrors.join("; ")})`);
 await finish();

@@ -216,19 +216,31 @@ ${markdown.length > limit ? `${markdown.slice(0, limit)}
 		}),
 		defineTool({
 			name: "file_write",
-			description: "Create a workspace file (e.g. extracted text, a CSV, a report). It shows up in the user's Files panel.",
+			description:
+				"Create a workspace file (e.g. extracted text, a CSV, a report), or update one you wrote earlier with the same name using replace: true. It shows up in the user's Files panel.",
 			parameters: Type.Object({
 				name: Type.String(),
 				content: Type.String(),
 				encoding: Type.Optional(Type.Union([Type.Literal("utf8"), Type.Literal("base64")])),
 				mime: Type.Optional(Type.String()),
 				parent: Type.Optional(Type.String({ description: "id of the file this was derived from" })),
+				replace: Type.Optional(Type.Boolean({ description: "if a file with this name already exists, overwrite it in place (keeps its id, shares and links) instead of making a second one" })),
 			}),
 			replay: "safe",
 			execute: async (args, api, context) => {
 				const existing = await api.memo<FileMeta>("file", context);
 				if (existing) return text(summary(existing));
-				const meta = await ws.files.put(Buffer.from(args.content, args.encoding === "base64" ? "base64" : "utf8"), {
+				const bytes = Buffer.from(args.content, args.encoding === "base64" ? "base64" : "utf8");
+				// Writing the same name twice used to leave two files with one name. Replace in place when
+				// asked to; otherwise say a copy already exists, so an agent iterating on a document does
+				// not quietly fill the panel with near-duplicates.
+				const clash = (await ws.files.list()).find((f) => f.name === args.name && f.source === "agent");
+				if (clash && args.replace) {
+					const replaced = await ws.files.replaceText(clash.id, bytes);
+					await api.memo("file", replaced, context);
+					return text({ ...summary(replaced), replaced: true });
+				}
+				const meta = await ws.files.put(bytes, {
 					name: args.name,
 					mime: args.mime,
 					createdBy: "Agent",
@@ -236,7 +248,7 @@ ${markdown.length > limit ? `${markdown.slice(0, limit)}
 					parent: args.parent ? (await get(args.parent)).id : undefined,
 				});
 				await api.memo("file", meta, context);
-				return text(summary(meta));
+				return text(clash ? { ...summary(meta), duplicateOf: clash.id, hint: `"${args.name}" already exists as ${clash.id}; pass replace: true to update that one instead of adding a copy` } : summary(meta));
 			},
 		}),
 		defineTool({

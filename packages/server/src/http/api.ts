@@ -5,7 +5,7 @@ import { CONNECTOR_INFO } from "../airlocks/connectors/types.ts";
 import { buildFrame, FRAME_CSP } from "../modules/frame.ts";
 import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../modules/bundle.ts";
 import { capabilities } from "../modules/compat.ts";
-import { blueprintInfo, declaredApi, diffFiles } from "../modules/inspect.ts";
+import { blueprintInfo, declaredApi, diffFiles, findBlueprint } from "../modules/inspect.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
 import { home, markSeen, summarize } from "../kernel/home.ts";
 import { oauthLogins } from "../kernel/oauth.ts";
@@ -565,12 +565,21 @@ export function createApi(): Router {
 		if (!module || module.workspaceId !== ws.id) throw new HttpError(404, "No such module");
 		return ws.moduleBlueprint(module.id);
 	});
-	/** Take the current blueprint version (local edits replaced) — the reverse of publish. */
+	/**
+	 * Take the current blueprint version (local edits replaced) — the reverse of publish. With
+	 * `blueprintId` it adopts that blueprint instead: the code is replaced, data and shares stay.
+	 */
 	r.post("/api/w/:ws/modules/:id/blueprint", async (req) => {
 		const { ws } = await member(req, "editor");
 		const module = modules.get(req.params.id!);
 		if (!module || module.workspaceId !== ws.id) throw new HttpError(404, "No such module");
-		return ws.updateModuleFromBlueprint(module.id);
+		const { blueprintId } = await req.body();
+		return blueprintId ? ws.adoptModule(module.id, String(blueprintId)) : ws.updateModuleFromBlueprint(module.id);
+	});
+	/** Modules whose blueprint is gone: they run, but nothing can update them. */
+	r.get("/api/w/:ws/modules/orphans", async (req) => {
+		const { ws } = await member(req);
+		return { orphans: ws.orphans(ws.id) };
 	});
 	r.get("/api/modules/:id", async (req) => {
 		const user = req.need();
@@ -675,7 +684,8 @@ export function createApi(): Router {
 	/** One blueprint in full: files, code, declared API, versions, who uses it, compat. Read-only. */
 	r.get("/api/blueprints/:id", (req) => {
 		const user = req.need();
-		const bp = blueprints.get(req.params.id!);
+		const version = req.query.get("version");
+		const bp = findBlueprint(req.params.id!, version === null ? undefined : Number(version));
 		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
 		const info = blueprintInfo(bp);
 		return {
@@ -686,6 +696,8 @@ export function createApi(): Router {
 	/** File-level comparison of two versions; never executes either of them. */
 	r.get("/api/blueprints/:id/diff", (req) => {
 		const user = req.need();
+		// Exact rows: a diff is between two specific versions, so a root id here would be a mistake
+		// (it would silently compare the current version with itself).
 		const a = blueprints.get(req.params.id!);
 		const b = blueprints.get(req.query.get("with") ?? "");
 		for (const bp of [a, b]) if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
@@ -712,12 +724,38 @@ export function createApi(): Router {
 		const { user, ws } = await member(req, "editor");
 		const bp = blueprints.get(req.params.id!);
 		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
-		const { modules: only } = await req.body();
+		const { modules: only, adopt, includeDrafts } = await req.body();
 		const info = ws.blueprintInfo(bp.id);
-		const wanted: string[] = Array.isArray(only) && only.length ? only.map(String) : info.modulesUsing.filter((m) => m.workspaceId === ws.id).map((m) => m.id);
-		const updated = [];
-		for (const id of wanted) updated.push({ module: id, ...(await ws.updateModuleFromBlueprint(id)) });
-		return { version: info.blueprint.version, updated };
+		const here = (m: { workspaceId: string }) => m.workspaceId === ws.id;
+		const listed: string[] | undefined = Array.isArray(only) && only.length ? only.map(String) : undefined;
+		const wanted = listed ?? [...info.modulesUsing.filter(here).map((m) => m.id), ...(includeDrafts ? info.draftsUsing.filter(here).map((m) => m.id) : [])];
+		const results = [];
+		for (const id of wanted) {
+			const m = modules.get(id);
+			if (!m || m.workspaceId !== ws.id) {
+				results.push({ module: id, status: "missing", reason: "no such module here" });
+				continue;
+			}
+			const origin = m.blueprintId ? blueprints.get(m.blueprintId) : undefined;
+			if (origin?.rootId !== info.blueprint.rootId) {
+				if (adopt === true) {
+					const r = await ws.adoptModule(id, info.current.id);
+					results.push({ module: id, status: "adopted", to: r.version, changed: r.changed });
+				} else {
+					results.push({ module: id, status: "skipped", reason: origin ? `built from a different blueprint (${origin.name} v${origin.version})` : m.blueprintId ? "its blueprint no longer exists" : "not built from a blueprint" });
+				}
+				continue;
+			}
+			if (m.hidden && !includeDrafts) {
+				results.push({ module: id, status: "skipped", reason: "draft" });
+				continue;
+			}
+			const r = await ws.updateModuleFromBlueprint(id);
+			results.push({ module: id, status: "updated", from: r.from, to: r.version, changed: r.changed });
+		}
+		if (listed && !results.some((r) => r.status === "updated" || r.status === "adopted"))
+			throw new HttpError(400, `Nothing was moved. ${results.map((r) => `${r.module}: ${r.reason ?? r.status}`).join("; ")}`);
+		return { blueprint: info.blueprint.rootId, version: info.current.version, results };
 	});
 	r.post("/api/blueprints", async (req) => {
 		const user = req.need();

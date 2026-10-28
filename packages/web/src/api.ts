@@ -34,19 +34,28 @@ export type Compatibility = { status: "ok" | "warn" | "blocked"; issues: string[
 /** Everything the inspector shows about one blueprint — read without creating anything. */
 export type BlueprintInfo = {
 	blueprint: Blueprint;
+	/** The version this answer is about (an old one, when asked for), and the current one. */
+	requested: { id: string; version: number };
+	current: { id: string; version: number; changelog: string; updatedAt: number };
 	files: Record<string, { size: number; lines: number }>;
 	source: Record<string, string>;
 	api: { methods: string[]; readonly: string[] };
 	versions: Blueprint[];
-	modulesUsing: { id: string; name: string; workspaceId: string; current: boolean; hidden: boolean }[];
+	modulesUsing: BlueprintUser[];
+	draftsUsing: BlueprintUser[];
 	compat: Compatibility;
 };
+export type BlueprintUser = { id: string; name: string; workspaceId: string; current: boolean };
+/** What a rollout did, module by module. */
+export type RolloutResult = { results: { module: string; status: "updated" | "adopted" | "skipped" | "missing"; reason?: string; from?: number; to?: number; changed?: FileChange[] }[]; version: number };
 /** Where a module came from and how far it has drifted. */
 export type ModuleBlueprint = {
 	builtFrom: { id: string; name: string; version: number; rootId: string } | null;
 	current: { id: string; name: string; version: number; changelog: string; updatedAt: number } | null;
 	changed: FileChange[];
 	behind: number;
+	/** Its blueprint was deleted: it runs, but no version can reach it. */
+	missing?: boolean;
 };
 export type AirlockInfo = { id: string; title: string; icon: string; description: string; resourceHint: string; setup?: string; methods: { name: string; description: string; effect: "read" | "write" }[] };
 export type Holder = { kind: "conversation" | "module" | "mission"; id: string; roles?: string[] };

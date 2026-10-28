@@ -102,7 +102,8 @@ try {
 	const v3 = await ok("POST", "/api/blueprints", { moduleId: deck.id, changelog: "third" });
 	check("publishing again makes v3", v3.blueprint.version === 3);
 	const rollout = await ok("POST", `/api/w/${ws}/blueprints/${v3.blueprint.id}/update-modules`, {});
-	check("every module on the blueprint is moved", rollout.updated.length >= 2, rollout.updated.map((u: any) => u.module));
+	const movedNow = rollout.results.filter((r: any) => r.status === "updated");
+	check("every module on the blueprint is moved", movedNow.length >= 2, rollout.results.map((r: any) => r.status));
 	check("…to the version just published", rollout.version === 3);
 	check("…and none is left behind", (await ok("GET", `/api/w/${ws}/modules/${second.id}/blueprint`)).behind === 0);
 

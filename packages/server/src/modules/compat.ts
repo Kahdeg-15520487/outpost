@@ -27,7 +27,7 @@ export const OUTPOST_VERSION: string = (() => {
 	}
 })();
 
-export type Requires = { runtime: number; server: string[]; client: string[]; airlocks: { id: string; methods: string[] }[] };
+export type Requires = { runtime: number; server: string[]; client: string[]; airlocks: { id: string; methods: string[] }[]; vendored?: string[] };
 export type Producer = { app: string; version: string; runtime: number };
 export type Assessment = { status: "ok" | "warn" | "blocked"; issues: string[]; notes: string[] };
 
@@ -52,9 +52,28 @@ const uniq = (xs: string[]) => [...new Set(xs)].sort();
  * What a module's code needs. `grants` (its current Airlock grants) resolves grant labels and ids
  * used as `ctx.airlocks.<ref>` to the Airlock behind them.
  */
+/**
+ * Is this file somebody else's minified library rather than code we wrote? Vendored bundles are full of
+ * legitimate Node-isms (`module.exports` guards in a UMD wrapper) that say nothing about how the module
+ * uses our API — scanning them turned every edit of a deck with PptxGenJS in it into a blocking warning.
+ *
+ * Three signals, any one is enough: an explicit banner a packer can leave behind, the usual minified
+ * names, or a size no hand-written client file reaches.
+ */
+export const VENDOR_BYTES = 120_000;
+export function isVendored(path: string, source: string): boolean {
+	if (/\/\*\s*outpost:vendor\s*\*\//i.test(source) || /\/\/\s*outpost:vendor/i.test(source)) return true;
+	if (/(\.bundle|\.min|\.vendor)\.(m?js)$/i.test(path) || /(^|\/)(vendor|third[-_]?party|libs?)\//i.test(path)) return true;
+	if (source.length > VENDOR_BYTES) return true;
+	// A single very long line is minified output, whatever it is called.
+	const firstBreak = source.indexOf("\n");
+	return (firstBreak === -1 ? source.length : firstBreak) > 5_000;
+}
+
 export function detectRequires(files: Record<string, string>, grants: { id: string; label: string; airlock: string }[] = []): Requires {
 	const server: string[] = [];
 	const client: string[] = [];
+	const vendored: string[] = [];
 	const gk = new Map<string, Set<string>>();
 	const use = (id: string, method?: string) => {
 		if (!gk.has(id)) gk.set(id, new Set());
@@ -62,6 +81,11 @@ export function detectRequires(files: Record<string, string>, grants: { id: stri
 	};
 	for (const [path, raw] of Object.entries(files)) {
 		if (!/\.(m?js|html?)$/.test(path)) continue;
+		// Vendored libraries are shipped as-is: their internals are not a statement about our API.
+		if (isVendored(path, raw)) {
+			vendored.push(path);
+			continue;
+		}
 		// In HTML only scripts count (prose like "the module. Then" isn't code).
 		const code = /\.html?$/.test(path) ? [...raw.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]).join("\n") : raw;
 		if (isServerFile(path)) {
@@ -76,7 +100,14 @@ export function detectRequires(files: Record<string, string>, grants: { id: stri
 	}
 	// Grants it holds count even when the code reaches them dynamically.
 	for (const g of grants) use(g.airlock);
-	return { runtime: MODULE_RUNTIME, server: uniq(server), client: uniq(client), airlocks: [...gk].map(([id, ms]) => ({ id, methods: [...ms].sort() })).sort((a, b) => a.id.localeCompare(b.id)) };
+	return {
+		runtime: MODULE_RUNTIME,
+		server: uniq(server),
+		client: uniq(client),
+		airlocks: [...gk].map(([id, ms]) => ({ id, methods: [...ms].sort() })).sort((a, b) => a.id.localeCompare(b.id)),
+		// Reported so a skipped file is visible instead of silently trusted.
+		vendored: vendored.sort(),
+	};
 }
 
 /** Merge what a file declares with what its code shows (the stricter of both). */

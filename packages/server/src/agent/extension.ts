@@ -7,6 +7,7 @@ import { AIRLOCKS } from "../airlocks/catalog.ts";
 import { findMethods, PROPOSE_CONNECTION, resourcesSection } from "../airlocks/prompt.ts";
 import { GrantsDoc } from "../kernel/docs.ts";
 import type { Workspace } from "../kernel/workspace.ts";
+import { diffFiles } from "../modules/inspect.ts";
 import { createFileTools, FILES_GUIDE } from "../files/tools.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -24,6 +25,12 @@ export const OUTPOST_GUIDE = `You are the agent of **Outpost**, a self-hosted AI
 
 # Modules
 A module is a private app instance: a sandboxed client (iframe) + a sandboxed server (QuickJS) with durable storage. Start from a blueprint when one fits (\`blueprint_list\`, then \`module_create\` with \`blueprint\`), otherwise create an empty module and write its files.
+
+Blueprints:
+- **Look before you touch.** \`blueprint_read\` gives you the files, the declared API, the versions and who uses them — no module is created. \`blueprint_diff a b\` compares two versions. Never clone a blueprint just to answer a question about it.
+- **Improve in a draft.** \`module_draft\` (optionally with \`blueprint\`) makes a working copy that is *not* one of the user's modules: reachable by id for \`module_read\`/\`module_edit\`/\`module_call\`/\`module_screenshot\`, but absent from every list. \`module_delete\` removes it when you are done.
+- **Publish moves the blueprint forward.** \`blueprint_publish\` from a module built from a blueprint appends the next version to that same blueprint (the name stays) and takes a one-line \`changelog\` saying what changed — that is where the changelog goes, not into \`description\`. Built-ins fork instead, because they are re-seeded from disk.
+- **Roll out.** \`blueprint_update_modules\` moves the modules on a blueprint to its current version and returns what changed per module; local edits are replaced, so tell the user.
 
 Files:
 - \`index.html\` — required client. It may reference \`<script src="app.js"></script>\` and \`<link rel="stylesheet" href="style.css">\`; Outpost inlines local files. **No network**: no CDNs, external fonts, fetch, or WebSockets. No localStorage. Write vanilla JS/CSS (system fonts, inline SVG). Make it look polished and responsive; it renders in a panel ~500-900px wide.
@@ -93,9 +100,60 @@ export function createOutpostExtension(ws: Workspace): Extension {
 		}),
 		defineTool({
 			name: "blueprint_list",
-			description: "List blueprints (app templates) modules can be created from.",
+			description:
+				"List blueprints (app templates) modules can be created from. Each row is the current version: read `blueprint_read` instead of cloning one to see its code.",
 			parameters: Type.Object({}),
-			execute: async () => text(blueprintDb.visibleTo(ws.row.ownerId).map((b) => ({ id: b.id, name: b.name, icon: b.icon, description: b.description }))),
+			execute: async () => {
+				const live = moduleDb.inWorkspace(ws.id);
+				return text(
+					blueprintDb.visibleLatest(ws.row.ownerId).map((b) => {
+						const versions = blueprintDb.versions(b.rootId).map((v) => v.id);
+						return {
+							id: b.id,
+							name: b.name,
+							version: b.version,
+							changelog: b.changelog,
+							updatedAt: new Date(b.updatedAt).toISOString(),
+							visibility: b.visibility,
+							builtin: b.authorId === null,
+							modulesUsing: live.filter((m) => m.blueprintId && versions.includes(m.blueprintId)).length,
+							description: b.description,
+						};
+					}),
+				);
+			},
+		}),
+		defineTool({
+			name: "blueprint_read",
+			description:
+				"Read a blueprint without creating anything: its files (sizes, or one file's source with `path`), its declared server API, its versions, and which modules use it. This answers \"does it have X?\" and \"what changed?\" without cloning.",
+			parameters: Type.Object({ blueprint: Type.String({ description: "blueprint id (any version)" }), path: Type.Optional(Type.String({ description: "one file's source" })) }),
+			execute: async (args) => {
+				const info = ws.blueprintInfo(args.blueprint);
+				if (args.path) {
+					const source = info.source[args.path];
+					if (source === undefined) throw new Error(`No file ${args.path}. Files: ${Object.keys(info.source).join(", ")}`);
+					return text(source);
+				}
+				const { source: _source, ...rest } = info;
+				return text(rest);
+			},
+		}),
+		defineTool({
+			name: "blueprint_diff",
+			description: "Compare two blueprint versions file by file: added, removed and changed paths with sizes. Never executes either one.",
+			parameters: Type.Object({ a: Type.String({ description: "blueprint id" }), b: Type.String({ description: "blueprint id" }) }),
+			execute: async (args) => {
+				const from = ws.blueprintInfo(args.a);
+				const to = ws.blueprintInfo(args.b);
+				return text({
+					from: { id: from.blueprint.id, version: from.blueprint.version, name: from.blueprint.name },
+					to: { id: to.blueprint.id, version: to.blueprint.version, name: to.blueprint.name },
+					changed: diffFiles(from.source, to.source),
+					apiAdded: to.api.methods.filter((m) => !from.api.methods.includes(m)),
+					apiRemoved: from.api.methods.filter((m) => !to.api.methods.includes(m)),
+				});
+			},
 		}),
 		defineTool({
 			name: "module_create",
@@ -245,12 +303,82 @@ export function createOutpostExtension(ws: Workspace): Extension {
 		}),
 		defineTool({
 			name: "blueprint_publish",
-			description: "Publish a module's code as a blueprint others can create their own copies from.",
-			parameters: Type.Object({ module: Type.String(), name: Type.String(), description: Type.String(), visibility: Type.Optional(Type.Union([Type.Literal("public"), Type.Literal("private")])) }),
+			description:
+				"Publish a module's code as a blueprint. A module built from a blueprint appends the next version to that same blueprint — the name stays and modules on an older version are told there is a newer one — so always pass a one-line `changelog`. Built-in blueprints cannot be written over, so publishing from one forks; pass fork: true to start a new blueprint on purpose.",
+			parameters: Type.Object({
+				module: Type.String(),
+				changelog: Type.String({ description: "one line: what changed in this version" }),
+				name: Type.Optional(Type.String({ description: "name for a new or forked blueprint; ignored when appending a version" })),
+				description: Type.Optional(Type.String({ description: "catalogue blurb — not a changelog" })),
+				visibility: Type.Optional(Type.Union([Type.Literal("public"), Type.Literal("private")])),
+				target: Type.Optional(Type.String({ description: "blueprint root to append to, when the module did not come from one" })),
+				fork: Type.Optional(Type.Boolean()),
+			}),
 			execute: async (args, api) => {
 				const g = await usedModule(args.module, api);
-				const bp = await ws.publishBlueprint(g.id, { name: args.name, description: args.description, visibility: args.visibility ?? "public", authorId: ws.row.ownerId });
-				return text({ id: bp.id, name: bp.name });
+				const { blueprint, compat } = await ws.publishBlueprint(g.id, {
+					name: args.name ?? g.name,
+					description: args.description ?? "",
+					visibility: args.visibility ?? "public",
+					authorId: ws.row.ownerId,
+					changelog: args.changelog,
+					rootId: args.target,
+					fork: args.fork,
+				});
+				return text({ id: blueprint.id, rootId: blueprint.rootId, name: blueprint.name, version: blueprint.version, changelog: blueprint.changelog, compat });
+			},
+		}),
+		defineTool({
+			name: "blueprint_update_modules",
+			description:
+				"Move modules built from a blueprint onto its current version. Without `modules`, every module on that blueprint is updated. Local edits are replaced, so report what changed per module to the user.",
+			parameters: Type.Object({
+				blueprint: Type.String({ description: "blueprint id (any version of it)" }),
+				modules: Type.Optional(Type.Array(Type.String(), { description: "limit to these module ids; default: all of them" })),
+			}),
+			execute: async (args) => {
+				const info = ws.blueprintInfo(args.blueprint);
+				const targets = info.modulesUsing.map((m) => m.id).filter((id) => !args.modules || args.modules.includes(id));
+				const updated = [];
+				for (const id of targets) updated.push({ module: id, ...(await ws.updateModuleFromBlueprint(id)) });
+				return text({ version: info.blueprint.version, updated });
+			},
+		}),
+		defineTool({
+			name: "blueprint_delete",
+			description: "Delete a blueprint — the whole thing, or one version with `version`. Only its author may delete it; built-ins cannot be deleted.",
+			parameters: Type.Object({ blueprint: Type.String(), version: Type.Optional(Type.Number({ description: "delete only this version" })) }),
+			execute: async (args) => {
+				const info = ws.blueprintInfo(args.blueprint);
+				if (info.blueprint.authorId === null) throw new Error("Built-in blueprints cannot be deleted");
+				if (info.blueprint.authorId !== ws.row.ownerId) throw new Error("Only the author can delete a blueprint");
+				if (args.version === undefined) blueprintDb.deleteRoot(info.blueprint.rootId);
+				else {
+					const version = info.versions.find((v) => v.version === args.version);
+					if (!version) throw new Error(`No version ${args.version}`);
+					blueprintDb.delete(version.id);
+				}
+				return text({ deleted: args.version === undefined ? info.blueprint.rootId : args.blueprint });
+			},
+		}),
+		defineTool({
+			name: "module_delete",
+			description: "Delete a module: its code, data and shares. Use it to clean up a draft or a probe you created, not a module the user asked to keep.",
+			parameters: Type.Object({ module: Type.String() }),
+			execute: async (args, api) => {
+				const g = await usedModule(args.module, api);
+				await ws.deleteModule(g.id);
+				return text({ deleted: g.id, name: g.name });
+			},
+		}),
+		defineTool({
+			name: "module_draft",
+			description:
+				"Create a draft from a blueprint (or empty): a working copy that is not one of the user's modules. It is reachable by id for reading, editing, calling and screenshots, but never listed. Publish it when it is good; delete it otherwise.",
+			parameters: Type.Object({ blueprint: Type.Optional(Type.String()), name: Type.Optional(Type.String()) }),
+			execute: async (args) => {
+				const row = await ws.createDraft({ blueprintId: args.blueprint, name: args.name, ownerId: ws.row.ownerId });
+				return text({ id: row.id, name: row.name, hidden: true, files: Object.keys(await ws.moduleFiles(row.id)), server: await ws.host(row.id).describe() });
 			},
 		}),
 		defineTool({

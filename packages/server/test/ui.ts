@@ -200,7 +200,27 @@ async function run() {
 	check("import result lists the new blueprint and module", await until("result", () => text(".tx-dialog").then((t) => /imported/i.test(t) && /in your library/i.test(t) && /Imported module/.test(t))));
 	check("the result says what wasn't imported and why", /not imported/i.test(await text(".tx-dialog")) && /Needs teleport/.test(await text(".tx-dialog")));
 	await clickText(".tx-dialog button", "Done");
-	check("the imported blueprint is in the library", await until("listed", () => page.$$eval(".bp-grid .bp .n", (ns) => ns.some((n) => n.textContent === "Imported board"))));
+	const cardName = () => page.$$eval(".bp-grid .bp .n", (ns) => ns.map((n) => (n.textContent ?? "").trim()));
+	check("the imported blueprint is in the library", await until("listed", async () => (await cardName()).some((n) => n.startsWith("Imported board"))));
+	check("…badged with its version", await until("version pill", () => page.$$eval(".bp-grid .bp .bp-version", (ps) => ps.some((p) => /^v\d+$/.test((p.textContent ?? "").trim())))));
+
+	// The inspector: read a blueprint without creating anything from it.
+	const modulesBefore = await count(".sidebar [data-module-id]");
+	await page.evaluate(() => ([...document.querySelectorAll(".bp-grid .bp")].find((card) => (card.querySelector(".n")?.textContent ?? "").startsWith("Imported board")) as HTMLElement).click());
+	check("clicking a blueprint opens the inspector", await until("sheet", () => page.$(".bp-sheet")));
+	check("it opens on the overview with the file list", await until("files", () => text(".bp-sheet-body").then((t) => /index\.html/.test(t) && /Runs here|Not runnable|with notes/.test(t))));
+	await clickText(".bp-tab", /^Code/);
+	check("the Code tab shows the file's source", await until("source", () => text(".bp-source").then((t) => /<h1>board<\/h1>/.test(t))));
+	await clickText(".bp-tab", /^API /);
+	check(
+		"the API tab lists the declared methods, or says there are none",
+		await until("api", async () => (await count(".bp-api-row")) > 0 || /No server methods/.test(await text(".bp-api"))),
+	);
+
+	await shot("blueprint-inspector");
+	check("reading it created no module", (await count(".sidebar [data-module-id]")) === modulesBefore);
+	await page.keyboard.press("Escape");
+	check("Escape closes the inspector", await until("closed", async () => !(await page.$(".bp-sheet"))));
 	check("the imported module is in the sidebar", await until("sidebar module", () => page.$$eval(".side-item .t", (ts) => ts.some((t) => t.textContent === "Imported module"))));
 
 	// Archive: out of the sidebar and the module list, restorable from the Archived section.
@@ -729,6 +749,34 @@ async function run() {
 	}, 15000);
 	check("ticking a checkbox writes the file", Boolean(saved), saved?.slice(0, 80));
 	await shot("artifact-markdown");
+
+	// Two layout regressions: the contents column must not scroll sideways, and the composer must
+	// grow with wrapped text instead of hiding the second line behind the toolbar.
+	const longMd = await upload(
+		ws,
+		"long.md",
+		"text/markdown",
+		"# A blueprint update loop that is long enough to wrap inside a narrow contents column\n\n## Why the loop is broken today and what it costs\n\nBody.\n\n## Proposals, mapped to the friction they remove\n\nBody.\n",
+	);
+	await ask(longMd);
+	await until("the long document", () => page.$(`.artifact[data-artifact="${longMd}"] .art-toc-item`), 30000);
+	const tocOverflow = await page.$eval(`.artifact[data-artifact="${longMd}"] .art-toc`, (e) => e.scrollWidth - e.clientWidth);
+	check("the contents column never scrolls sideways", tocOverflow <= 1, tocOverflow);
+	const tocLines = await page.$$eval(`.artifact[data-artifact="${longMd}"] .art-toc-item`, (is) => is.map((i) => i.getBoundingClientRect().height));
+	check("…and its rows are tall enough for two lines of text", tocLines.every((h) => h >= 20), tocLines);
+	await shot("artifact-toc");
+
+	const composerHeight = () => page.$eval(".composer textarea", (e) => Math.round(e.getBoundingClientRect().height));
+	const short = await composerHeight();
+	await page.click(".composer textarea");
+	await page.type(".composer textarea", "a line long enough to wrap inside the composer at this width, ".repeat(6));
+	const grown = await composerHeight();
+	check("the composer grows as the text wraps", grown > short + 16, { short, grown });
+	await page.keyboard.down("Control");
+	await page.keyboard.press("KeyA");
+	await page.keyboard.up("Control");
+	await page.keyboard.press("Backspace");
+	check("…and shrinks back when it is empty", (await composerHeight()) <= short + 2, { short, back: await composerHeight() });
 
 	// Diagrams: a .mmd file is drawn, and a ```mermaid fence in a reply is drawn in place.
 	const mmdId = await upload(ws, "flow.mmd", "text/plain", "flowchart LR\n  order --> payment\n  payment --> shipped\n");

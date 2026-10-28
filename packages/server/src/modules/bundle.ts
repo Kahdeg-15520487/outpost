@@ -154,7 +154,8 @@ export async function importBundle(ws: Workspace | undefined, userId: string, b:
 	};
 	for (const [i, bp] of b.blueprints.entries()) {
 		if (!verdict("blueprint", i, bp.name)) continue;
-		const row: BlueprintRow = { id: newId("bp"), name: bp.name, description: bp.description, icon: bp.icon, authorId: userId, visibility: opts.visibility, files: bp.files, createdAt: Date.now(), intro: bp.intro };
+		const id = newId("bp");
+		const row: BlueprintRow = { id, rootId: id, version: 1, changelog: "Imported", parentId: null, updatedAt: Date.now(), name: bp.name, description: bp.description, icon: bp.icon, authorId: userId, visibility: opts.visibility, files: bp.files, createdAt: Date.now(), intro: bp.intro };
 		blueprints.upsert(row);
 		result.blueprints.push({ id: row.id, name: row.name });
 	}

@@ -19,6 +19,8 @@ import type { ConvertTarget } from "../files/parse/index.ts";
 const PARSABLE = /^(docx|xlsx|pptx|pdf|zip|tar|gzip|gz|rar|7z|csv|tsv|json|xml|html|markdown)$/;
 import { buildFrame } from "../modules/frame.ts";
 import { renderModule, type RenderAction } from "../modules/render.ts";
+import { assessFiles, blueprintInfo, diffFiles, type FileChange } from "../modules/inspect.ts";
+import type { Assessment } from "../modules/compat.ts";
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
 import {
 	ApprovalsDoc,
@@ -465,15 +467,124 @@ export class Workspace {
 		this.publishModules();
 	}
 
-	async publishBlueprint(moduleId: string, meta: { name: string; description: string; visibility: "public" | "private"; authorId: string }): Promise<BlueprintRow> {
+	/**
+	 * Publish a module's code as a blueprint version.
+	 *
+	 * A module built from a blueprint *appends a version to that blueprint* instead of forking a new,
+	 * near-identically named one: the name stays, the changelog says what changed, and modules sitting
+	 * on an older version can see there is a newer one. Two exceptions keep it honest: built-in
+	 * blueprints are re-seeded from disk at startup, so publishing over one forks; and `fork: true`
+	 * starts a separate identity on purpose.
+	 */
+	async publishBlueprint(
+		moduleId: string,
+		meta: { name: string; description: string; visibility: "public" | "private"; authorId: string; changelog?: string; rootId?: string; fork?: boolean },
+	): Promise<{ blueprint: BlueprintRow; compat: Assessment }> {
 		const g = modules.get(moduleId)!;
+		const files = await this.moduleFiles(moduleId);
+		const origin = meta.rootId ? blueprints.get(meta.rootId) : g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
+		// Built-ins are upserted from packages/server/blueprints on boot: a version published on top of
+		// one would be overwritten by the next restart, so it becomes a blueprint of its own.
+		const keepRoot = origin && !meta.fork && origin.authorId !== null;
+		const rootId = keepRoot ? origin.rootId : newId("bp");
+		const versions = keepRoot ? blueprints.versions(origin.rootId) : [];
+		const version = versions.length ? Math.max(...versions.map((v) => v.version)) + 1 : 1;
 		// A module made from a blueprint keeps greeting people the same way once republished.
-		const intro = g.blueprintId ? blueprints.get(g.blueprintId)?.intro : undefined;
-		const bp: BlueprintRow = { id: newId("bp"), name: meta.name, description: meta.description, icon: g.icon, authorId: meta.authorId, visibility: meta.visibility, files: await this.moduleFiles(moduleId), createdAt: Date.now(), intro };
+		const intro = origin?.intro;
+		const bp: BlueprintRow = {
+			// A fork *is* its root; an appended version gets an id of its own under the existing root.
+			id: keepRoot ? newId("bp") : rootId,
+			rootId,
+			version,
+			changelog: String(meta.changelog ?? "").trim().slice(0, 400),
+			parentId: origin && !keepRoot ? origin.id : null,
+			updatedAt: Date.now(),
+			name: keepRoot ? origin.name : meta.name,
+			description: meta.description,
+			icon: g.icon,
+			authorId: meta.authorId,
+			visibility: meta.visibility,
+			files,
+			createdAt: Date.now(),
+			intro,
+		};
 		blueprints.upsert(bp);
+		// The source module is now running this version: point it here, so it does not look "behind"
+		// the version it just published.
+		if (keepRoot) modules.setBlueprint(moduleId, bp.id);
 		hub.publish("blueprints", { t: "blueprints.changed" });
-		return bp;
+		return { blueprint: bp, compat: assessFiles(files) };
 	}
+
+	/** Everything a reader needs to judge a blueprint without cloning it (see modules/inspect.ts). */
+	blueprintInfo(id: string) {
+		const bp = blueprints.get(id);
+		if (!bp) throw new HttpError(404, "No such blueprint");
+		return blueprintInfo(bp);
+	}
+
+	/**
+	 * A working copy of a blueprint that is not a product: a hidden module, reachable by id (the agent
+	 * can edit and screenshot it) but absent from every list. This is how "let me look at it" and
+	 * "let me improve it" stop leaving permanent clutter in the workspace.
+	 */
+	async createDraft(opts: { blueprintId?: string; name?: string; icon?: string; ownerId: string }): Promise<ModuleRow> {
+		const bp = opts.blueprintId ? blueprints.get(opts.blueprintId) : undefined;
+		if (opts.blueprintId && !bp) throw new HttpError(404, "No such blueprint");
+		const name = (opts.name ?? (bp ? `Draft — ${bp.name}` : "Draft")).slice(0, 90);
+		const files = bp ? { ...bp.files } : {};
+		if (!files["index.html"]) files["index.html"] = STARTER_HTML(name);
+		const row = modules.create(this.id, opts.ownerId, name, opts.icon ?? bp?.icon ?? "◆", bp?.id ?? null, true);
+		await this.harness.commit(async (tx) => {
+			const src = await tx.doc(ModuleSourceDoc, row.id, null);
+			src.files = files;
+			src.revision = 1;
+		}, ctx);
+		this.publishModules();
+		return row;
+	}
+
+	/** How far a module has drifted from the blueprint version it was built from. */
+	async moduleBlueprint(moduleId: string) {
+		const g = modules.get(moduleId);
+		if (!g) throw new HttpError(404, "No such module");
+		const origin = g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
+		if (!origin) return { builtFrom: null as null | { id: string; name: string; version: number; rootId: string }, current: null, changed: [], behind: 0 };
+		const versions = blueprints.versions(origin.rootId);
+		const current = versions.at(-1)!;
+		const files = await this.moduleFiles(moduleId);
+		// Direction: what would change in the module if it took the blueprint (module → blueprint).
+		const changed = diffFiles(files, current.files);
+		return {
+			builtFrom: { id: origin.id, name: origin.name, version: origin.version, rootId: origin.rootId },
+			current: { id: current.id, name: current.name, version: current.version, changelog: current.changelog, updatedAt: current.updatedAt },
+			changed,
+			behind: current.version - origin.version,
+		};
+	}
+
+	/**
+	 * Move a module onto the current blueprint version. Files the module changed locally are replaced
+	 * too — the caller is told which ones, so the UI can ask before it throws work away.
+	 */
+	async updateModuleFromBlueprint(moduleId: string) {
+		const info = await this.moduleBlueprint(moduleId);
+		if (!info.current) throw new HttpError(400, "This module wasn't built from a blueprint");
+		if (info.behind <= 0 && !info.changed.length) return { changed: [], version: info.current.version };
+		const bp = blueprints.get(info.current.id)!;
+		const files = { ...bp.files };
+		await this.harness.commit(async (tx) => {
+			const src = await tx.doc(ModuleSourceDoc, moduleId, null);
+			src.files = files;
+			src.revision = (src.revision ?? 0) + 1;
+		}, ctx);
+		modules.setBlueprint(moduleId, bp.id);
+		this.host(moduleId).reload();
+		this.publishModules();
+		return { changed: info.changed, version: bp.version };
+	}
+
+	// ------------------------------------------------------------------ airlocks
 
 	// ------------------------------------------------------------------ airlocks
 

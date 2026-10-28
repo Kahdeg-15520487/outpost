@@ -20,6 +20,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "github", file: "github.ts", what: "the GitHub repository connector against a stand-in for api.github.com" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
 	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
+	{ name: "blueprints", file: "blueprints.ts", what: "blueprint versions, drafts, drift, rollout and diff — improving a template without forking it" },
 	{ name: "transfer", file: "transfer.ts", what: "export/import of blueprints and modules between two instances" },
 	{ name: "home", file: "home.ts", what: "workspace homepage: away digest, seen boundary, summaries" },
 	{ name: "smoke", file: "smoke.ts", what: "HTTP/WS end to end: chat, modules, sharing, airlocks, files, blueprints" },

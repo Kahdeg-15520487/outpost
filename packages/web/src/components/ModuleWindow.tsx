@@ -5,6 +5,7 @@ import { Avatar } from "./bits";
 import { ResourcesPanel } from "./Resources";
 import { EditableLabel } from "./RowMenu";
 import { askConfirm, askText, reportError } from "../dialogs";
+import { BlueprintCard } from "./BlueprintCard";
 
 type Tab = "app" | "code" | "logs" | "data" | "share" | "access";
 type Detail = { module: Module; files?: Record<string, string>; server: { methods: string[]; readonly: string[]; error?: string }; shares?: any[]; links?: any[] };
@@ -320,8 +321,6 @@ function ShareTab({ detail, user, onChange }: { detail: Detail; user: User; onCh
 	const [username, setUsername] = useState("");
 	const [role, setRole] = useState("editor");
 	const [err, setErr] = useState("");
-	const [bp, setBp] = useState({ name: g.name, description: "", visibility: "public" });
-	const [bpDone, setBpDone] = useState("");
 	const run = (p: Promise<unknown>) => p.then(onChange).catch((e) => setErr(e.message));
 	const linkUrl = (t: string) => `${location.origin}/#/link/${t}`;
 	return (
@@ -390,28 +389,7 @@ function ShareTab({ detail, user, onChange }: { detail: Detail; user: User; onCh
 					</button>
 				</div>
 			</div>
-			<div className="card">
-				<h3>Publish as blueprint</h3>
-				<div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-					Share the <b>code</b>, not the data: others get their own private copy they can change.
-				</div>
-				<div style={{ display: "grid", gap: 8 }}>
-					<input className="input" value={bp.name} onChange={(e) => setBp({ ...bp, name: e.target.value })} placeholder="Name" />
-					<textarea className="input" rows={2} value={bp.description} onChange={(e) => setBp({ ...bp, description: e.target.value })} placeholder="What does it do?" />
-					<div className="row">
-						<select className="input" style={{ width: 140 }} value={bp.visibility} onChange={(e) => setBp({ ...bp, visibility: e.target.value })}>
-							<option value="public">Everyone</option>
-							<option value="private">Only me</option>
-						</select>
-						<span className="grow muted" style={{ fontSize: 13 }}>
-							{bpDone}
-						</span>
-						<button className="btn primary" onClick={() => api.post("/api/blueprints", { moduleId: g.id, ...bp }).then(() => setBpDone("Published ✓"))}>
-							Publish
-						</button>
-					</div>
-				</div>
-			</div>
+			<BlueprintCard moduleId={g.id} workspaceId={g.workspaceId} name={g.name} canEdit={role === "owner" || role === "editor"} />
 			<div className="card" style={{ borderColor: "#f1c4bd" }}>
 				<div className="row">
 					<div className="grow">

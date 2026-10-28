@@ -5,6 +5,7 @@ import { CONNECTOR_INFO } from "../airlocks/connectors/types.ts";
 import { buildFrame, FRAME_CSP } from "../modules/frame.ts";
 import { bundleFileName, checkBundle, importBundle, makeBundle, parseBundle } from "../modules/bundle.ts";
 import { capabilities } from "../modules/compat.ts";
+import { blueprintInfo, declaredApi, diffFiles } from "../modules/inspect.ts";
 import { credentials, defaultModel, listModels, listProviders, models } from "../kernel/models.ts";
 import { home, markSeen, summarize } from "../kernel/home.ts";
 import { oauthLogins } from "../kernel/oauth.ts";
@@ -30,8 +31,9 @@ async function member(req: Req, min: Role = "viewer") {
 function moduleView(g: ReturnType<typeof modules.get> & {}, role: Role) {
 	const ws = workspaces.get(g.workspaceId);
 	const bp = g.blueprintId ? blueprints.get(g.blueprintId) : undefined;
-	const blueprint = bp && { name: bp.name, description: bp.description, ...bp.intro };
-	return { ...g, role, workspaceName: ws?.name, owner: users.get(g.ownerId)?.displayName, blueprint };
+	const blueprint = bp && { name: bp.name, description: bp.description, version: bp.version, rootId: bp.rootId, ...bp.intro };
+	// A draft is a module the agent (or a preview) made: reachable and editable, but not one of the user's.
+	return { ...g, role, draft: g.hidden === true, workspaceName: ws?.name, owner: users.get(g.ownerId)?.displayName, blueprint };
 }
 
 function signIn(req: Req, user: User) {
@@ -556,6 +558,20 @@ export function createApi(): Router {
 		return { module: moduleView(g, "owner") };
 	});
 	r.get("/api/shared", (req) => ({ modules: modules.sharedWith(req.need().id).map((g) => moduleView(g, g.role)) }));
+	/** Where this module came from, how far it has drifted, and whether there is a newer version. */
+	r.get("/api/w/:ws/modules/:id/blueprint", async (req) => {
+		const { ws } = await member(req);
+		const module = modules.get(req.params.id!);
+		if (!module || module.workspaceId !== ws.id) throw new HttpError(404, "No such module");
+		return ws.moduleBlueprint(module.id);
+	});
+	/** Take the current blueprint version (local edits replaced) — the reverse of publish. */
+	r.post("/api/w/:ws/modules/:id/blueprint", async (req) => {
+		const { ws } = await member(req, "editor");
+		const module = modules.get(req.params.id!);
+		if (!module || module.workspaceId !== ws.id) throw new HttpError(404, "No such module");
+		return ws.updateModuleFromBlueprint(module.id);
+	});
 	r.get("/api/modules/:id", async (req) => {
 		const user = req.need();
 		const { module, role, ws } = await Workspace.moduleFor(req.params.id!, user);
@@ -567,6 +583,11 @@ export function createApi(): Router {
 			shares: role === "owner" ? modules.shares(module.id) : undefined,
 			links: role === "owner" ? modules.links(module.id) : undefined,
 		};
+	});
+	r.delete("/api/modules/:id", async (req) => {
+		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "owner");
+		await ws.deleteModule(module.id);
+		return { ok: true };
 	});
 	r.patch("/api/modules/:id", async (req) => {
 		const { module, ws } = await Workspace.moduleFor(req.params.id!, req.need(), "editor");
@@ -632,18 +653,86 @@ export function createApi(): Router {
 	});
 
 	// ------------------------------------------------------------ blueprints
+	/** The catalogue: one row per blueprint, at its current version, with what a chooser needs. */
 	r.get("/api/blueprints", (req) => {
 		const user = req.need();
+		const live = modules.all();
 		return {
-			blueprints: blueprints.visibleTo(user.id).map(({ files, ...b }) => ({ ...b, author: b.authorId ? users.get(b.authorId)?.displayName : "outpost", fileCount: Object.keys(files).length, mine: b.authorId === user.id })),
+			blueprints: blueprints.visibleLatest(user.id).map(({ files, intro: _intro, ...b }) => {
+				const versions = blueprints.versions(b.rootId);
+				const using = live.filter((m) => m.blueprintId && versions.some((v) => v.id === m.blueprintId));
+				return {
+					...b,
+					author: b.authorId ? users.get(b.authorId)?.displayName : "outpost",
+					fileCount: Object.keys(files).length,
+					mine: b.authorId === user.id,
+					versionCount: versions.length,
+					modulesUsing: using.length,
+				};
+			}),
 		};
+	});
+	/** One blueprint in full: files, code, declared API, versions, who uses it, compat. Read-only. */
+	r.get("/api/blueprints/:id", (req) => {
+		const user = req.need();
+		const bp = blueprints.get(req.params.id!);
+		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
+		const info = blueprintInfo(bp);
+		return {
+			...info,
+			blueprint: { ...info.blueprint, author: bp.authorId ? users.get(bp.authorId)?.displayName : "outpost", mine: bp.authorId === user.id },
+		};
+	});
+	/** File-level comparison of two versions; never executes either of them. */
+	r.get("/api/blueprints/:id/diff", (req) => {
+		const user = req.need();
+		const a = blueprints.get(req.params.id!);
+		const b = blueprints.get(req.query.get("with") ?? "");
+		for (const bp of [a, b]) if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
+		const from = a!;
+		const to = b!;
+		return {
+			from: { id: from.id, version: from.version, name: from.name },
+			to: { id: to.id, version: to.version, name: to.name },
+			changed: diffFiles(from.files, to.files),
+			apiAdded: declaredApi(to.files).methods.filter((m) => !declaredApi(from.files).methods.includes(m)),
+			apiRemoved: declaredApi(from.files).methods.filter((m) => !declaredApi(to.files).methods.includes(m)),
+		};
+	});
+	/** A working copy that is not a module of the user's: used by "preview" and "edit a draft". */
+	r.post("/api/w/:ws/blueprints/:id/draft", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const bp = blueprints.get(req.params.id!);
+		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
+		const row = await ws.createDraft({ blueprintId: bp.id, ownerId: user.id });
+		return { module: moduleView(row, "owner") };
+	});
+	/** Move every module on this blueprint (or the listed ones) onto its current version. */
+	r.post("/api/w/:ws/blueprints/:id/update-modules", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const bp = blueprints.get(req.params.id!);
+		if (!bp || (bp.visibility !== "public" && bp.authorId !== user.id)) throw new HttpError(404, "No such blueprint");
+		const { modules: only } = await req.body();
+		const info = ws.blueprintInfo(bp.id);
+		const wanted: string[] = Array.isArray(only) && only.length ? only.map(String) : info.modulesUsing.filter((m) => m.workspaceId === ws.id).map((m) => m.id);
+		const updated = [];
+		for (const id of wanted) updated.push({ module: id, ...(await ws.updateModuleFromBlueprint(id)) });
+		return { version: info.blueprint.version, updated };
 	});
 	r.post("/api/blueprints", async (req) => {
 		const user = req.need();
-		const { moduleId, name, description, visibility } = await req.body();
+		const { moduleId, name, description, visibility, changelog, target, fork } = await req.body();
 		const { module, ws } = await Workspace.moduleFor(String(moduleId), user, "editor");
-		const bp = await ws.publishBlueprint(module.id, { name: String(name || module.name), description: String(description ?? ""), visibility: visibility === "private" ? "private" : "public", authorId: user.id });
-		return { blueprint: { id: bp.id } };
+		const { blueprint, compat } = await ws.publishBlueprint(module.id, {
+			name: String(name || module.name),
+			description: String(description ?? ""),
+			visibility: visibility === "private" ? "private" : "public",
+			authorId: user.id,
+			changelog: changelog === undefined ? undefined : String(changelog),
+			rootId: target === undefined ? undefined : String(target),
+			fork: fork === true,
+		});
+		return { blueprint: { id: blueprint.id, rootId: blueprint.rootId, version: blueprint.version, changelog: blueprint.changelog, name: blueprint.name }, compat };
 	});
 	// ------------------------------------------------------------ export / import (move between instances)
 	r.get("/api/blueprints/:id/export", (req) => {

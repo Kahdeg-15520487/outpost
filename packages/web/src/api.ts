@@ -10,7 +10,44 @@ export type Module = { id: string; workspaceId: string; ownerId: string; name: s
 export type Suggestion = { k: string; t: string; d: string; p: string };
 /** How a fresh chat beside a module greets the user; comes from the blueprint the module was made from. */
 export type BlueprintIntro = { name: string; description: string; headline?: string; intro?: string; suggestions?: Suggestion[] };
-export type Blueprint = { id: string; name: string; description: string; icon: string; authorId: string | null; author?: string; visibility: string; fileCount: number; mine: boolean };
+export type Blueprint = {
+	id: string;
+	rootId: string;
+	version: number;
+	changelog: string;
+	updatedAt: number;
+	name: string;
+	description: string;
+	icon: string;
+	authorId: string | null;
+	author?: string;
+	visibility: string;
+	fileCount: number;
+	mine: boolean;
+	versionCount: number;
+	modulesUsing: number;
+	createdAt: number;
+};
+/** A per-file change between two versions, or between a module and its blueprint. */
+export type FileChange = { path: string; status: "added" | "removed" | "changed" | "same"; before?: number; after?: number };
+export type Compatibility = { status: "ok" | "warn" | "blocked"; issues: string[]; notes: string[] };
+/** Everything the inspector shows about one blueprint — read without creating anything. */
+export type BlueprintInfo = {
+	blueprint: Blueprint;
+	files: Record<string, { size: number; lines: number }>;
+	source: Record<string, string>;
+	api: { methods: string[]; readonly: string[] };
+	versions: Blueprint[];
+	modulesUsing: { id: string; name: string; workspaceId: string; current: boolean; hidden: boolean }[];
+	compat: Compatibility;
+};
+/** Where a module came from and how far it has drifted. */
+export type ModuleBlueprint = {
+	builtFrom: { id: string; name: string; version: number; rootId: string } | null;
+	current: { id: string; name: string; version: number; changelog: string; updatedAt: number } | null;
+	changed: FileChange[];
+	behind: number;
+};
 export type AirlockInfo = { id: string; title: string; icon: string; description: string; resourceHint: string; setup?: string; methods: { name: string; description: string; effect: "read" | "write" }[] };
 export type Holder = { kind: "conversation" | "module" | "mission"; id: string; roles?: string[] };
 export type Policy = "ask" | "auto" | "deny";

@@ -23,6 +23,9 @@ export function installBuiltinBlueprints() {
 		if (!statSync(root).isDirectory()) continue;
 		const meta = JSON.parse(readFileSync(join(root, "meta.json"), "utf8"));
 		const intro = { headline: meta.headline, intro: meta.intro, suggestions: meta.suggestions };
-		blueprints.upsert({ id: `bp_${name}`, name: meta.name, description: meta.description, icon: meta.icon ?? "◆", authorId: null, visibility: "public", files: walk(root), createdAt: 0, intro });
+		const id = `bp_${name}`;
+		// A built-in is version 1 of its own root; authorId null is what marks it built-in (and means a
+		// published version never lands on top of it — it would be overwritten on the next boot).
+		blueprints.upsert({ id, rootId: id, version: 1, changelog: "Built in", parentId: null, updatedAt: 0, name: meta.name, description: meta.description, icon: meta.icon ?? "◆", authorId: null, visibility: "public", files: walk(root), createdAt: 0, intro });
 	}
 }

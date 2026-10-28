@@ -14,6 +14,7 @@ detail behind each feature.
 | [modules.md](modules.md) | the module runtime: QuickJS server, sandboxed client, roles, screenshots |
 | [airlocks.md](airlocks.md) | capabilities, grants, simulated writes and approvals |
 | [connections.md](connections.md) | MCP servers, OpenAPI APIs, GitHub and Azure DevOps as airlocks |
+| [blueprints.md](blueprints.md) | versions and changelogs, the read-only inspector, drafts, drift, rollout to every module |
 | [transfer.md](transfer.md) | exporting and importing blueprints and modules, with version and capability checks |
 
 ## Running it

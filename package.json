@@ -10,6 +10,8 @@
     "dev:web": "pnpm --filter @outpost/web dev",
     "build": "pnpm --filter @outpost/web build",
     "start": "pnpm build && pnpm --filter @outpost/server start",
+    "migration": "pnpm --filter @outpost/server exec tsx scripts/migrate.ts",
+    "migrate": "pnpm --filter @outpost/server exec tsx scripts/migrate.ts",
     "typecheck": "pnpm -r typecheck",
     "smoke": "pnpm --filter @outpost/server smoke",
     "test": "pnpm build && pnpm typecheck && pnpm --filter @outpost/server test"

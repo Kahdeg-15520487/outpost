@@ -1,7 +1,7 @@
 /** Outpost clean-break migration: real SQLite journals and git worktrees, all under the test temp dir. */
 import { check, finish, testDir } from "./lib/harness.ts";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Harness, createRegistry, defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
@@ -105,5 +105,52 @@ try {
 	const agent = migrateDocument("pi.agent", { extensions: ["os", "pios-project"], cwd: repo, model: { provider: "pi-os-demo", modelId: "demo" }, instructions: "Use gadget.api and .pios/project.json" }, source, final);
 	check("agent extension IDs, working directory and model survive the clean break", agent.extensions.join() === "outpost,outpost-mission" && agent.cwd === join(final, "missions", "p_1", "repo") && agent.model.provider === "outpost-demo" && agent.instructions.includes(".outpost/mission.json"));
 	check("pending Azure writes keep their argument schema", migrateDocument("os.approvals", { actions: { a: { gatekeeper: "azure-devops", requestedBy: { kind: "project", id: "p_1" }, args: { project: "Shop" } } } }, source, final).actions.a.args.project === "Shop");
+	// ---------------------------------------------------------------- the one-line command
+	// `pnpm run migration <old-root>` is the documented way in: it reads this project's config for the
+	// destination, falls back to ./data, and converts the old config beside it. The old root here is the
+	// fixture above, which is already a whole old instance (data + mission repositories).
+	console.log("the one-command migration");
+	const oldRoot = source;
+	// Kept outside the old root so it isn't copied into the migrated data.
+	const oldConfigPath = join(testDir, "pi-os.config.json");
+	writeFileSync(oldConfigPath, JSON.stringify({ gatekeepers: { github: { token: "$GITHUB_TOKEN" } }, models: { default: "pi-os-demo/demo" } }));
+	const project = join(testDir, "fresh-project");
+	mkdirSync(project, { recursive: true });
+	const env: NodeJS.ProcessEnv = { ...process.env, INIT_CWD: project, GIT_AUTHOR_NAME: "Migration", GIT_AUTHOR_EMAIL: "m@example.com", GIT_COMMITTER_NAME: "Migration", GIT_COMMITTER_EMAIL: "m@example.com" };
+	delete env.OUTPOST_DATA;
+	delete env.OUTPOST_CONFIG;
+	const cli = [join(import.meta.dirname, "..", "node_modules", "tsx", "dist", "cli.mjs"), join(import.meta.dirname, "..", "scripts", "migrate.ts")];
+	const args = [oldRoot, "--config", oldConfigPath];
+
+	// Dry run first: it must not create anything.
+	const dry = execFileSync(process.execPath, [...cli, ...args, "--dry-run"], { env, encoding: "utf8", stdio: "pipe" });
+	check("a dry run reports the plan", /destination\s+.*fresh-project[\\/]data/.test(dry) && /Dry run/.test(dry), dry.split("\n").slice(0, 6).join(" | "));
+	check("…and changes nothing", !existsSync(join(project, "data")) && !existsSync(join(project, "outpost.config.json")));
+
+	let out = "";
+	try {
+		out = execFileSync(process.execPath, [...cli, ...args], { env, encoding: "utf8", stdio: "pipe" });
+	} catch (error) {
+		const e = error as { stdout?: string; stderr?: string };
+		console.log("   DEBUG stdout:", (e.stdout ?? "").slice(-800));
+		console.log("   DEBUG stderr:", (e.stderr ?? "").slice(-1500));
+		throw error;
+	}
+	check("the command migrates the data", existsSync(join(project, "data", "system.sqlite")) && existsSync(join(project, "data", "missions", "p_1", "repo")), out.split("\n").find((l) => l.startsWith("data")));
+	const written = JSON.parse(readFileSync(join(project, "outpost.config.json"), "utf8"));
+	check("…and writes this project's config next to it", written.airlocks?.github?.token === "$GITHUB_TOKEN" && !written.gatekeepers, written);
+	check("…with dataDir pointing at what it just wrote", written.dataDir === "data", written.dataDir);
+	check("…leaving the old checkout untouched", !existsSync(join(oldRoot, "outpost-migration.json")) && existsSync(join(oldRoot, "system.sqlite")));
+
+	let again = "";
+	try {
+		execFileSync(process.execPath, [...cli, ...args], { env, encoding: "utf8", stdio: "pipe" });
+	} catch (error) {
+		again = String((error as { stderr?: string; message?: string }).stderr ?? (error as Error).message);
+	}
+	check("a second run refuses rather than overwriting the destination", /already exists and is not empty/.test(again), again.split("\n").filter((l) => l.includes("already exists"))[0]);
+	const into = join(testDir, "elsewhere");
+	execFileSync(process.execPath, [...cli, ...args, "--into", into, "--data-only"], { env, encoding: "utf8", stdio: "pipe" });
+	check("--into picks a destination, and --data-only leaves the config alone", existsSync(join(into, "system.sqlite")) && !existsSync(join(testDir, "elsewhere", "outpost.config.json")));
 } catch (e) { await finish(e); }
 await finish();

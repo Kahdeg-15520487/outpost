@@ -27,16 +27,40 @@ Old routes, tool names, config keys and exports are not accepted by the new runt
 
 1. **Stop the old server and its agent processes.** Do not run both versions against one data directory. Keep the old checkout and config for rollback.
 2. Install this version's dependencies with `pnpm install --frozen-lockfile`.
-3. Run the migration into a **new destination outside the original data directory**. Use absolute paths; pnpm executes this command from `packages/server`:
+3. Run the migration from this checkout, pointing it at the old one:
 
    ```sh
-   pnpm --filter @outpost/server exec tsx scripts/migrate-outpost.ts /absolute/old-data /absolute/new-data
+   pnpm run migration /absolute/old-checkout
+   ```
+
+   That one command finds the old data (`outpost-data/` or `data/` inside it, or pass the data
+   directory itself), converts the old config beside it, and puts both where this instance expects
+   them. It reads **this** project's `outpost.config.json` for the destination (`dataDir`), falls back
+   to `OUTPOST_DATA`, then to `./data`; the converted config's `dataDir` is written to match, so
+   `pnpm start` finds everything without environment variables. Add `--dry-run` to see the plan first,
+   `--into <dir>` to choose the destination yourself, `--config <file>` if the old config lives
+   somewhere else, and `--data-only` / `--config-only` to do one half.
+
+   Nothing is overwritten: a non-empty destination, or an existing `outpost.config.json`, stops the
+   run with a message instead of clobbering it, and the old checkout is never modified — it stays
+   available for rollback.
+
+   Under the hood that is two scripts, which can still be run directly when preparing a copy that will
+   be moved again:
+
+   ```sh
+   pnpm --filter @outpost/server exec tsx scripts/migrate-outpost.ts /absolute/old-data /absolute/new-data [final-data]
    pnpm --filter @outpost/server exec tsx scripts/migrate-config.ts /absolute/old-config.json /absolute/outpost.config.json
    ```
 
-   An optional third data argument specifies the final deployed data path if the copy will be moved again. Leave it out when running directly from the destination. If you move a prepared copy, call the migration utility's `relocateRepositories(newLocation, previousLocation)` before starting it so git worktree pointers reach their new repositories.
+   The optional third data argument specifies the final deployed data path if the copy will be moved
+   again. If you move a prepared copy, call `relocateRepositories(newLocation, previousLocation)` before
+   starting it so git worktree pointers reach their new repositories.
 
-4. Set `OUTPOST_DATA` (or `dataDir` in the new config) to the converted directory. Replace old environment-variable names in the service definition. Preserve the **same secret key**, including the value of an environment-supplied secret, or existing encrypted credentials cannot be read.
+4. Check `OUTPOST_DATA` (or `dataDir` in the new config) points at the converted directory — the
+   command already writes it — and replace old environment-variable names in the service definition.
+   Preserve the **same secret key**, including the value of an environment-supplied secret, or existing
+   encrypted credentials cannot be read (the migration copies `secret.key` with the data).
 5. Start with `pnpm start`. Sign in, open existing chats and modules, inspect missions and permissions, and verify that configured providers remain available. **Keep the original data and config** until you accept the migration.
 
 The utility copies data before changing it, uses SQLite's backup API to include WAL contents, and refuses an existing destination. It converts the system schema, preserves document revision sequence numbers, materializes delta histories before converting them, and checks SQLite integrity. Module source conversion edits JavaScript API references rather than replacing words in app data or strings. Built-in blueprints refresh at startup; saved blueprints retain their code with API references converted.

@@ -127,7 +127,7 @@ const { file, found } = (() => {
 })();
 
 const baseDir = found ? dirname(configPath) : startDir;
-const dataDir = resolve(process.env.OUTPOST_DATA ?? (file.dataDir ? (isAbsolute(file.dataDir) ? file.dataDir : join(baseDir, file.dataDir)) : join(baseDir, "data")));
+const dataDir = resolve(process.env.OUTPOST_DATA || (file.dataDir ? (isAbsolute(file.dataDir) ? file.dataDir : join(baseDir, file.dataDir)) : join(baseDir, "data")));
 mkdirSync(join(dataDir, "workspaces"), { recursive: true });
 
 const defaultModel = (() => {

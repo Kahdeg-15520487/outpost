@@ -35,6 +35,12 @@ component trees:
 Above 960px the same component is `display: none` and the sidebar is a normal grid column, so desktop
 behaviour — including "hide the side panel", remembered per browser — is untouched.
 
+## Sidebar sections
+
+Every list in the sidebar — Missions, Chats, Modules, Archived, Shared with me — folds from its own
+head: the count stays visible (that is what tells you something is in there), the caret turns, and the
+choice is kept in `localStorage`, per browser. Archived is the one that starts folded.
+
 ## The module window
 
 A module opened from a chat covers the window on a phone instead of splitting it. The chat is hidden

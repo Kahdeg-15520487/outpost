@@ -358,6 +358,7 @@ body.nav-locked { overflow: hidden; }
 	.btn.small { padding: 7px 10px; }
 	.tabs button, .tab, .bp-tab { padding: 7px 11px; }
 	.side-item { padding: 9px 9px; }
+	.side-section-toggle { padding: 8px 0; } /* a label you tap to fold needs a thumb's worth of height */
 	.side-item .ago { font-size: 10px; }
 	.row-menu button { padding: 10px 11px; }
 	.side-hide, .nav-toggle { width: 38px; height: 38px; }

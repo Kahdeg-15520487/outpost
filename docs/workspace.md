@@ -5,6 +5,8 @@ when the backend goes away, and the keys that move the cursor.
 
 ## Chats, modules and archiving
 
+**Folding the sidebar.** The **Missions**, **Chats**, **Modules**, **Archived** and **Shared with me** heads all fold their list away: tap the head, it keeps its count and turns its caret, and the choice is remembered per browser. A section you never touch stays as it was — open, except **Archived**, which arrives folded.
+
 **Archiving a module.** ⋯ → *Archive* on a module in the sidebar puts it away: it leaves the sidebar, the workspace home and the agent's `module_list`, and stays out of "Shared with me". Its code, data, shares and link are kept, a direct link (`#/modules/:id`) still opens it, and the workspace's **Archived** section (collapsed, with a count) restores it. Only an owner or editor can archive or restore. Deleting is still the permanent option.
 
 **When the backend is unreachable.** The app notices a closed live connection or a request that gets no answer, shows a banner with how long it has been down and a **Retry now** button, and raises one toast instead of one per failed action. Nothing is disabled: actions still try, and fail with a clear message ("Can't reach Outpost — the server isn't responding…"). It checks every few seconds, says **Back online** when the server answers again, and reloads whatever a failed request left stale. A dropped network is reported as such.

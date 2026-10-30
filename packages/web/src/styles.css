@@ -118,8 +118,15 @@ textarea.input { resize: vertical; }
 .side-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 9px; text-decoration: none; color: #d3cdbd; font-size: 13.5px; position: relative; transition: background .13s, color .13s, box-shadow .18s; }
 .side-item:hover { background: rgba(42, 38, 64, .72); color: var(--ink-text); }
 .side-item.on { background: var(--ink-3); color: white; box-shadow: inset 0 0 0 1px rgba(236, 231, 220, .08), 0 0 18px -10px rgba(124, 58, 237, 1); }
-.side-archived-toggle { display: flex; width: 100%; justify-content: space-between; background: none; border: 0; padding: 0 8px 6px; cursor: pointer; }
-.side-archived-toggle:hover { color: var(--ink-text); }
+/* A section head that folds its list away: Missions, Chats, Modules, Archived, Shared with me all
+   use it, so they behave and look the same. The count stays when folded — it is the one thing that
+   tells you there is something inside. */
+.side-section > .side-section-head { display: flex; align-items: center; gap: 2px; padding: 0 8px 6px; }
+.side-section-toggle { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: none; border: 0; padding: 2px 0; margin: -2px 0; cursor: pointer; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; border-radius: 5px; }
+.side-section-toggle:hover { color: var(--ink-text); }
+.side-section-toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.side-section-toggle .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-section-toggle .n { flex: none; font-variant-numeric: tabular-nums; letter-spacing: .06em; }
 .side-item.archived { color: #9a93b5; font-style: italic; }
 .side-item.archived:hover { color: var(--ink-text); }
 .side-item.related:not(.on) { background: var(--ink-2); color: var(--ink-text); box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .3); }
@@ -272,6 +279,10 @@ textarea.input { resize: vertical; }
 .tabs button.on { background: white; color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .gwin-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .gwin-body iframe { flex: 1; width: 100%; border: 0; background: white; }
+/* The app frame lives in its own box: a module scaled to fit is laid out wider than the box and must
+   not push the window around while it is. */
+.gwin-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: white; }
+.gwin-frame iframe { display: block; width: 100%; height: 100%; border: 0; background: white; }
 .gwin-flash { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 3px var(--signal); opacity: 0; animation: flash .9s ease-out; }
 @keyframes flash { 20% { opacity: 1; } }
 .code { display: grid; grid-template-columns: 170px 1fr; flex: 1; min-height: 0; }

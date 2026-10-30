@@ -19,6 +19,26 @@ import { NewMissionDialog, MissionPage } from "./MissionPage";
 import { askConfirm, askText, reportError } from "../dialogs";
 import { nav } from "../nav";
 
+/**
+ * A sidebar section label that folds its list away, the way Archived always has. The count stays
+ * visible when folded — that is what tells you there is something in there — and a caret says which
+ * way it is.
+ */
+function SectionHead({ id, title, count, folded, onToggle, extra }: { id: string; title: string; count: number; folded: boolean; onToggle: () => void; extra?: React.ReactNode }) {
+	return (
+		<div className="label side-section-head" data-section={id}>
+			<button type="button" className="side-section-toggle" aria-expanded={!folded} onClick={onToggle} title={folded ? `Show ${title.toLowerCase()}` : `Hide ${title.toLowerCase()}`}>
+				<span className="t">{title}</span>
+				<span className="n">
+					{count > 0 ? `${count} ` : ""}
+					{folded ? "▸" : "▾"}
+				</span>
+			</button>
+			{extra}
+		</div>
+	);
+}
+
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	useEffect(() => startKeyboardNav(), []);
 	const route = useRoute();
@@ -33,7 +53,23 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [drawer, setDrawer] = useState(false);
 	/** The sidebar can be tucked away; the choice is remembered per browser. */
 	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("outpost.sidebar") === "collapsed");
-	const [showArchived, setShowArchived] = useState(false);
+	/** Sidebar sections fold away; the choice is remembered per browser, like the sidebar itself. */
+	const [folded, setFolded] = useState<Record<string, boolean>>(() => {
+		try {
+			return JSON.parse(localStorage.getItem("outpost.folded") ?? "{}") as Record<string, boolean>;
+		} catch {
+			return {};
+		}
+	});
+	/** Everything starts open except Archived, which starts folded: it is a drawer of leftovers. */
+	const startFolded = (id: string) => id === "archived";
+	const isFolded = (id: string) => folded[id] ?? startFolded(id);
+	const fold = (id: string) =>
+		setFolded((cur) => {
+			const next = { ...cur, [id]: !(cur[id] ?? startFolded(id)) };
+			localStorage.setItem("outpost.folded", JSON.stringify(next));
+			return next;
+		});
 	/** Below the shell breakpoint the sidebar is a panel over the page; `nav` lives outside React so a
 	 *  screen header can open it. Above it, the panel is always on screen and this changes nothing. */
 	const navOpen = useSyncExternalStore(nav.subscribe, nav.isOpen, () => false);
@@ -207,35 +243,35 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 						)}
 					</div>
 					<div className="side-section">
-						<div className="label">
-							<span>Missions</span>
-							{canEdit && ws && (
+						<SectionHead id="missions" title="Missions" count={missions.length} folded={isFolded("missions")} onToggle={() => fold("missions")}
+							extra={canEdit && ws ? (
 								<button className="side-add" onClick={() => setNewMission(true)} title="New mission: a team of agents builds it">
 									+
 								</button>
-							)}
-						</div>
-						{missions.length === 0 && canEdit && (
-							<a className="side-item" href="#" style={{ color: "#6c6655" }} onClick={(e) => (e.preventDefault(), setNewMission(true))}>
-								Give a team of agents a goal
-							</a>
+							) : undefined} />
+						{!isFolded("missions") && (
+							<>
+								{missions.length === 0 && canEdit && (
+									<a className="side-item" href="#" style={{ color: "#6c6655" }} onClick={(e) => (e.preventDefault(), setNewMission(true))}>
+										Give a team of agents a goal
+									</a>
+								)}
+								{ws &&
+									missions.map((p) => (
+										<a key={p.id} className={`side-item ${route.page === "mission" && route.mission === p.id ? "on" : ""}`} href={missionHref(ws.id, p.id)} title={p.goal}>
+											<span className="ico">◈</span>
+											<span className="t">{p.name}</span>
+											<span className="ago">{p.stage}</span>
+										</a>
+									))}
+							</>
 						)}
-						{ws &&
-							missions.map((p) => (
-								<a key={p.id} className={`side-item ${route.page === "mission" && route.mission === p.id ? "on" : ""}`} href={missionHref(ws.id, p.id)} title={p.goal}>
-									<span className="ico">◈</span>
-									<span className="t">{p.name}</span>
-									<span className="ago">{p.stage}</span>
-								</a>
-							))}
 					</div>
 					<div className="side-section">
-						<div className="label">
-							<span>Chats</span>
-							<span>{chats.length || ""}</span>
-						</div>
-						{chats.length === 0 && <div className="side-item muted" style={{ color: "#6c6655" }}>No chats yet</div>}
-						{ws &&
+						<SectionHead id="chats" title="Chats" count={chats.length} folded={isFolded("chats")} onToggle={() => fold("chats")} />
+						{!isFolded("chats") && chats.length === 0 && <div className="side-item muted" style={{ color: "#6c6655" }}>No chats yet</div>}
+						{!isFolded("chats") &&
+							ws &&
 							chats.map((c) => {
 								const on = chatId === c.id;
 								const related = !!openModuleId && !!c.moduleIds?.includes(openModuleId);
@@ -270,12 +306,10 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 							})}
 					</div>
 					<div className="side-section">
-						<div className="label">
-							<span>Modules</span>
-							<span>{modules.length || ""}</span>
-						</div>
-						{modules.length === 0 && <div className="side-item" style={{ color: "#6c6655" }}>Ask the agent to build one</div>}
-						{ws &&
+						<SectionHead id="modules" title="Modules" count={modules.length} folded={isFolded("modules")} onToggle={() => fold("modules")} />
+						{!isFolded("modules") && modules.length === 0 && <div className="side-item" style={{ color: "#6c6655" }}>Ask the agent to build one</div>}
+						{!isFolded("modules") &&
+							ws &&
 							modules.map((g) => {
 								const on = openModuleId === g.id;
 								const related = relatedModuleIds.includes(g.id);
@@ -326,13 +360,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					</div>
 					{archived.length + archivedChats.length > 0 && (
 						<div className="side-section">
-							<button type="button" className="label side-archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}>
-								<span>Archived</span>
-								<span>
-									{archived.length + archivedChats.length} {showArchived ? "▾" : "▸"}
-								</span>
-							</button>
-							{showArchived &&
+							<SectionHead id="archived" title="Archived" count={archived.length + archivedChats.length} folded={isFolded("archived")} onToggle={() => fold("archived")} />
+							{!isFolded("archived") &&
 								ws &&
 								archivedChats.map((c) => (
 									<div key={c.id} data-chat-id={c.id} className={`side-row archived ${menuOpen === `c:${c.id}` ? "menu-open" : ""}`}>
@@ -351,7 +380,7 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 										/>
 									</div>
 								))}
-							{showArchived &&
+							{!isFolded("archived") &&
 								ws &&
 								archived.map((g) => {
 									const canChange = g.role === "owner" || g.role === "editor";
@@ -378,10 +407,8 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					)}
 					{shared.length > 0 && (
 						<div className="side-section">
-							<div className="label">
-								<span>Shared with me</span>
-							</div>
-							{shared.map((g) => (
+							<SectionHead id="shared" title="Shared with me" count={shared.length} folded={isFolded("shared")} onToggle={() => fold("shared")} />
+							{!isFolded("shared") && shared.map((g) => (
 								<a key={g.id} className={`side-item ${route.page === "module" && route.module === g.id ? "on" : ""}`} href={`#/modules/${g.id}`}>
 									<span className="ico">{g.icon}</span>
 									<span className="t">{g.name}</span>

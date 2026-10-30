@@ -237,13 +237,13 @@ async function run() {
 		}, name, label);
 	await menu("Imported module", "Archive");
 	check("Archiving takes a module out of the sidebar", await until("gone from sidebar", async () => !(await page.$$eval(modRow, (ts) => ts.some((t) => t.textContent === "Imported module")))));
-	check("…and the Archived section appears, collapsed, with a count", await until("archived section", () => text(".side-archived-toggle").then((t) => /archived/i.test(t) && /1/.test(t))) && (await archivedNames()).length === 0);
-	await page.click(".side-archived-toggle");
+	check("…and the Archived section appears, collapsed, with a count", await until("archived section", () => text('[data-section="archived"] .side-section-toggle').then((t) => /archived/i.test(t) && /1/.test(t))) && (await archivedNames()).length === 0);
+	await page.click('[data-section="archived"] .side-section-toggle');
 	check("opening it lists the archived module", await until("archived listed", async () => (await archivedNames()).includes("Imported module")));
 	await shot("archived");
 	await menu("Imported module", "Restore");
 	check("Restore puts it back in the sidebar", await until("restored", async () => (await page.$$eval(modRow, (ts) => ts.some((t) => t.textContent === "Imported module"))) && (await archivedNames()).length === 0));
-	check("…and the empty Archived section goes away", !(await page.$(".side-archived-toggle")));
+	check("…and the empty Archived section goes away", !(await page.$('[data-section="archived"]')));
 	const after = (await api("GET", `/api/w/${ws}/modules`)).modules.find((m: any) => m.name === "Imported module");
 	await api("PATCH", `/api/modules/${after.id}`, { archived: true });
 	check("an archived module still opens from its link", await (async () => {
@@ -966,10 +966,10 @@ async function archivedChatsAndDialogs(ws: string) {
 	await api("PATCH", `/api/w/${ws}/chats/${victimId}`, { archived: true });
 	check("an archived chat leaves the live sidebar list", await until("chat gone", async () => !(await liveRows()).includes(victim!), 10000));
 	const shown = await until("the archived section", async () => {
-		const toggle = await page.$(".side-archived-toggle");
+		const toggle = await page.$('[data-section="archived"] .side-section-toggle');
 		if (!toggle) return undefined;
-		const expanded = await page.$eval(".side-archived-toggle", (b) => b.getAttribute("aria-expanded") === "true");
-		if (!expanded) await page.click(".side-archived-toggle");
+		const expanded = await page.$eval('[data-section="archived"] .side-section-toggle', (b) => b.getAttribute("aria-expanded") === "true");
+		if (!expanded) await page.click('[data-section="archived"] .side-section-toggle');
 		const names = await archivedRows();
 		return names.includes(victim!) ? names : undefined;
 	}, 10000);
@@ -1114,7 +1114,32 @@ async function archivedChatsAndDialogs(ws: string) {
 	check("…and its pages still fit", tablet.doc <= tablet.view + 1, tablet);
 	await shot("tablet-home");
 
+	// Sidebar sections fold the way Archived always has: the head keeps its count and a caret, the
+	// list goes away, and the choice survives a reload.
+	console.log("foldable sections");
 	await page.evaluate(() => localStorage.setItem("outpost.sidebar", "open"));
+	await viewport(1280, 900);
+	await go(`#/w/${ws}`);
+	await until("the sidebar", () => page.$(".new-chat"));
+	const heads = await page.$$eval("[data-section] .side-section-toggle", (bs) => bs.map((b) => b.textContent ?? ""));
+	check("every list in the sidebar has a folding head", ["Missions", "Chats", "Modules"].every((t) => heads.some((h) => h.startsWith(t))), heads);
+	const chatsBefore = await count("[data-section='chats'] ~ .side-row, .side-section:has([data-section='chats']) .side-row");
+	const headText = () => text('[data-section="chats"] .side-section-toggle');
+	const folded = await headText();
+	await page.click('[data-section="chats"] .side-section-toggle');
+	check("folding Chats hides its rows", await until("chats folded", async () => (await count(".side-section:has([data-section='chats']) .side-row")) === 0, 5000), { chatsBefore });
+	check("…the head stays, with its count and a closed caret", /chats/i.test(await headText()) && /\d/.test(await headText()) && /▸/.test(await headText()) && (await page.$eval('[data-section="chats"] .side-section-toggle', (b) => b.getAttribute("aria-expanded"))) === "false", { folded, now: await headText() });
+	await page.reload();
+	await page.waitForSelector(".new-chat");
+	check("…and a reload remembers it", (await count(".side-section:has([data-section='chats']) .side-row")) === 0 && /▸/.test(await headText()));
+	await page.click('[data-section="chats"] .side-section-toggle');
+	check("unfolding brings them back", await until("chats open", async () => (await count(".side-section:has([data-section='chats']) .side-row")) === chatsBefore && /▾/.test(await headText()), 5000));
+	await page.click('[data-section="modules"] .side-section-toggle');
+	check("Modules folds the same way", await until("modules folded", async () => (await count(".side-section:has([data-section='modules']) [data-module-id]")) === 0 && /▸/.test(await text('[data-section="modules"] .side-section-toggle')), 5000));
+	await page.click('[data-section="modules"] .side-section-toggle');
+	await until("modules open", async () => (await count(".side-section:has([data-section='modules']) [data-module-id]")) > 0, 5000);
+	await shot("sidebar-folded");
+
 	await viewport(1280, 900);
 	await go(`#/w/${ws}`);
 	const laptop = await navBox();

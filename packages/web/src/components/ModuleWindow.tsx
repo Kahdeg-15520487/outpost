@@ -8,6 +8,8 @@ import { askConfirm, askText, reportError } from "../dialogs";
 import { BlueprintCard } from "./BlueprintCard";
 
 type Tab = "app" | "code" | "logs" | "data" | "share" | "access";
+/** The width a module is given on a phone before it is scaled down to fit. */
+const PHONE_FRAME = 780;
 type Detail = { module: Module; files?: Record<string, string>; server: { methods: string[]; readonly: string[]; error?: string }; shares?: any[]; links?: any[] };
 
 export function ModuleWindow({
@@ -40,6 +42,35 @@ export function ModuleWindow({
 	const [logs, setLogs] = useState<LogLine[]>([]);
 	const [frameError, setFrameError] = useState("");
 	const frame = useRef<HTMLIFrameElement>(null);
+	/**
+	 * Modules are written for a desktop window. In a phone's half-screen the frame is laid out at
+	 * `phoneFrame` CSS pixels and scaled down to whatever width it actually has, so the layout a module
+	 * was designed with survives instead of reflowing into a column two characters wide. `fit` is the
+	 * escape hatch: the module's own layout at 1:1, for anything that is responsive already.
+	 */
+	const frameBox = useRef<HTMLDivElement>(null);
+	const [fit, setFit] = useState(() => localStorage.getItem("outpost.frame") === "fit");
+	const [view, setView] = useState({ width: 0, height: 0, scale: 1 });
+	useEffect(() => {
+		const box = frameBox.current;
+		if (!box || tab !== "app") return;
+		const measure = () => {
+			const width = box.clientWidth;
+			const height = box.clientHeight;
+			if (!width || !height) return;
+			const virtual = window.innerWidth <= 960 && !fit ? Math.max(width, PHONE_FRAME) : width;
+			const scale = width / virtual;
+			setView({ width: virtual, height: Math.round(height / scale), scale });
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(box);
+		measure();
+		return () => observer.disconnect();
+	}, [tab, fit]);
+	const setFrameMode = (next: boolean) => {
+		localStorage.setItem("outpost.frame", next ? "fit" : "desktop");
+		setFit(next);
+	};
 	useEffect(() => {
 		if (tabRequest) setTab(tabRequest.tab);
 	}, [tabRequest?.n]);
@@ -148,8 +179,13 @@ export function ModuleWindow({
 					))}
 				</div>
 				{onToggleChat && (
-					<button className={`btn small gwin-chat ${chatHidden ? "" : "on"}`} onClick={onToggleChat} aria-pressed={!chatHidden} title={chatHidden ? "Show the chat beside this module" : "Hide the chat; give the module the full width"}>
+					<button className={`btn small gwin-chat ${chatHidden ? "" : "on"}`} onClick={onToggleChat} aria-pressed={!chatHidden} title={chatHidden ? "Show the chat below the module" : "Give the module the whole screen"}>
 						💬 Chat
+					</button>
+				)}
+				{view.scale < 0.98 && (
+					<button className={`btn small gwin-fit ${fit ? "on" : ""}`} onClick={() => setFrameMode(!fit)} aria-pressed={fit} title={fit ? "Scale the module's desktop layout to fit, instead of reflowing it" : "Let the module fill the width and lay itself out"}>
+						{fit ? "Fit" : "Desktop"}
 					</button>
 				)}
 				<button className="btn ghost small" onClick={onClose} title="Close">
@@ -163,13 +199,17 @@ export function ModuleWindow({
 						client: {frameError}
 					</div>
 				)}
-				<iframe
-					ref={frame}
-					title={g?.name ?? "module"}
+				<div className="gwin-frame" ref={frameBox} style={{ display: tab === "app" ? "block" : "none" }}>
+					<iframe
+						ref={frame}
+						title={g?.name ?? "module"}
 					src={frameUrl}
 					sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups"
-					style={{ display: tab === "app" ? "block" : "none" }}
-				/>
+						style={{
+							...(view.scale !== 1 ? { width: view.width, height: view.height, transform: `scale(${view.scale})`, transformOrigin: "top left" } : {}),
+						}}
+					/>
+				</div>
 				{tab === "app" && flash > 0 && <div key={flash} className="gwin-flash" />}
 				{tab === "code" && detail?.files && <CodeTab moduleId={moduleId} files={detail.files} server={detail.server} />}
 				{tab === "logs" && <LogsTab lines={logs} />}

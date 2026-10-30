@@ -3,7 +3,7 @@
 ## Test
 
 ```bash
-pnpm test                                     # build + typecheck + every suite below (~1.5 min)
+pnpm test                                     # build + typecheck + every suite below (~4 min)
 pnpm --filter @outpost/server test -- build ui  # just some suites
 ```
 
@@ -27,6 +27,6 @@ Each suite runs in its own process with a throwaway data dir and never reads you
 | `render` | `module_screenshot`: scratch vs persisted renders, actions, console and error capture (needs Chrome/Edge/Chromium) |
 | `offline` | a real server stopped and restarted under an open tab: the offline banner and toast, failed actions explained, recovery, network-only drops, toast dismissal |
 | `module-chat` | persistent chat/module relationships, historical recovery, subagent ownership, sidebar highlights and Open links, reloads, archived chats and deleted modules |
-| `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the mission page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval), Connections (add a REST API, its methods) and granting a connection to a chat and to a mission's developers. `SHOTS=<dir>` saves screenshots |
+| `ui` | the web app in a headless browser: the workspace homepage, chat, sidebar ⋯ menus, the model picker, and Blueprints import/export dialogs, and the mission page (Side/Team layouts, tiles, attachments, repo tree, backlog build bar, task history, App tab preview, question cards and readiness, feedback panel, pending approval), Connections (add a REST API, its methods) and granting a connection to a chat and to a mission's developers, and a phone pass (390×844, 768×1024, 1280×900, landscape) checking that no screen scrolls sideways, that the sidebar becomes a panel, that dialogs become sheets and that a module takes the window. `SHOTS=<dir>` saves screenshots |
 
 Browser suites skip themselves when no browser is found (set `OUTPOST_CHROME`). `HEADFUL=1` shows the browser in `ui`. Write new suites on `test/lib/harness.ts` (import it first) and add them to `test/run.ts`.

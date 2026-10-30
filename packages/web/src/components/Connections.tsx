@@ -3,6 +3,7 @@ import { api, type ConnectionAuth, type ConnectionInfo, type ConnectionMethod, t
 import { chatHref, timeAgo, useConnections } from "../store";
 import "../connections.css";
 import { askConfirm } from "../dialogs";
+import { NavToggle } from "./bits";
 
 const AUTH_LABEL: Record<ConnectionAuth["kind"], string> = {
 	none: "No authentication",
@@ -33,6 +34,7 @@ export function ConnectionsPage({ ws }: { ws: Workspace }) {
 			<div className="page">
 				<div className="page-inner">
 					<div className="row conn-title">
+						<NavToggle />
 						<h1 className="grow">Connections</h1>
 						{isOwner && !editing && !reviewing && (
 							<button className="btn primary" onClick={() => setEditing("new")}>

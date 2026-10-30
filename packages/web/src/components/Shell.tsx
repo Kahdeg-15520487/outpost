@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ConnectionsPage } from "./Connections";
 import { exportModule } from "./Transfer";
 import { api, type Module, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
@@ -17,6 +17,7 @@ import { InlineRename, RowMenu } from "./RowMenu";
 import { ModelPickerDialog, type ModelPicker } from "./ModelPicker";
 import { NewMissionDialog, MissionPage } from "./MissionPage";
 import { askConfirm, askText, reportError } from "../dialogs";
+import { nav } from "../nav";
 
 export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 	useEffect(() => startKeyboardNav(), []);
@@ -33,6 +34,14 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	/** The sidebar can be tucked away; the choice is remembered per browser. */
 	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("outpost.sidebar") === "collapsed");
 	const [showArchived, setShowArchived] = useState(false);
+	/** Below the shell breakpoint the sidebar is a panel over the page; `nav` lives outside React so a
+	 *  screen header can open it. Above it, the panel is always on screen and this changes nothing. */
+	const navOpen = useSyncExternalStore(nav.subscribe, nav.isOpen, () => false);
+	useEffect(() => {
+		// A panel over the page should not scroll the page behind it, and Escape is handled by nav.ts.
+		document.body.classList.toggle("nav-locked", navOpen);
+		return () => document.body.classList.remove("nav-locked");
+	}, [navOpen]);
 	const setSidebar = (hide: boolean) => {
 		setCollapsed(hide);
 		localStorage.setItem("outpost.sidebar", hide ? "collapsed" : "open");
@@ -136,8 +145,9 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const canEdit = ws?.role !== "viewer";
 
 	return (
-		<div className={`shell ${moduleOpen ? "with-module" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""}`}>
-			<aside className="sidebar">
+		<div className={`shell ${moduleOpen ? "with-module" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""} ${navOpen ? "nav-open" : ""}`}>
+			{navOpen && <div className="nav-scrim" onClick={() => nav.set(false)} aria-hidden="true" />}
+			<aside className="sidebar" id="outpost-nav" aria-label="Workspace navigation">
 				<div className="brand">
 					<a className="logo" href={wsId ? homeHref(wsId) : "#"} title="Workspace home" onClick={(e) => (wsId ? undefined : e.preventDefault())}>
 						<img src="/outpost.svg" width="30" height="30" alt="Outpost home" />
@@ -385,6 +395,9 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 					<UserMenu user={user} onSignOut={onSignOut} />
 					<button className="side-hide" title="Hide the side panel" aria-label="Hide the side panel" onClick={() => setSidebar(true)}>
 						«
+					</button>
+					<button className="side-hide nav-close" title="Close" aria-label="Close navigation" onClick={() => nav.set(false)}>
+						✕
 					</button>
 				</div>
 			</aside>

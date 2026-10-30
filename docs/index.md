@@ -8,6 +8,7 @@ detail behind each feature.
 | Page | What it covers |
 |---|---|
 | [workspace.md](workspace.md) | chats and module links, archiving, the offline banner, the workspace homepage, keyboard navigation |
+| [interface.md](interface.md) | phones and tablets: the navigation panel, sheets, the module takeover, what is checked |
 | [files.md](files.md) | uploads, native ingestion (docx/xlsx/pptx/pdf/archives), the parsed and design models, the file tools |
 | [artifacts.md](artifacts.md) | `![[f_…]]` embeds: tables and charts, JSON with jq-lite, Markdown that writes back, sandboxed HTML |
 | [missions.md](missions.md) | agent teams: roles, backlog, build scheduler, gates, feedback, live preview |

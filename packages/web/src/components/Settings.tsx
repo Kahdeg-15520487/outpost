@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type ModelInfo, type Workspace } from "../api";
 import { OAuthSignIn, type LoginView } from "./OAuthSignIn";
 import { reportError } from "../dialogs";
+import { NavToggle } from "./bits";
 
 type Provider = { id: string; name: string; configured: boolean; source?: string; editable: boolean; stored: boolean; oauthOnly: boolean; models: number;
 	/** Present when outpost offers a sign-in flow for this provider (GitHub Copilot). */
@@ -54,7 +55,10 @@ export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace;
 		<div className="main">
 			<div className="page">
 				<div className="page-inner">
-					<h1>Settings</h1>
+					<div className="page-title-row">
+						<NavToggle />
+						<h1>Settings</h1>
+					</div>
 					<p className="lede">Workspace knowledge, the default model, who's in here, and which model providers this OS can use.</p>
 					<div className="settings-grid">
 						<div style={{ display: "grid", gap: 18 }}>

@@ -3,7 +3,7 @@ import { api, fileUrl, formatBytes, uploadFile, type FileMeta, type Module, type
 import { chatHref, navigate, timeAgo } from "../store";
 import { DiagramHost } from "../artifacts/Diagram";
 import { isDiagramFile } from "../artifacts/mermaid";
-import { Dialog } from "./bits";
+import { Dialog, NavToggle } from "./bits";
 import { toast } from "../toasts";
 import { ParsedViews, PARSABLE } from "./ParsedViews";
 import { askConfirm, reportError } from "../dialogs";
@@ -103,7 +103,12 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 				<td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
 					{canEdit && (
 						<button className="btn small" disabled={asking === f.id} onClick={() => ask(f)} title="Start a chat with this file attached">
-							{asking === f.id ? "…" : "Ask agent"}
+							{asking === f.id ? "…" : (
+								<>
+									<span aria-hidden="true">🤖</span>
+									<span className="hide-sm">Ask agent</span>
+								</>
+							)}
 						</button>
 					)}{" "}
 					<a className="btn ghost small" href={fileUrl(ws.id, f.id)} title="Download">
@@ -136,14 +141,17 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 		>
 			<div className="page">
 				<div className="page-inner">
-					<div className="row" style={{ alignItems: "end" }}>
+					<div className="row files-head">
 						<div className="grow">
-							<h1>Files</h1>
+							<div className="page-title-row">
+								<NavToggle />
+								<h1>Files</h1>
+							</div>
 							<p className="lede" style={{ marginBottom: 18 }}>
 								Uploads, things the agent and modules produce, and parts extracted from archives. Any format: the agent takes apart what it doesn't know, and builds modules to work with it.
 							</p>
 						</div>
-						<span className="mono muted" style={{ fontSize: 12, marginBottom: 22 }}>
+						<span className="mono muted files-count">
 							{Object.keys(files).length} files · {formatBytes(total)}
 						</span>
 					</div>

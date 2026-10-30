@@ -389,6 +389,8 @@ a.attachment:hover { border-color: var(--line-2); box-shadow: var(--shadow); }
 .attachment .x:hover { background: var(--paper-2); color: var(--text); }
 .attachment .bar-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--signal); transition: width .15s; }
 .dropzone { position: absolute; inset: 10px; z-index: 30; border: 2px dashed var(--signal); border-radius: 16px; background: rgba(237, 233, 254, .86); backdrop-filter: blur(2px); display: grid; place-items: center; text-align: center; font: 500 20px var(--display); color: var(--signal-ink); animation: fade .12s; }
+.files-head { align-items: end; gap: 12px; flex-wrap: wrap; }
+.files-count { font-size: 12px; margin-bottom: 22px; white-space: nowrap; }
 .files-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .files-table th { text-align: left; font: 600 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line-2); }
 .files-table td { padding: 8px 10px; border-bottom: 1px solid var(--paper-2); vertical-align: middle; }

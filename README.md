@@ -45,6 +45,7 @@ Outpost reads one file, `outpost.config.json` in the directory you start it from
 | **Archive** | Modules and chats leave the sidebar, home and agent lists but keep code, data and shares, and restore from the Archived section | [workspace](docs/workspace.md) |
 | **Offline** | A closed socket or unanswered request gets a banner, one toast, and clear failures — nothing is disabled | [workspace](docs/workspace.md) |
 | **Keyboard** | Slides' keys across the shell: arrows/`j`/`k`/`Space` move, `Enter` opens, `Escape` drops | [workspace](docs/workspace.md) |
+| **Phones** | The sidebar becomes a panel, dialogs become sheets, a module takes the window, fields stay big enough not to zoom | [interface](docs/interface.md) |
 | **Files** | Any format in, content-addressed storage, attachments ingested as parsed content, byte-level tools for anything unsupported | [files](docs/files.md) |
 | **Ingestion** | docx (mammoth), xlsx (ExcelJS), pdf (pdf.js), pptx (own OOXML walker) and zip/tar/gz/rar/7z — parsed lazily, cached by hash, design model kept | [files](docs/files.md) |
 | **Artifacts** | `![[f_…]]` in a reply renders the file inline: sortable tables and charts, JSON with jq-lite, Markdown that writes back, sandboxed HTML | [artifacts](docs/artifacts.md) |
@@ -60,7 +61,7 @@ Outpost reads one file, `outpost.config.json` in the directory you start it from
 ## Test
 
 ```bash
-pnpm test                                        # build + typecheck + 19 suites (~2 min)
+pnpm test                                        # build + typecheck + 23 suites (~4 min)
 pnpm --filter @outpost/server test -- build ui   # just some suites
 ```
 

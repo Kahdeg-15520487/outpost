@@ -7,7 +7,7 @@ import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateName, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type MissionMeta, type MissionStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
 import { navigate, missionHref, timeAgo, useChat, useMission } from "../store";
-import { Dialog, Markdown, colorFor } from "./bits";
+import { Dialog, Markdown, NavToggle, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
@@ -193,6 +193,7 @@ export function MissionPage({ ws, missionId, tab, models, picker, grants }: { ws
 	return (
 		<div className="main mission">
 			<header className="mission-head">
+				<NavToggle />
 				<div className="ph-title">
 					<div className="ph-kicker mono">
 						mission · {timeAgo(mission.createdAt)} ·{" "}

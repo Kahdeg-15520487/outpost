@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type HomePayload, type User, type Workspace } from "../api";
 import { chatHref, missionHref, timeAgo, timeTitle, useReconnects } from "../store";
+import { NavToggle } from "./bits";
 
 /**
  * The workspace homepage: what you were doing when you left, and what the agents did while you were
@@ -98,10 +99,13 @@ export function HomePage({ ws, user, canEdit, onNewChat, onNewMission, onApprova
 		<div className="main home">
 			<div className="home-scroll">
 				<header className="home-head">
-					<p className="home-eyebrow">
-						{ws.name}
-						{data && <> · {data.firstVisit ? "first time here" : `you were last here ${timeAgo(data.since)}`}</>}
-					</p>
+					<div className="home-top">
+						<NavToggle />
+						<p className="home-eyebrow">
+							{ws.name}
+							{data && <> · {data.firstVisit ? "first time here" : `you were last here ${timeAgo(data.since)}`}</>}
+						</p>
+					</div>
 					<h1>
 						{data?.firstVisit ? "Welcome" : "Welcome back"}, {user.displayName.split(" ")[0]}
 						<em>.</em>

@@ -11,6 +11,8 @@ import { Shell } from "./components/Shell";
 import { ConnectionUI } from "./components/ConnectionUI";
 import { DialogHost } from "./components/DialogHost";
 import { reportError } from "./dialogs";
+// Last: this sheet overrides the component sheets, so it has to be emitted after them.
+import "./responsive.css";
 
 function App() {
 	const [user, setUser] = useState<User | null | undefined>(undefined);

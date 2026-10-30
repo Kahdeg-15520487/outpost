@@ -4,6 +4,7 @@ import { chatHref, navigate } from "../store";
 import { socket } from "../socket";
 import { useWorkspace } from "../store";
 import { ExportDialog, ImportDialog, exportBlueprint } from "./Transfer";
+import { NavToggle } from "./bits";
 import { askConfirm, reportError } from "../dialogs";
 import { BlueprintSheet } from "./BlueprintSheet";
 import { timeAgo } from "../store";
@@ -39,6 +40,7 @@ export function BlueprintsPage({ ws }: { ws: Workspace }) {
 			<div className="page">
 				<div className="page-inner">
 					<div className="row bp-head">
+						<NavToggle />
 						<h1 className="grow">Blueprints</h1>
 						{canEdit && (
 							<>

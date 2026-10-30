@@ -3,7 +3,7 @@ import { pickerShows, type ModelPicker } from "./ModelPicker";
 import { EditableLabel } from "./RowMenu";
 import { api, fileUrl, formatBytes, uploadFile, type Blueprint, type ChatMeta, type FileMeta, type Module, type ModelInfo, type ModelRef, type Suggestion, type Workspace, type WorkspaceDocs } from "../api";
 import { chatHref, navigate, useChat, type ChatState, type Entry, type LiveTool } from "../store";
-import { Markdown } from "./bits";
+import { Markdown, NavToggle } from "./bits";
 import { ResourcesDialog } from "./Resources";
 import { askConfirm, reportError } from "../dialogs";
 import { describeArgs, type CallNames } from "../toolargs";
@@ -131,18 +131,20 @@ export function ChatView(props: {
 				</div>
 			)}
 			<div className="topbar">
+				<NavToggle />
 				<h2>
 					<EditableLabel value={meta?.title ?? "New chat"} onSave={chatId && canEdit ? (title) => api.patch(`/api/w/${ws.id}/chats/${chatId}`, { title }) : undefined} />
 				</h2>
 				<span className="grow" />
 				{chatId && (
 					<button className="btn small" onClick={() => setResources(true)} title="Introduce this chat's agent to external resources">
-						🔑 Resources{chatGrants.length ? ` · ${chatGrants.length}` : ""}
+						<span aria-hidden="true">🔑</span>
+						<span className="hide-sm">Resources{chatGrants.length ? ` · ${chatGrants.length}` : ""}</span>
 					</button>
 				)}
 				{chatId && <Usage usage={state.usage} />}
 				{chatId && canEdit && (
-					<button className="btn ghost small" title="Archive chat" onClick={() => void askConfirm({ title: "Archive this chat?", body: "It leaves the sidebar for everyone in the workspace.", confirmLabel: "Archive" }).then((ok) => {
+					<button className="btn ghost small hide-sm" title="Archive chat" onClick={() => void askConfirm({ title: "Archive this chat?", body: "It leaves the sidebar for everyone in the workspace.", confirmLabel: "Archive" }).then((ok) => {
 						if (ok) void api.del(`/api/w/${ws.id}/chats/${chatId}`).then(() => navigate(chatHref(ws.id))).catch(reportError);
 					})}>
 						Archive

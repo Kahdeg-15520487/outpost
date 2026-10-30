@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { nav } from "../nav";
 import { hasEmbeds, splitEmbeds, type Segment } from "../artifacts/embeds";
 import { RawMarkdown } from "../artifacts/RawMarkdown";
 import { Artifact } from "./Artifact";
@@ -53,5 +54,27 @@ export function Dialog({ onClose, children, className }: { onClose: () => void; 
 				{children}
 			</div>
 		</>
+	);
+}
+
+/**
+ * Opens the navigation panel. Hidden above the shell breakpoint, where the sidebar is always on
+ * screen; each screen puts one in its header row so the menu is reachable from anywhere.
+ */
+export function NavToggle() {
+	const open = useSyncExternalStore(nav.subscribe, nav.isOpen, () => false);
+	return (
+		<button
+			type="button"
+			className="nav-toggle"
+			aria-label={open ? "Close navigation" : "Open navigation"}
+			aria-expanded={open}
+			title={open ? "Close navigation" : "Menu"}
+			onClick={() => nav.toggle()}
+		>
+			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
+				<path d="M3 5.5h14M3 10h14M3 14.5h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+			</svg>
+		</button>
 	);
 }

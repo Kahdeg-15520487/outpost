@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Module, type LogLine, type User, type WorkspaceDocs } from "../api";
 import { socket } from "../socket";
-import { Avatar } from "./bits";
+import { Avatar, NavToggle } from "./bits";
 import { ResourcesPanel } from "./Resources";
 import { EditableLabel } from "./RowMenu";
 import { askConfirm, askText, reportError } from "../dialogs";
@@ -104,6 +104,7 @@ export function ModuleWindow({
 		return (
 			<div className="gwin">
 				<div className="gwin-bar">
+					{standalone && <NavToggle />}
 					<span className="title grow">Module unavailable</span>
 					<button className="btn ghost small" onClick={onClose}>
 						✕
@@ -121,6 +122,7 @@ export function ModuleWindow({
 	return (
 		<div className="gwin" style={standalone ? { borderLeft: 0, flex: 1 } : undefined}>
 			<div className="gwin-bar">
+				{standalone && <NavToggle />}
 				<span className="icon">{g?.icon ?? "◆"}</span>
 				<div className="grow" style={{ minWidth: 0 }}>
 					<div className="title">

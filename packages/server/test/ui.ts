@@ -1025,6 +1025,106 @@ async function archivedChatsAndDialogs(ws: string) {
 		check("Enter submits the dialog", await until("workspace created", async () => /Second workspace/.test(await text(".ws-switch")), 15000), await text(".ws-switch"));
 		await go(`#/w/${ws}/files`);
 	}
+
+	// ------------------------------------------------------------------ phones and tablets
+	// The suite drives a 1600×1000 window. This pass resizes the same browser and asks the questions a
+	// phone asks: does anything hang off the side, can you reach the menu, does a dialog fit, is the
+	// composer big enough not to be zoomed into.
+	console.log("phones and tablets");
+	const viewport = (width: number, height: number) =>
+		page.setViewport({ width, height, isMobile: width < 800, hasTouch: width < 800, deviceScaleFactor: 1 }).then(() => new Promise((r) => setTimeout(r, 500)));
+	const sideways = () => page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: document.documentElement.clientWidth }));
+	const navBox = () => page.$eval(".sidebar", (e) => { const r = e.getBoundingClientRect(); return { left: Math.round(r.left), width: Math.round(r.width), shown: getComputedStyle(e).visibility }; });
+	const toggleShown = () => page.$eval(".nav-toggle", (e) => getComputedStyle(e).display !== "none").catch(() => false);
+	// Chats are read from the homepage payload (there is no chats listing route) and modules from theirs.
+	const lastChat = (await api("GET", `/api/w/${ws}/home`)).pickup?.lastChat as { id: string } | undefined;
+	const modules = ((await api("GET", `/api/w/${ws}/modules`)).modules ?? []) as { id: string }[];
+	const mission = (((await api("GET", `/api/w/${ws}/missions`)).missions ?? []) as { id: string }[])[0]?.id;
+	must("there is a chat, a module and a mission to look at", Boolean(lastChat) && Boolean(modules[0]), { chat: lastChat?.id, modules: modules.length });
+	const chatHash = `#/w/${ws}/c/${lastChat!.id}`;
+
+	await viewport(390, 844);
+	const spills: string[] = [];
+	for (const [name, hash] of [
+		["home", `#/w/${ws}`],
+		["chat", chatHash],
+		["files", `#/w/${ws}/files`],
+		["blueprints", `#/w/${ws}/blueprints`],
+		["settings", `#/w/${ws}/settings`],
+		["connections", `#/w/${ws}/connections`],
+		["mission", `#/w/${ws}/missions/${mission}?tab=overview`],
+		["backlog", `#/w/${ws}/missions/${mission}?tab=backlog`],
+	] as [string, string][]) {
+		await go(hash);
+		await new Promise((r) => setTimeout(r, 1000));
+		const box = await sideways();
+		if (box.doc > box.view + 1) spills.push(`${name}: ${box.doc} > ${box.view}`);
+		await shot(`phone-${name}`);
+	}
+	check("no screen asks for a sideways scroll on a 390px phone", spills.length === 0, spills);
+
+	await go(chatHash);
+	await until("the chat", () => page.$(".composer textarea"));
+	const panelClosed = await navBox();
+	check("on a phone the sidebar is off the screen", panelClosed.left <= -1 || panelClosed.width === 0, panelClosed);
+	check("a menu button stands in for it", await toggleShown());
+	await page.click(".nav-toggle");
+	check("the menu button slides the panel in", await until("panel in", async () => (await navBox()).left === 0 && (await navBox()).shown === "visible", 4000), await navBox());
+	check("…over a scrim, so the page behind is not clickable", !!(await page.$(".nav-scrim")));
+	await shot("phone-nav");
+	await page.keyboard.press("Escape");
+	check("Escape closes the panel", await until("panel out", async () => (await navBox()).left < 0, 4000), await navBox());
+	await page.click(".nav-toggle");
+	await until("panel in again", async () => (await navBox()).left === 0, 4000);
+	await page.evaluate(() => ([...document.querySelectorAll(".side-scroll a.side-item")].find((a) => /Files/.test(a.textContent ?? "")) as HTMLAnchorElement | undefined)?.click());
+	check("following a link navigates and closes the panel", await until("files + closed", async () => /\/files/.test(page.url()) && (await navBox()).left < 0, 8000), { url: page.url(), nav: await navBox() });
+
+	await until("the files table", () => page.$(".files-table tbody tr .fname a"));
+	await page.click(".files-table tbody tr .fname a");
+	const sheet = (await until("the preview", async () => page.$eval(".dialog", (e) => { const r = e.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) }; }), 8000))!;
+	const screen = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
+	check("a dialog is a full-width sheet from the bottom edge", sheet.left === 0 && sheet.right === screen.w && Math.abs(sheet.bottom - screen.h) <= 1 && sheet.top > 0, { sheet, screen });
+	await shot("phone-sheet");
+	await page.keyboard.press("Escape");
+	await until("the sheet closed", async () => !(await page.$(".dialog")), 5000);
+
+	await go(chatHash);
+	await until("the composer", () => page.$(".composer textarea"));
+	const typing = await page.$eval(".composer textarea", (e) => parseFloat(getComputedStyle(e).fontSize));
+	check("the composer is 16px, so iOS does not zoom into it", typing >= 16, typing);
+	const tabsScroll = await page.$eval(".chat-modules", (e) => getComputedStyle(e).overflowX).catch(() => "none");
+	check("many module chips scroll sideways instead of stacking", tabsScroll === "auto", tabsScroll);
+
+	await go(`${chatHash}?module=${modules[0]!.id}`);
+	await until("the module", () => page.$(".gwin"), 15000);
+	const takeover = await page.evaluate(() => ({ chat: getComputedStyle(document.querySelector(".main")!).display, module: getComputedStyle(document.querySelector(".gwin")!).display }));
+	check("a module takes the whole screen on a phone", takeover.chat === "none" && takeover.module !== "none", takeover);
+	await shot("phone-module");
+	await page.evaluate(() => (document.querySelector(".gwin-bar > button:last-child") as HTMLElement | null)?.click());
+	check("its close button comes back to the chat", await until("chat back", async () => !(await page.$(".gwin")) && !!(await page.$(".transcript")), 8000));
+
+	await viewport(768, 1024);
+	await go(`#/w/${ws}`);
+	check("a tablet gets the panel too", (await toggleShown()) && (await navBox()).left < 0, await navBox());
+	const tablet = await sideways();
+	check("…and its pages still fit", tablet.doc <= tablet.view + 1, tablet);
+	await shot("tablet-home");
+
+	await page.evaluate(() => localStorage.setItem("outpost.sidebar", "open"));
+	await viewport(1280, 900);
+	await go(`#/w/${ws}`);
+	const laptop = await navBox();
+	check("a laptop keeps the sidebar in place, with no menu button", (await toggleShown()) === false && laptop.left === 0 && laptop.width > 200, laptop);
+
+	await viewport(844, 390); // a phone on its side: the shortest viewport the app has to survive
+	await go(chatHash);
+	await until("the chat", () => page.$(".composer textarea"));
+	const landscape = await sideways();
+	check("a landscape phone fits without a sideways scroll", landscape.doc <= landscape.view + 1, landscape);
+	const composerInView = await page.$eval(".composer", (e) => { const r = e.getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.height > 40; });
+	check("…and keeps the composer on screen", composerInView);
+	await shot("landscape-chat");
+	await viewport(1280, 900);
 }
 
 // ------------------------------------------------------------------ main

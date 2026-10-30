@@ -52,6 +52,11 @@ export function Login({ onAuthed }: { onAuthed: (u: User) => void }) {
 				</div>
 			</div>
 			<div className="auth-form">
+				{/* On a phone the art panel is hidden, so the mark travels with the form. */}
+				<div className="auth-brand">
+					<img src="/outpost.svg" width="28" height="28" alt="" />
+					<span>Outpost</span>
+				</div>
 				<form onSubmit={submit}>
 					<h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
 					<input className="input" placeholder="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />

@@ -1,0 +1,387 @@
+/* ================================================================== responsive
+   Phones and tablets. Three breakpoints, each named for what changes there rather than for a device:
+
+     1100px  the module needs the whole window (split view stops working)
+      960px  the shell: the sidebar leaves the grid and becomes a panel over the page
+      700px  phone: one column, an app-bar header, sheets instead of centred dialogs
+      520px  narrow: one column everywhere, no side-by-side at all
+
+   Everything here is additive: the desktop layout in the other sheets stays the truth above 960px, and
+   these rules only reach in below it. */
+
+/* ---------------------------------------------------------------- foundations */
+html {
+	/* iOS enlarges text in landscape unless told not to. */
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+/* The browser's own chrome comes and goes on a phone: 100% of a viewport that changes gives you a
+   composer behind the toolbars, dvh does not. */
+@supports (height: 100dvh) {
+	html, body, #root { height: 100dvh; }
+}
+
+/* The navigation toggle only exists where the sidebar does not: each screen puts one in its header. */
+.nav-toggle {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border: 1px solid var(--line-2);
+	border-radius: 10px;
+	background: var(--card);
+	color: var(--text);
+	transition: background .12s, border-color .12s, box-shadow .15s;
+}
+.nav-toggle:hover { border-color: var(--text); }
+.nav-toggle:focus-visible { outline: none; box-shadow: var(--glow); }
+.nav-toggle[aria-expanded="true"] { background: var(--signal-wash); border-color: var(--signal); color: var(--signal-ink); }
+.nav-scrim { display: none; }
+.nav-close { display: none; }
+/* A page under an open panel must not scroll behind it. */
+body.nav-locked { overflow: hidden; }
+
+/* ---------------------------------------------------------------- 1100: the module needs the window */
+@media (max-width: 1100px) {
+	.shell.with-module .main { display: none; }
+}
+
+/* ---------------------------------------------------------------- 960: the sidebar becomes a panel */
+@media (max-width: 960px) {
+	.shell,
+	.shell.with-module,
+	.shell.chat-hidden,
+	.shell.with-module.chat-hidden,
+	.shell.side-collapsed,
+	.shell.side-collapsed.with-module,
+	.shell.side-collapsed.with-module.chat-hidden {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.shell > .sidebar {
+		/* styles.css hides the sidebar outright on small screens; the panel is how it comes back. */
+		display: flex;
+		position: fixed;
+		inset: 0 auto 0 0;
+		z-index: 90;
+		width: min(312px, 88vw);
+		transform: translateX(-100%);
+		visibility: hidden;
+		transition: transform .22s ease, visibility .22s;
+	}
+	.shell.nav-open > .sidebar {
+		transform: none;
+		visibility: visible;
+		box-shadow: 0 0 0 1px #08070f, 30px 0 70px -20px rgba(8, 7, 15, .8);
+	}
+	.shell.side-collapsed > .sidebar { display: flex; } /* the panel is never "hidden" on a phone */
+	.nav-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 89;
+		background: rgba(22, 20, 15, .42);
+		backdrop-filter: blur(1px);
+		animation: fade .16s;
+	}
+	/* "Hide the side panel" is a desktop idea; closing the panel is the phone's exit. */
+	.sidebar .side-hide { display: none; }
+	.sidebar .nav-close { display: grid; }
+	.side-reveal { display: none; }
+	.nav-toggle { display: inline-flex; }
+
+	/* A module opened from a chat takes the window; ✕ in its bar comes back to the chat. */
+	.shell.with-module > .gwin { grid-column: 1; border-left: 0; }
+	.shell > .main[style*="display: flex"] { display: flex; }
+
+	/* Roomy paddings read as waste on a tablet; the content is the point. */
+	.chat-modules { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+	.chat-modules::-webkit-scrollbar { display: none; }
+	.chat-module-link { flex: none; }
+	.page { padding: 26px 20px 56px; }
+	.home-scroll { padding: 26px 20px 56px; }
+	.page h1, .bp-head h1 { font-size: 32px; }
+	.hero h1, .home-head h1 { font-size: 34px; }
+	.hero { margin-top: 5vh; }
+}
+
+/* ---------------------------------------------------------------- 900: the mission body is one column
+   The control room is three columns with two tile rails around the viewer. On anything narrower than a
+   laptop the rails become a single sideways strip above the viewer: an artifact is worth more width
+   than a column of avatars. `.wide` (the avatar rail used for the backlog and preview tabs) needs this
+   most — it is 44px + viewer + 44px, which on a phone leaves the viewer unusable. */
+@media (max-width: 900px) {
+	.mission { grid-template-columns: minmax(0, 1fr); } /* the implicit column sizes to a nowrap title */
+	.mission-body,
+	.mission-body.side,
+	.mission-body.team,
+	.mission-body.wide { grid-template-columns: minmax(0, 1fr) !important; }
+	.mission-body .tiles,
+	.mission-body.wide .tiles {
+		grid-template-columns: none !important;
+		grid-template-rows: none !important;
+		grid-auto-flow: column;
+		grid-auto-columns: 172px;
+		grid-auto-rows: 148px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding-bottom: 4px;
+	}
+	/* the avatar rail keeps its 44px squares, in a row */
+	.mission-body.wide .tiles { grid-auto-columns: 44px; grid-auto-rows: 44px; gap: 8px; }
+	.viewer { min-height: 320px; }
+}
+
+/* ---------------------------------------------------------------- 700: phone */
+@media (max-width: 700px) {
+	/* --- chrome */
+	.topbar { padding: 8px 10px; gap: 6px; min-height: 52px; }
+	.topbar h2 { font-size: 16.5px; }
+	.topbar::after { display: none; }
+	.topbar .btn { padding: 6px 9px; font-size: 12.5px; }
+	.topbar .pill { display: none; }
+	.hide-sm { display: none !important; } /* secondary labels: the icon or the sidebar menu carries it */
+	.chat-modules { padding: 7px 10px; }
+	.chat-modules-label { display: none; }
+	.chat-module-link { max-width: 68vw; }
+	.chat-module-open { display: none; }
+
+	/* --- chat */
+	.transcript { padding: 16px 13px 28px; }
+	.transcript-inner { gap: 14px; }
+	.msg-user { padding-left: 12px; }
+	.msg-user .body { font-size: 15.5px; }
+	.msg-assistant .prose { font-size: 15px; }
+	.prose h1 { font-size: 1.35em; } .prose h2 { font-size: 1.2em; }
+	.prose pre { font-size: 12px; padding: 10px 12px; border-radius: 8px; }
+	.thinking { max-height: 120px; }
+	.hero { margin-top: 3vh; }
+	.hero h1, .home-head h1 { font-size: 30px; }
+	.hero p { font-size: 15px; }
+	.module-hero h1 { font-size: 26px; }
+	.gh-tag { padding: 4px 10px 4px 5px; margin-bottom: 12px; }
+	.suggestions { grid-template-columns: 1fr; gap: 8px; margin-top: 16px; }
+	.suggestion { padding: 11px 12px; }
+	.gh-arrow, .gh-src { display: none; }
+	.proc-head { padding: 8px 10px; }
+	.proc-head .arg { font-size: 11px; }
+
+	/* --- composer: full width, above the home indicator, and big enough not to zoom on focus */
+	.composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
+	.composer { border-radius: 14px; }
+	.composer textarea { font-size: 16px; padding: 12px 13px 4px; max-height: 180px; }
+	.composer .bar { flex-wrap: wrap; gap: 6px; padding: 5px 7px 7px 10px; }
+	.composer select { max-width: 100%; }
+	.status-line { margin-bottom: 6px; padding: 0 2px; font-size: 11px; }
+	.attachments { padding: 8px 8px 0; gap: 6px; }
+	.attachment { max-width: 60vw; }
+
+	/* --- pages */
+	.page { padding: 18px 14px calc(48px + env(safe-area-inset-bottom, 0px)); }
+	.home-scroll { padding: 18px 14px calc(52px + env(safe-area-inset-bottom, 0px)); }
+	.page h1, .bp-head h1 { font-size: 27px; }
+	.home-head h1 { font-size: 28px; }
+	.lede { font-size: 14.5px; }
+	.page-title-row, .home-top { display: flex; align-items: center; gap: 10px; }
+	.page-title-row h1 { margin: 0; }
+	.home-top { margin-bottom: 8px; }
+	.home-top .home-eyebrow { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.home-head h1 { margin-top: 0; }
+	.home-run-head { flex-wrap: wrap; gap: 6px; }
+	.home-run-head .ago { margin-left: 0; }
+	.home-run-meta { max-width: 100%; }
+	.home-side-row { font-size: 13px; }
+	.home-grid, .bp-grid { grid-template-columns: 1fr; gap: 9px; }
+	.home-section { margin-top: 28px; }
+	.bp-head { align-items: center; }
+	.bp-head .btn { padding: 5px 9px; }
+	/* The icon moves beside the name instead of above it: four stacked lines per card made the
+	   catalogue a scroll of two cards per screen. */
+	.bp { padding: 12px 13px; gap: 2px 10px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; }
+	.bp .i { grid-row: 1 / span 2; width: 34px; height: 34px; font-size: 19px; border-radius: 10px; }
+	.bp .n { grid-column: 2; font-size: 16.5px; margin: 0; }
+	.bp .d { grid-column: 2; font-size: 12.5px; line-height: 1.4; }
+	.bp-meta { grid-column: 1 / -1; margin-top: 8px; }
+	.bp-actions { grid-column: 1 / -1; margin-top: 4px; justify-content: flex-end; }
+	.settings-grid { grid-template-columns: 1fr; }
+	.gk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.row.conn-title, .row.bp-head { flex-wrap: wrap; }
+
+	.files-head { align-items: center; }
+	.files-head .lede { margin-bottom: 10px; }
+	.files-count { margin: 0 0 12px; }
+
+	/* --- files: the name and the actions, at a width that fits. A fixed layout is what lets the name
+	   column give way: without it the table keeps its preferred width and pushes the buttons off the
+	   card, which then needs a sideways scroll to reach them. */
+	.files-table { table-layout: fixed; }
+	.files-table th:nth-child(2), .files-table td:nth-child(2),
+	.files-table th:nth-child(3), .files-table td:nth-child(3),
+	.files-table th:nth-child(4), .files-table td:nth-child(4),
+	.files-table th:nth-child(5), .files-table td:nth-child(5),
+	.files-table th:nth-child(6), .files-table td:nth-child(6) { display: none; }
+	.files-table th:first-child, .files-table td:first-child { width: auto; max-width: none !important; }
+	.files-table th:last-child, .files-table td:last-child { width: 124px; }
+	.files-table th, .files-table td { padding: 8px 6px; }
+	.files-table .fname { gap: 8px; }
+	.files-table .fname .ext, .files-table .fname img { width: 26px; height: 26px; font-size: 8px; flex: none; }
+	.files-table td:last-child .btn { padding: 5px 7px; }
+	.files-table td:last-child .btn.small { font-size: 12px; }
+	.files-drop { padding: 16px; }
+
+	/* --- artifacts: one column, the contents list above the document */
+	.artifact { border-radius: 12px; }
+	.artifact-body { max-height: 72vh; }
+	.art-doc { flex-direction: column; gap: 10px; max-height: 74vh; padding: 10px 12px; }
+	.art-toc { flex: 0 0 auto; max-height: 112px; border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 8px; }
+	.art-doc-body { font-size: 14px; }
+	.art-table td { max-width: 62vw; }
+	.art-tools { padding: 6px 8px; }
+	.art-filter, .art-query { flex: 1 1 100%; }
+	.diagram-body { padding: 10px; }
+	.diagram-src { font-size: 11.5px; }
+
+	/* --- module window */
+	.gwin-bar { padding: 7px 9px; gap: 6px; min-height: 50px; flex-wrap: wrap; }
+	.gwin-bar .tabs { order: 3; width: 100%; overflow-x: auto; }
+	.gwin-bar .tabs button { flex: 1 0 auto; padding: 5px 8px; font-size: 12px; }
+	.gwin-bar .title { font-size: 14px; }
+	.code { grid-template-columns: 118px minmax(0, 1fr); }
+	.code .files button { font-size: 11px; }
+
+	/* --- mission control room */
+	.mission-head > *, .mission-body > *, .viewer-body > * { min-width: 0; }
+	.mission-head { flex-wrap: wrap; row-gap: 6px; padding: 8px 12px 10px; }
+	.mission-head .nav-toggle { order: 0; }
+	/* Two lines: the name, then the actions. Sharing one line squeezed the name to "a …". */
+	.ph-title { order: 1; flex: 1 1 100%; max-width: none; }
+	.mission-head > .btn.ph-btn { order: 2; }
+	.ph-actions { order: 3; margin-left: 0; }
+	.ph-actions .btn { flex: 1; justify-content: center; }
+	.ph-kicker { display: none; }        /* mission age and model: the model menu is one tap away */
+	.ph-title h1 { font-size: 18px; margin-top: 0; }
+	.ph-meta { display: none; }
+	.mission-head .btn { font-size: 12px; padding: 6px 9px; }
+	.mission-body { padding: 8px; gap: 8px; }
+	.mission-body.team .viewer { min-height: 60vh; }
+	.agent-tile { animation: none; }
+	.pm-menu { width: min(400px, calc(100vw - 24px)); }
+	.viewer-tabs { padding: 6px 8px 0; }
+	.viewer-tabs a { padding: 6px 9px 8px; font-size: 12.5px; }
+	/* backlog toolbar: the feature chips get their own line instead of being clipped between the
+	   view switch and the count */
+	.bl-toolbar { padding: 10px 12px 6px; gap: 8px; }
+	.bl-features { order: 3; flex: 1 1 100%; }
+	.bl-count { margin-left: auto; }
+	.bl-approval { margin: 10px 12px 0; padding: 10px 12px; }
+	.bl-ap-main { flex-wrap: wrap; }
+	.bl-ap-actions { flex-wrap: wrap; }
+	.dr { grid-template-columns: 1fr; }
+	.dr-list { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+	.dr-list button { flex: none; }
+	.kb { padding: 4px 10px 14px; }
+	.ip { width: min(440px, 100vw); }
+
+	/* --- dialogs become sheets: they grow from the bottom edge where the thumbs are */
+	.dialog, .dialog.mp-dialog, .ask-dialog, .tx-dialog, .bp-sheet {
+		left: 0;
+		right: 0;
+		top: auto;
+		bottom: 0;
+		transform: none;
+		width: auto;
+		max-height: 92dvh;
+		border-radius: 18px 18px 0 0;
+		padding: 18px 15px calc(16px + env(safe-area-inset-bottom, 0px));
+		animation: sheet .22s ease-out;
+	}
+	.dialog.mp-dialog { top: auto; height: min(92dvh, 720px); max-height: 92dvh; }
+	.bp-sheet { padding: 0; }
+	.bp-sheet-body { padding: 14px; }
+	.bp-sheet-head { padding: 14px 14px 10px; gap: 10px; }
+	.bp-sheet-title { font-size: 19px; }
+	.bp-sheet-tabs { padding: 7px 10px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+	.bp-sheet-tabs::-webkit-scrollbar { display: none; }
+	.bp-tab { white-space: nowrap; flex: none; }
+	.bp-sheet-foot { padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); flex-wrap: wrap; }
+	.bp-code { flex-direction: column; min-height: 0; }
+	.bp-code-list { flex: 0 0 auto; flex-direction: row; overflow-x: auto; }
+	.bp-code-file { flex: none; }
+	.bp-source { max-height: 46vh; }
+	.dialog h2 { font-size: 20px; }
+	.ask-title { font-size: 18px; }
+	.ask-actions { gap: 10px; }
+	.ask-actions .btn { flex: 1; justify-content: center; }
+	/* 16px keeps iOS from zooming into the field and never zooming back out. */
+	.dialog .input, .ask-input, .dialog select, .dialog textarea { font-size: 16px; }
+	.tx-dialog .btn { flex: 1; justify-content: center; }
+	.mp-dialog .mp-list { min-height: 120px; }
+	.mp-model { padding-left: 14px; }
+
+	/* --- export/import, resources, preview dialogs */
+	.drawer { width: 100vw; }
+	.preview { font-size: 11.5px; max-height: 52vh; }
+	.parsed-body { max-height: 52vh; }
+	.toasts { left: 10px; right: 10px; width: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+	.offline-banner { top: 8px; max-width: calc(100vw - 16px); padding: 8px 8px 8px 12px; }
+	.update-banner { top: 8px; max-width: calc(100vw - 16px); flex-wrap: wrap; }
+	.oauth-code { font-size: 21px; }
+	@keyframes sheet { from { transform: translateY(26px); opacity: 0; } }
+}
+
+/* ---------------------------------------------------------------- 520: narrow */
+/* The login art panel is desktop-only; the form carries the mark instead. */
+.auth-brand { display: none; }
+@media (max-width: 760px) {
+	.auth-form { align-content: center; padding: 28px 20px calc(28px + env(safe-area-inset-bottom, 0px)); gap: 6px; }
+	.auth-brand { display: flex; align-items: center; gap: 9px; width: min(360px, 100%); margin: 0 auto 14px; font: 600 20px/1 var(--display); letter-spacing: -0.01em; }
+	.auth-form .input { font-size: 16px; }
+	.auth-form h2 { font-size: 30px; }
+}
+@media (max-width: 520px) {
+	.auth-form { padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px)); }
+	.gk-grid { grid-template-columns: 1fr; }
+	.home-actions .btn { flex: 1 1 calc(50% - 4px); justify-content: center; }
+	.side-item { padding: 8px 8px; }
+	.transcript-inner { gap: 12px; }
+	.files-table th:last-child, .files-table td:last-child { padding-right: 4px; }
+	.mp-tags { display: none; }
+	.column-hidden-narrow { display: none; }
+}
+
+/* ---------------------------------------------------------------- touch
+   No hover means every hover-only affordance has to be visible, and every target worth a thumb. */
+@media (hover: none) {
+	.btn { padding: 8px 12px; }
+	.btn.small { padding: 7px 10px; }
+	.tabs button, .tab, .bp-tab { padding: 7px 11px; }
+	.side-item { padding: 9px 9px; }
+	.side-item .ago { font-size: 10px; }
+	.row-menu button { padding: 10px 11px; }
+	.side-hide, .nav-toggle { width: 38px; height: 38px; }
+	.nav-toggle { width: 36px; height: 36px; }
+	.artifact-toggle { padding: 6px 4px; }
+	.jn-copy { opacity: 1; }
+	.art-toc-item { padding: 8px 7px; }
+	.diagram-btn { padding: 7px 9px; }
+	.files-table td { padding: 10px 8px; }
+	/* Inputs at 16px: iOS zooms the page into anything smaller and does not come back out. */
+	.input, .composer textarea, .art-filter, .art-query { font-size: 16px; }
+	.composer textarea { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.shell > .sidebar { transition: none; }
+	.nav-scrim, .dialog, .bp-sheet { animation: none; }
+}
+
+/* Landscape phones: the header eats the screen, so the chat's hero steps aside. */
+@media (max-height: 480px) and (orientation: landscape) {
+	.hero { margin-top: 0; }
+	.hero h1 { font-size: 26px; }
+	.suggestions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.composer textarea { max-height: 96px; }
+	.transcript { padding-top: 12px; }
+}

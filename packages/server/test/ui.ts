@@ -1081,6 +1081,10 @@ async function archivedChatsAndDialogs(ws: string) {
 
 	await until("the files table", () => page.$(".files-table tbody tr .fname a"));
 	await page.click(".files-table tbody tr .fname a");
+	// The sheet slides up from the bottom edge; measure where it lands, not where it was mid-flight
+	// (a slow runner finished the assertion while the 26px entry animation was still running).
+	await until("the preview", () => page.$(".dialog"), 8000);
+	await page.evaluate(() => document.getAnimations().forEach((a) => a.finish()));
 	const sheet = (await until("the preview", async () => page.$eval(".dialog", (e) => { const r = e.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) }; }), 8000))!;
 	const screen = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
 	check("a dialog is a full-width sheet from the bottom edge", sheet.left === 0 && sheet.right === screen.w && Math.abs(sheet.bottom - screen.h) <= 1 && sheet.top > 0, { sheet, screen });

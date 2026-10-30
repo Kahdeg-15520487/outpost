@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ConnectionsPage } from "./Connections";
 import { exportModule } from "./Transfer";
 import { api, type Module, type ModelInfo, type ModelRef, type User, type Workspace } from "../api";
@@ -51,6 +51,51 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const [managingModels, setManagingModels] = useState(false);
 	const [newMission, setNewMission] = useState(false);
 	const [drawer, setDrawer] = useState(false);
+	/**
+	 * On a phone the chat and its module share the screen: the module on top, the chat below, with a
+	 * divider you can drag. The ratio is remembered; on a wide window it is ignored (the columns are
+	 * side by side there, and the rows are not used at all).
+	 */
+	const [split, setSplit] = useState(() => {
+		const saved = Number(localStorage.getItem("outpost.split"));
+		return Number.isFinite(saved) && saved >= 25 && saved <= 80 ? saved : 55;
+	});
+	const shellRef = useRef<HTMLDivElement>(null);
+	const splitValue = useRef(split);
+	const startSplit = (e: React.PointerEvent<HTMLDivElement>) => {
+		const shell = shellRef.current;
+		if (!shell) return;
+		e.preventDefault();
+		const handle = e.currentTarget;
+		handle.setPointerCapture(e.pointerId);
+		const box = shell.getBoundingClientRect();
+		const move = (ev: PointerEvent) => {
+			const pct = Math.round(Math.min(80, Math.max(25, ((ev.clientY - box.top) / box.height) * 100)));
+			splitValue.current = pct;
+			setSplit(pct);
+		};
+		const up = () => {
+			localStorage.setItem("outpost.split", String(splitValue.current));
+			removeEventListener("pointermove", move);
+			removeEventListener("pointerup", up);
+			removeEventListener("pointercancel", up);
+		};
+		addEventListener("pointermove", move);
+		addEventListener("pointerup", up);
+		addEventListener("pointercancel", up);
+	};
+	/** Arrow keys on the divider: the same five-point steps a keyboard user expects from a splitter. */
+	const nudgeSplit = (e: React.KeyboardEvent) => {
+		const step = e.key === "ArrowUp" ? -5 : e.key === "ArrowDown" ? 5 : 0;
+		if (!step) return;
+		e.preventDefault();
+		setSplit((cur) => {
+			const next = Math.min(80, Math.max(25, cur + step));
+			localStorage.setItem("outpost.split", String(next));
+			splitValue.current = next;
+			return next;
+		});
+	};
 	/** The sidebar can be tucked away; the choice is remembered per browser. */
 	const [collapsed, setCollapsed] = useState(() => localStorage.getItem("outpost.sidebar") === "collapsed");
 	/** Sidebar sections fold away; the choice is remembered per browser, like the sidebar itself. */
@@ -181,7 +226,10 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 	const canEdit = ws?.role !== "viewer";
 
 	return (
-		<div className={`shell ${moduleOpen ? "with-module" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""} ${navOpen ? "nav-open" : ""}`}>
+		<div
+			ref={shellRef}
+			style={{ ["--split-pct" as string]: `${split}%` }}
+			className={`shell ${moduleOpen ? "with-module" : ""} ${chatHidden ? "chat-hidden" : ""} ${collapsed ? "side-collapsed" : ""} ${navOpen ? "nav-open" : ""}`}>
 			{navOpen && <div className="nav-scrim" onClick={() => nav.set(false)} aria-hidden="true" />}
 			<aside className="sidebar" id="outpost-nav" aria-label="Workspace navigation">
 				<div className="brand">
@@ -435,6 +483,21 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
 			)}
 
 			{route.page === "chat" && ws && <ChatView key={`${ws.id}:${chatId ?? ""}`} ws={ws} chatId={chatId} relatedModules={relatedModules} modules={[...modules, ...archived]} files={docs.files.files} chats={docs.chats.chats} models={models} defaultModel={defaultModel} grants={docs.grants} openModule={route.module} module={modules.find((g) => g.id === route.module)} picker={picker} onManageModels={() => setManagingModels(true)} onNewChat={newChat} />}
+			{route.page === "chat" && ws && route.module && !chatHidden && (
+				<div
+					className="shell-split"
+					role="separator"
+					aria-orientation="horizontal"
+					aria-label="Resize the module and the chat"
+					aria-valuenow={split}
+					aria-valuemin={25}
+					aria-valuemax={80}
+					tabIndex={0}
+					onPointerDown={startSplit}
+					onKeyDown={nudgeSplit}
+					title="Drag to resize; arrow keys work too"
+				/>
+			)}
 			{route.page === "chat" && ws && route.module && (
 				<ModuleWindow key={route.module} moduleId={route.module} user={user} grants={docs.grants} tabRequest={tabRequest?.module === route.module ? tabRequest : undefined}
 					chatHidden={chatHidden}

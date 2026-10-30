@@ -43,12 +43,29 @@ choice is kept in `localStorage`, per browser. Archived is the one that starts f
 
 ## The module window
 
-A module opened from a chat covers the window on a phone instead of splitting it. The chat is hidden
-but stays mounted, so drafts, scroll position and a running agent survive the trip. The ✕ in the
-module's bar comes back to the chat; the tab strip wraps to a second row and scrolls.
+On a phone or a tablet a module opened from a chat **shares the screen with it**: the module on top,
+the chat underneath, a divider between them. The chat half stays live — you can read the transcript
+and type while watching the module change — and the divider can be dragged (or moved with the arrow
+keys) to favour either side; the ratio is remembered per browser.
 
-Module *content* is the module's own business: a blueprint written for a wide screen will still look
-wide inside a 390px frame. The chrome adapts; what runs in the frame is up to whoever wrote it.
+*Chat* in the module's bar gives the module the whole window, and tapping it again brings the split
+back. The ✕ comes back to the chat. The chat's chip strip is hidden while a module is open — the
+module is right there, and the sidebar lists the rest.
+
+### Module content keeps its desktop shape
+
+Modules are written for a desktop window, so a 390px frame would reflow them into a column two
+characters wide. Instead the frame is **laid out at 780 CSS pixels and scaled down** to the width it
+actually has: the module keeps the layout it was designed with, at about half size, and pinch-zoom
+brings it close enough to read. It only scales when the frame is meaningfully narrower than that
+(below 663px) — a tablet gets the module at 1:1.
+
+**Desktop** in the bar toggles between the two: pressed, the desktop layout scaled to fit; otherwise
+the module fills the width and lays itself out, which is the right choice for anything already
+responsive. The choice is remembered.
+
+Nothing in the frame is rewritten to make this work: it is the module's own viewport, so its media
+queries see 780px and its `position: fixed` elements anchor to itself.
 
 ## Dialogs and drawers
 
@@ -84,7 +101,9 @@ measures the largest viewport — a sheet sized with it hides its footer behind 
   following a link closes it too;
 - a dialog is a full-width sheet whose bottom edge is the viewport's;
 - the composer's font-size is ≥ 16px and a long list of module chips scrolls rather than stacks;
-- a module covers the window, and its close button returns to the chat;
+- a module opens as half the screen with the chat below it and a divider between, its frame laid out
+  wider than the screen and scaled to fit; *Chat* gives it the whole window and splits it again, and
+  its ✕ returns to the chat;
 - a laptop keeps the sidebar in place with no menu button.
 
 `SHOTS=<dir>` saves the screenshots these checks take, if you want to look at them.

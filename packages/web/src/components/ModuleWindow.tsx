@@ -50,7 +50,7 @@ export function ModuleWindow({
 	 */
 	const frameBox = useRef<HTMLDivElement>(null);
 	const [fit, setFit] = useState(() => localStorage.getItem("outpost.frame") === "fit");
-	const [view, setView] = useState({ width: 0, height: 0, scale: 1 });
+	const [view, setView] = useState({ width: 0, height: 0, scale: 1, narrow: false });
 	useEffect(() => {
 		const box = frameBox.current;
 		if (!box || tab !== "app") return;
@@ -58,9 +58,12 @@ export function ModuleWindow({
 			const width = box.clientWidth;
 			const height = box.clientHeight;
 			if (!width || !height) return;
-			const virtual = window.innerWidth <= 960 && !fit ? Math.max(width, PHONE_FRAME) : width;
+			const narrow = window.innerWidth <= 960;
+			// No point squishing a frame that is nearly the design width anyway: below a fifth short,
+			// let the module reflow and keep it at 100%.
+			const virtual = narrow && !fit && width < PHONE_FRAME * 0.85 ? PHONE_FRAME : width;
 			const scale = width / virtual;
-			setView({ width: virtual, height: Math.round(height / scale), scale });
+			setView({ width: virtual, height: Math.round(height / scale), scale, narrow });
 		};
 		const observer = new ResizeObserver(measure);
 		observer.observe(box);
@@ -183,8 +186,10 @@ export function ModuleWindow({
 						💬 Chat
 					</button>
 				)}
-				{view.scale < 0.98 && (
-					<button className={`btn small gwin-fit ${fit ? "on" : ""}`} onClick={() => setFrameMode(!fit)} aria-pressed={fit} title={fit ? "Scale the module's desktop layout to fit, instead of reflowing it" : "Let the module fill the width and lay itself out"}>
+				{view.narrow && (
+					// A toggle between the two ways of showing a module on a phone: its own layout at the
+					// screen's width, or the width it was designed for scaled down to fit.
+					<button className={`btn small gwin-fit ${fit ? "" : "on"}`} onClick={() => setFrameMode(!fit)} aria-pressed={!fit} title={fit ? "Scale the desktop layout to fit, instead of reflowing it" : "Let the module fill the width and lay itself out"}>
 						{fit ? "Fit" : "Desktop"}
 					</button>
 				)}

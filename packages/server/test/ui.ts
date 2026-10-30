@@ -1101,9 +1101,34 @@ async function archivedChatsAndDialogs(ws: string) {
 
 	await go(`${chatHash}?module=${modules[0]!.id}`);
 	await until("the module", () => page.$(".gwin"), 15000);
-	const takeover = await page.evaluate(() => ({ chat: getComputedStyle(document.querySelector(".main")!).display, module: getComputedStyle(document.querySelector(".gwin")!).display }));
-	check("a module takes the whole screen on a phone", takeover.chat === "none" && takeover.module !== "none", takeover);
-	await shot("phone-module");
+	// A module opens as half the phone: the module on top, the chat you were in below, a divider you
+	// can drag. "Chat" in its bar still gives it the whole screen.
+	// (no helper functions inside page.evaluate: the transpiler names them and the name does not exist
+	// in the page)
+	const shared = await page.evaluate(() => {
+		const box = document.querySelector(".gwin")!.getBoundingClientRect();
+		const chat = document.querySelector(".main")!.getBoundingClientRect();
+		const divider = document.querySelector(".shell-split")!.getBoundingClientRect();
+		const frame = document.querySelector(".gwin-frame iframe") as HTMLIFrameElement;
+		return {
+			module: [Math.round(box.top), Math.round(box.bottom)],
+			chat: [Math.round(chat.top), Math.round(chat.bottom)],
+			divider: Math.round(divider.height),
+			layout: frame.offsetWidth,
+			shown: Math.round(frame.getBoundingClientRect().width),
+			transform: getComputedStyle(frame).transform,
+			view: innerHeight,
+		};
+	});
+	check("a module and its chat share the screen on a phone, module above", shared.module[1] <= shared.chat[0] && shared.chat[1] >= shared.view - 2, shared);
+	check("…with a divider between them to drag", shared.divider >= 6, shared);
+	check("…and the module is laid out at a desktop width, scaled to fit", shared.layout > shared.shown + 100 && /^matrix\(0?\.\d/.test(shared.transform), shared);
+	await shot("phone-split");
+	await page.evaluate(() => (document.querySelector(".gwin-chat") as HTMLElement | null)?.click());
+	check("Chat in the module bar gives it the whole screen", await until("full screen", async () => (await page.evaluate(() => getComputedStyle(document.querySelector(".main")!).display)) === "none", 5000));
+	await shot("phone-module-full");
+	await page.evaluate(() => (document.querySelector(".gwin-chat") as HTMLElement | null)?.click());
+	check("…and tapping it again splits the screen again", await until("split again", async () => (await page.evaluate(() => getComputedStyle(document.querySelector(".main")!).display)) !== "none", 5000));
 	await page.evaluate(() => (document.querySelector(".gwin-bar > button:last-child") as HTMLElement | null)?.click());
 	check("its close button comes back to the chat", await until("chat back", async () => !(await page.$(".gwin")) && !!(await page.$(".transcript")), 8000));
 

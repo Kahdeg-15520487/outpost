@@ -40,6 +40,9 @@ html {
 .nav-toggle:focus-visible { outline: none; box-shadow: var(--glow); }
 .nav-toggle[aria-expanded="true"] { background: var(--signal-wash); border-color: var(--signal); color: var(--signal-ink); }
 .nav-scrim { display: none; }
+/* The splitter only exists where the layout is stacked; on a wide window the chat and the module are
+   columns, and a fourth grid child would open an implicit column. */
+.shell-split { display: none; }
 .nav-close { display: none; }
 /* A page under an open panel must not scroll behind it. */
 body.nav-locked { overflow: hidden; }
@@ -93,10 +96,40 @@ body.nav-locked { overflow: hidden; }
 	.nav-toggle { display: inline-flex; }
 
 	/* A module opened from a chat takes the window; ✕ in its bar comes back to the chat. */
-	.shell.with-module > .gwin { grid-column: 1; border-left: 0; }
+
 	.shell > .main[style*="display: flex"] { display: flex; }
 
 	/* Roomy paddings read as waste on a tablet; the content is the point. */
+	/* The chat and its module share the screen: module on top, chat underneath, a divider between
+	   them that you can drag (arrow keys work too). "Chat" in the module bar still gives it the whole
+	   window when you want to look at it properly. */
+	.shell.with-module {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(0, var(--split-pct, 55%)) 10px minmax(0, 1fr);
+	}
+	.shell.with-module > .gwin { grid-column: 1; grid-row: 1; min-height: 0; border-left: 0; border-bottom: 1px solid var(--line-2); }
+	.shell.with-module > .main { grid-column: 1; grid-row: 3; display: flex; min-height: 0; }
+	.shell.with-module > .shell-split { grid-column: 1; grid-row: 2; }
+	/* With a module on screen the chip strip is redundant — the module is right there, and the
+	   sidebar lists the rest — and it costs the chat 90px of a 360px half. */
+	.shell.with-module .chat-modules { display: none; }
+	.shell.with-module.chat-hidden { grid-template-rows: minmax(0, 1fr) 0 0; }
+	.shell.with-module.chat-hidden > .shell-split,
+	.shell.with-module.chat-hidden > .main { display: none; }
+	.shell-split {
+		display: grid;
+		place-items: center;
+		background: var(--paper-2);
+		border-block: 1px solid var(--line-2);
+		cursor: row-resize;
+		touch-action: none;
+	}
+	.shell-split::after { content: ""; width: 46px; height: 4px; border-radius: 4px; background: var(--line-2); transition: background .12s, width .12s; }
+	.shell-split:hover::after, .shell-split:focus-visible::after { background: var(--signal); width: 64px; }
+	.shell-split:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+	body.resizing-split { cursor: row-resize; user-select: none; }
+	body.resizing-split iframe { pointer-events: none; }
+
 	.chat-modules { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 	.chat-modules::-webkit-scrollbar { display: none; }
 	.chat-module-link { flex: none; }
@@ -244,9 +277,13 @@ body.nav-locked { overflow: hidden; }
 	.diagram-src { font-size: 11.5px; }
 
 	/* --- module window */
-	.gwin-bar { padding: 7px 9px; gap: 6px; min-height: 50px; flex-wrap: wrap; }
-	.gwin-bar .tabs { order: 3; width: 100%; overflow-x: auto; }
-	.gwin-bar .tabs button { flex: 1 0 auto; padding: 5px 8px; font-size: 12px; }
+	/* Every pixel the bar takes comes out of the module: one line of title, tabs on a short second
+	   row, and the role/workspace subtitle dropped (it is in the Access and Share tabs). */
+	.gwin-bar { padding: 6px 8px; gap: 5px; min-height: 46px; flex-wrap: wrap; }
+	.gwin-bar .grow .mono { display: none; }
+	.gwin-bar .gwin-fit, .gwin-bar .gwin-chat { padding: 5px 8px; font-size: 12px; }
+	.gwin-bar .tabs { order: 3; width: 100%; overflow-x: auto; padding: 2px; gap: 2px; }
+	.gwin-bar .tabs button { flex: 1 0 auto; padding: 4px 8px; font-size: 11.5px; }
 	.gwin-bar .title { font-size: 14px; }
 	.code { grid-template-columns: 118px minmax(0, 1fr); }
 	.code .files button { font-size: 11px; }
@@ -359,6 +396,7 @@ body.nav-locked { overflow: hidden; }
 	.tabs button, .tab, .bp-tab { padding: 7px 11px; }
 	.side-item { padding: 9px 9px; }
 	.side-section-toggle { padding: 8px 0; } /* a label you tap to fold needs a thumb's worth of height */
+	.shell.with-module { grid-template-rows: minmax(0, var(--split-pct, 55%)) 14px minmax(0, 1fr); } /* a divider you can catch with a thumb */
 	.side-item .ago { font-size: 10px; }
 	.row-menu button { padding: 10px 11px; }
 	.side-hide, .nav-toggle { width: 38px; height: 38px; }

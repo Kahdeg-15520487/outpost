@@ -11,7 +11,7 @@ layout is the layout; below them the same DOM rearranges itself.
 
 | Width | What changes | Why there |
 |---|---|---|
-| ≤ 1100px | A module opened beside a chat takes the window; the chat stays mounted behind it | Three columns no longer leave a usable module |
+| ≤ 1100px | The chat and its module stack: module on top, chat underneath, a draggable divider between them | Three columns stop fitting (250 + 380 + 420 is 1050 before gaps), and hiding the chat lost the conversation the module was opened from |
 | ≤ 960px | The sidebar leaves the grid and becomes a panel over the page; every screen grows a menu button in its header; page padding tightens; a module takes the whole window | A 250px sidebar plus content is not a tablet |
 | ≤ 700px | One column everywhere; dialogs become bottom sheets; the team becomes a sideways strip; files table drops to name + actions; the composer sits above the home indicator | A phone in portrait |
 | ≤ 520px | Everything that was still side-by-side stacks | A narrow phone |
@@ -123,3 +123,7 @@ the layout viewport shrink with the keyboard on Android instead of hiding the co
 - a laptop keeps the sidebar in place with no menu button.
 
 `SHOTS=<dir>` saves the screenshots these checks take, if you want to look at them.
+
+There is a second, narrower layer for this specifically: `pnpm test:responsive` (Playwright, one
+project per device class, pixel baselines) — see [testing.md](testing.md#the-responsive-suite-playwright).
+It is the layer that caught the sidebar column overlapping the chat between 960px and 1100px.

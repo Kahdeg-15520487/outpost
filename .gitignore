@@ -41,3 +41,8 @@ screenshots/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# responsive suite: the saved session and its output (baselines ARE committed)
+packages/server/test/responsive/.auth.json
+playwright-report/
+test-results/

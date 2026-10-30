@@ -137,7 +137,7 @@ export function ChatView(props: {
 				</h2>
 				<span className="grow" />
 				{chatId && (
-					<button className="btn small" onClick={() => setResources(true)} title="Introduce this chat's agent to external resources">
+					<button className="btn small" onClick={() => setResources(true)} title="Introduce this chat's agent to external resources" aria-label="Resources">
 						<span aria-hidden="true">🔑</span>
 						<span className="hide-sm">Resources{chatGrants.length ? ` · ${chatGrants.length}` : ""}</span>
 					</button>

@@ -63,6 +63,7 @@ Outpost reads one file, `outpost.config.json` in the directory you start it from
 ```bash
 pnpm test                                        # build + typecheck + 23 suites (~4 min)
 pnpm --filter @outpost/server test -- build ui   # just some suites
+pnpm test:responsive                             # Playwright: desktop, laptop, tablet, phone
 ```
 
 Each suite gets a throwaway data directory, its own config and the offline demo model, so it never

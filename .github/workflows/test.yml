@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: "Re-take the responsive pixel baselines and upload them (then download and commit)"
+        type: boolean
+        default: false
 
 concurrency:
   group: test-${{ github.ref }}
@@ -36,3 +41,48 @@ jobs:
       # Build, typecheck, then every suite: teams, build (M4/M5), smoke, render + ui (headless Chrome,
       # preinstalled on GitHub's runners). No API keys: everything runs on the offline demo model.
       - run: pnpm test
+
+  responsive:
+    name: responsive suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Playwright's own Chromium, so the device descriptors (viewport, DPR, touch) behave as intended.
+      - run: pnpm exec playwright install --with-deps chromium
+
+      # The structural layer runs everywhere. The pixel layer is opt-in: baselines are per platform
+      # (font rendering differs), so it only runs where a baseline set exists — see docs/testing.md.
+      - name: layout, every device project
+        run: pnpm test:responsive
+
+      - name: pixel baselines (linux)
+        if: matrix.os == 'ubuntu-latest' && (inputs.update_snapshots || vars.RESPONSIVE_SNAPSHOTS == '1')
+        env:
+          RESPONSIVE_SNAPSHOTS: "1"
+        run: pnpm test:responsive ${{ inputs.update_snapshots && '--update-snapshots' || '' }} --project=desktop --project=laptop --project=tablet --project=phone
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: responsive-${{ matrix.os }}
+          path: |
+            playwright-report
+            packages/server/test/responsive/__snapshots__
+          retention-days: 14

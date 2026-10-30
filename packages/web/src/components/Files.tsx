@@ -102,7 +102,7 @@ export function FilesPage({ ws, files, modules }: { ws: Workspace; files: Record
 				</td>
 				<td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
 					{canEdit && (
-						<button className="btn small" disabled={asking === f.id} onClick={() => ask(f)} title="Start a chat with this file attached">
+						<button className="btn small" disabled={asking === f.id} onClick={() => ask(f)} title="Start a chat with this file attached" aria-label="Ask the agent about this file">
 							{asking === f.id ? "…" : (
 								<>
 									<span aria-hidden="true">🤖</span>

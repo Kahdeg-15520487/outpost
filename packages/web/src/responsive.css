@@ -47,9 +47,42 @@ html {
 /* A page under an open panel must not scroll behind it. */
 body.nav-locked { overflow: hidden; }
 
-/* ---------------------------------------------------------------- 1100: the module needs the window */
+/* ---------------------------------------------------------------- 1100: the module and the chat stack
+   Below this width three columns stop fitting (a 250px sidebar plus a 380px chat plus a 420px module
+   is 1050 before gaps), and hiding the chat was the old answer: you lost the conversation you opened
+   the module from. They now share the window — module on top, chat underneath, a divider between —
+   which is the same thing a phone does. */
 @media (max-width: 1100px) {
-	.shell.with-module .main { display: none; }
+	/* Two columns: the sidebar keeps its column and the module and chat stack in the second one. The
+	   sidebar only leaves the grid below 960px, where it becomes the panel; the rules in that block
+	   collapse this to a single column and the sidebar, being fixed, is out of the way. */
+	.shell.with-module {
+		grid-template-columns: 252px minmax(0, 1fr);
+		grid-template-rows: minmax(0, var(--split-pct, 55%)) 10px minmax(0, 1fr);
+	}
+	.shell.with-module > .sidebar { grid-column: 1; grid-row: 1 / -1; }
+	.shell.with-module > .gwin { grid-column: 2; grid-row: 1; min-height: 0; border-left: 0; border-bottom: 1px solid var(--line-2); }
+	.shell.with-module > .main { grid-column: 2; grid-row: 3; display: flex; min-height: 0; }
+	.shell.with-module > .shell-split { grid-column: 2; grid-row: 2; }
+	/* With a module on screen the chip strip is redundant — the module is right there, and the sidebar
+	   lists the rest — and it costs the chat a tenth of its half. */
+	.shell.with-module .chat-modules { display: none; }
+	.shell.with-module.chat-hidden { grid-template-rows: minmax(0, 1fr) 0 0; }
+	.shell.with-module.chat-hidden > .shell-split,
+	.shell.with-module.chat-hidden > .main { display: none; }
+	.shell-split {
+		display: grid;
+		place-items: center;
+		background: var(--paper-2);
+		border-block: 1px solid var(--line-2);
+		cursor: row-resize;
+		touch-action: none;
+	}
+	.shell-split::after { content: ""; width: 46px; height: 4px; border-radius: 4px; background: var(--line-2); transition: background .12s, width .12s; }
+	.shell-split:hover::after, .shell-split:focus-visible::after { background: var(--signal); width: 64px; }
+	.shell-split:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+	body.resizing-split { cursor: row-resize; user-select: none; }
+	body.resizing-split iframe { pointer-events: none; }
 }
 
 /* ---------------------------------------------------------------- 960: the sidebar becomes a panel */
@@ -80,6 +113,10 @@ body.nav-locked { overflow: hidden; }
 		box-shadow: 0 0 0 1px #08070f, 30px 0 70px -20px rgba(8, 7, 15, .8);
 	}
 	.shell.side-collapsed > .sidebar { display: flex; } /* the panel is never "hidden" on a phone */
+	/* The stacked module and chat fill the single column: the sidebar is a fixed panel here. */
+	.shell.with-module > .gwin,
+	.shell.with-module > .main,
+	.shell.with-module > .shell-split { grid-column: 1; }
 	.nav-scrim {
 		display: block;
 		position: fixed;
@@ -97,38 +134,8 @@ body.nav-locked { overflow: hidden; }
 
 	/* A module opened from a chat takes the window; ✕ in its bar comes back to the chat. */
 
-	.shell > .main[style*="display: flex"] { display: flex; }
 
 	/* Roomy paddings read as waste on a tablet; the content is the point. */
-	/* The chat and its module share the screen: module on top, chat underneath, a divider between
-	   them that you can drag (arrow keys work too). "Chat" in the module bar still gives it the whole
-	   window when you want to look at it properly. */
-	.shell.with-module {
-		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: minmax(0, var(--split-pct, 55%)) 10px minmax(0, 1fr);
-	}
-	.shell.with-module > .gwin { grid-column: 1; grid-row: 1; min-height: 0; border-left: 0; border-bottom: 1px solid var(--line-2); }
-	.shell.with-module > .main { grid-column: 1; grid-row: 3; display: flex; min-height: 0; }
-	.shell.with-module > .shell-split { grid-column: 1; grid-row: 2; }
-	/* With a module on screen the chip strip is redundant — the module is right there, and the
-	   sidebar lists the rest — and it costs the chat 90px of a 360px half. */
-	.shell.with-module .chat-modules { display: none; }
-	.shell.with-module.chat-hidden { grid-template-rows: minmax(0, 1fr) 0 0; }
-	.shell.with-module.chat-hidden > .shell-split,
-	.shell.with-module.chat-hidden > .main { display: none; }
-	.shell-split {
-		display: grid;
-		place-items: center;
-		background: var(--paper-2);
-		border-block: 1px solid var(--line-2);
-		cursor: row-resize;
-		touch-action: none;
-	}
-	.shell-split::after { content: ""; width: 46px; height: 4px; border-radius: 4px; background: var(--line-2); transition: background .12s, width .12s; }
-	.shell-split:hover::after, .shell-split:focus-visible::after { background: var(--signal); width: 64px; }
-	.shell-split:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
-	body.resizing-split { cursor: row-resize; user-select: none; }
-	body.resizing-split iframe { pointer-events: none; }
 
 	.chat-modules { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 	.chat-modules::-webkit-scrollbar { display: none; }

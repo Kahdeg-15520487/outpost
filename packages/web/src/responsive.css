@@ -15,11 +15,11 @@ html {
 	-webkit-text-size-adjust: 100%;
 	text-size-adjust: 100%;
 }
-/* The browser's own chrome comes and goes on a phone: 100% of a viewport that changes gives you a
-   composer behind the toolbars, dvh does not. */
-@supports (height: 100dvh) {
-	html, body, #root { height: 100dvh; }
-}
+/* The height of the app is not a chain of percentages any more: #root is fixed to the viewport (see
+   styles.css). `dvh` was doing that job and depended on the browser agreeing with itself about the
+   dynamic viewport — in one session it reported less than the window and the whole app stopped
+   halfway down the screen. */
+.shell { height: 100%; }
 
 /* The navigation toggle only exists where the sidebar does not: each screen puts one in its header. */
 .nav-toggle {

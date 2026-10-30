@@ -67,8 +67,14 @@ export function ModuleWindow({
 		};
 		const observer = new ResizeObserver(measure);
 		observer.observe(box);
+		// A window that changes width without the box changing size (a desktop window, a DevTools
+		// emulation) still needs the frame re-measured: the scale depends on innerWidth too.
+		addEventListener("resize", measure);
 		measure();
-		return () => observer.disconnect();
+		return () => {
+			observer.disconnect();
+			removeEventListener("resize", measure);
+		};
 	}, [tab, fit]);
 	const setFrameMode = (next: boolean) => {
 		localStorage.setItem("outpost.frame", next ? "fit" : "desktop");

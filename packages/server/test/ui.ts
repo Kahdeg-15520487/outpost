@@ -1178,6 +1178,44 @@ async function archivedChatsAndDialogs(ws: string) {
 	const composerInView = await page.$eval(".composer", (e) => { const r = e.getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.height > 40; });
 	check("…and keeps the composer on screen", composerInView);
 	await shot("landscape-chat");
+
+	// The app owns the window. It used to inherit its height through html/body/#root, which left a
+	// whole session showing a short app above a screenful of empty paper.
+	console.log("the window is the app");
+	await viewport(1440, 947);
+	await page.evaluate(() => localStorage.setItem("outpost.sidebar", "open"));
+	await go(`#/w/${ws}`);
+	const filled = () =>
+		page.evaluate(() => ({
+			inner: innerHeight,
+			root: Math.round(document.getElementById("root")!.getBoundingClientRect().height),
+			shell: Math.round(document.querySelector(".shell")!.getBoundingClientRect().height),
+			doc: document.documentElement.scrollHeight,
+		}));
+	const full = await filled();
+	check("the app fills the window", full.shell === full.inner && full.root === full.inner, full);
+	await page.evaluate(() => {
+		document.documentElement.style.height = "auto";
+		document.body.style.height = "auto";
+	});
+	const shortened = await filled();
+	check("…even when html and body heights are broken from outside", shortened.shell === shortened.inner, shortened);
+	check("…and the page itself never scrolls", shortened.doc === shortened.inner, shortened);
+	await page.evaluate(() => {
+		document.documentElement.style.height = "";
+		document.body.style.height = "";
+	});
+
+	// A phone-sized frame kept its 0.5 scale after the window grew: a half-size module with its own
+	// scrollbars on a desktop window. The frame is re-measured when the window resizes.
+	await viewport(390, 844);
+	await go(`${chatHash}?module=${modules[0]!.id}`);
+	await until("the module frame", () => page.$(".gwin-frame iframe"), 15000);
+	const small = await page.$eval(".gwin-frame iframe", (f) => ({ width: f.offsetWidth, transform: getComputedStyle(f).transform }));
+	await viewport(1440, 947);
+	await new Promise((r) => setTimeout(r, 700));
+	const grown = await page.$eval(".gwin-frame iframe", (f) => ({ width: f.offsetWidth, transform: getComputedStyle(f).transform, box: Math.round(f.parentElement!.getBoundingClientRect().width) }));
+	check("a module frame is re-measured when the window grows", grown.transform === "none" && Math.abs(grown.width - grown.box) <= 1, { small, grown });
 	await viewport(1280, 900);
 }
 

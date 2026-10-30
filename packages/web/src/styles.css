@@ -41,6 +41,11 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* The app owns the window: it is pinned to the viewport instead of inheriting a height down the
+   html/body/#root chain, so no combination of zoom, device emulation or an inline style on the body
+   can leave it shorter than the screen. Every screen scrolls itself; the page never scrolls. */
+#root { position: fixed; inset: 0; }
+body { overflow: hidden; }
 body {
 	font: 15px/1.5 var(--sans);
 	color: var(--text);

@@ -429,7 +429,11 @@ function Composer({ placeholder, chatId, state, models, modelPicker, onManageMod
 	const canSend = !!(text.trim() || att.items.some((a) => a.meta)) && !att.uploading;
 	const [error, setError] = useState("");
 	const ref = useRef<HTMLTextAreaElement>(null);
-	useEffect(() => ref.current?.focus(), [chatId]);
+	// Focus only where there is a pointer that can type: on a phone this raises the on-screen keyboard
+	// the moment a chat opens and covers the half of the screen the composer is not in.
+	useEffect(() => {
+		if (matchMedia("(pointer: fine)").matches) ref.current?.focus();
+	}, [chatId]);
 	// Grow with the text. Without this the box stays one row tall and the second line is hidden
 	// behind the toolbar, which reads as "my message vanished".
 	useEffect(() => {

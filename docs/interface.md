@@ -77,6 +77,18 @@ scrim still close them.
 `max-height: 92dvh` rather than `vh`: on a phone the browser's own toolbars come and go, and `vh`
 measures the largest viewport — a sheet sized with it hides its footer behind the toolbar.
 
+## The app is pinned to the window
+
+`#root` is `position: fixed; inset: 0` rather than a `height: 100%` / `100dvh` chain, and `body` does
+not scroll — every screen scrolls itself. Inheriting the height was one dependency too many: a
+session that reported a dynamic viewport smaller than the window (a zoomed page, an on-screen
+keyboard) left the whole app half the height of the screen, above a screenful of empty paper, and no
+amount of reloading helped. Pinned to the viewport there is nothing left to get wrong.
+
+The composer only focuses itself where `(pointer: fine)` matches: on a phone, auto-focusing on open
+raises the keyboard over the screen. `interactive-widget=resizes-content` in the viewport meta makes
+the layout viewport shrink with the keyboard on Android instead of hiding the composer behind it.
+
 ## What is deliberately not shrunk
 
 - **Text fields are 16px.** Anything smaller and iOS zooms into the field on focus, then never zooms
@@ -95,6 +107,10 @@ measures the largest viewport — a sheet sized with it hides its footer behind 
 `packages/server/test/ui.ts` ends with a phone pass that drives the built app at 390×844, 768×1024,
 1280×900 and 844×390:
 
+- the app fills the window, and still does with `html`/`body` heights broken from outside the app, and
+  the page itself never scrolls;
+- a module frame is re-measured when the window changes size (one left at a phone's scale showed a
+  half-size module with its own scrollbars on a desktop window);
 - no screen asks for a sideways scroll (`scrollWidth ≤ clientWidth`) — home, chat, files, blueprints,
   settings, connections, mission overview, backlog;
 - the sidebar is off the screen, the menu button slides it in over a scrim, Escape closes it, and

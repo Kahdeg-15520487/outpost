@@ -17,15 +17,16 @@ import { parseCookies, readRaw, Router, type Req } from "./util.ts";
 /**
  * The session cookie. When previews live on `<slug>.<preview.baseDomain>`, the cookie is scoped to that
  * domain so the proxy can recognize the viewer there too — a preview is code execution, so "not public"
- * has to hold on the preview hostname as well as on outpost's own. `Secure` follows the request's scheme
- * (outpost itself may be on plain HTTP on a LAN).
+ * has to hold on the preview hostname as well as on outpost's own. `Secure` is added only in that setup:
+ * without a base domain the cookie stays byte-for-byte what it always was (and outpost may be plain HTTP
+ * on a LAN, where a Secure cookie would be dropped).
  */
 const cookie = (token: string, maxAge: number, req?: Req) => {
 	const host = (req?.raw.headers.host ?? "").toLowerCase().replace(/:\d+$/, "");
 	const base = config.preview.baseDomain;
 	const domain = base && (host === base || host.endsWith(`.${base}`)) ? `; Domain=.${base}` : "";
 	const https = (req?.raw.socket as { encrypted?: boolean } | undefined)?.encrypted || String(req?.raw.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim() === "https";
-	return `outpost_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${domain}${https ? "; Secure" : ""}`;
+	return `outpost_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${domain}${base && https ? "; Secure" : ""}`;
 };
 const asRole = (r: unknown): Role => {
 	if (r === "viewer" || r === "editor" || r === "owner") return r;

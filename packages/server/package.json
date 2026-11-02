@@ -19,6 +19,7 @@
 		"test:connectors": "tsx test/connectors.ts",
 		"test:azure-devops": "tsx test/azure-devops.ts",
 		"test:gates": "tsx test/gates.ts",
+		"test:mission-tools": "tsx test/mission-tools.ts",
 		"test:quality": "tsx test/quality.ts",
 		"test:transfer": "tsx test/transfer.ts",
 		"test:teams": "tsx test/teams.ts"

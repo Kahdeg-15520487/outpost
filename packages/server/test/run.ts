@@ -20,6 +20,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "azure-devops", file: "azure-devops.ts", what: "the Azure DevOps connector against a stand-in for dev.azure.com" },
 	{ name: "github", file: "github.ts", what: "the GitHub repository connector against a stand-in for api.github.com" },
 	{ name: "gates", file: "gates.ts", what: "blocking questions + readiness, feedback → pending items → approval" },
+	{ name: "mission-tools", file: "mission-tools.ts", what: "the assistant's mission tools (start, read what is waiting, answer, message, feedback — no gate decisions) and what a team is told about the workspace's own apps" },
 	{ name: "quality", file: "quality.ts", what: "M2 gates, story briefs, tests before review/merge, definition of done, retrospective, restart" },
 	{ name: "blueprints", file: "blueprints.ts", what: "blueprint versions, drafts, drift, rollout and diff — improving a template without forking it" },
 	{ name: "blueprint-report", file: "blueprint-report.ts", what: "the regressions a real consolidation job hit: vendored code, id resolution, adoption, rollout reporting, drafts, big files, duplicate writes" },

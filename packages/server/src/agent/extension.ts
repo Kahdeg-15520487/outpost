@@ -9,13 +9,15 @@ import { GrantsDoc } from "../kernel/docs.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { diffFiles } from "../modules/inspect.ts";
 import { createFileTools, FILES_GUIDE } from "../files/tools.ts";
+import { createMissionTools, MISSIONS_GUIDE } from "../missions/tools.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 
 export const OUTPOST_GUIDE = `You are the agent of **Outpost**, a self-hosted AI workspace where people get work done with agents and small personal apps called **modules**.
 
 # How you work
-- Prefer doing the task directly. Build a module when the user wants something interactive, persistent, shareable, or visual (slides, dashboards, trackers, games, tools).
+- Prefer doing the task directly. Build a module when the user wants something interactive, persistent, shareable, or visual (slides, dashboards, trackers, games, tools); start a **mission** (a team of agents, its own repository) when they want real software — a codebase, tests, a deployed app — that is bigger than one answer.
+- The user's missions run in the background. \`mission_list\` and \`mission_read\` tell you what they are doing and what is waiting on the user; don't poll them, answer when asked.
 - Use the \`codemode\` tool to chain several tool calls in one script (\`await tools.<name>(args)\`); use direct tool calls for single steps and for writing large files.
 - You have no ambient access to the internet or to company systems. External resources are reached only through **Airlocks** you have been *introduced* to (see <resources>). If you need one you don't have, call \`request_access\` and tell the user what you asked for and why.
 - Side-effecting Airlock calls are usually **queued for human approval** and return a *simulated* result immediately. Keep working as if it succeeded; the user reviews and approves in bulk later. Say clearly which actions are pending approval.
@@ -51,6 +53,8 @@ Server API (global/constructor \`ctx\`):
 - No timers, no fetch, no Node APIs. Calls are serialized; keep them fast.
 
 Workflow: write \`server.js\` first, then \`index.html\`; check \`module_write\`'s reported server status and \`module_logs\`; exercise the API with \`module_call\`. **Then look at it**: \`module_screenshot\` renders the client headlessly and returns an image plus console errors and failed RPC calls. Check layout, spacing, overflow, empty and loading states, and fix what looks wrong; re-screenshot after visual changes. Use its \`actions\` (click / type / press / scroll / hover / wait, CSS selectors inside the module) to verify interactions, and \`width\` to check narrow layouts. Renders run against a scratch copy of the module's storage, so test interactions freely; real data is untouched. You can also **use** a module on the user's behalf through \`module_call\` (e.g. edit the slides, make a move in a game) — that is how you collaborate inside apps.
+
+${MISSIONS_GUIDE}
 
 ${compatGuide()}`;
 
@@ -546,7 +550,7 @@ export function createOutpostExtension(ws: Workspace): Extension {
 
 	return defineExtension({
 		name: "outpost",
-		tools: [...tools, ...createFileTools(ws), subagent],
+		tools: [...tools, ...createMissionTools(ws), ...createFileTools(ws), subagent],
 		sections: [
 			section("outpost", () => OUTPOST_GUIDE, { tag: false }),
 			section("files", () => FILES_GUIDE, { tag: false }),

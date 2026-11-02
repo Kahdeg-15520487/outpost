@@ -55,7 +55,7 @@ Outpost reads one file, `outpost.config.json` in the directory you start it from
 | **Connections** | Any MCP server or OpenAPI document becomes an airlock; GitHub and Azure DevOps by hand; Ask/Allow per method | [connections](docs/connections.md) |
 | **Blueprints** | An inspector that reads a template without cloning it, versions with a changelog instead of forks, hidden drafts, drift and rollout to every module on it | [blueprints](docs/blueprints.md) |
 | **Transfer** | Export/import modules and blueprints as one file, with version and capability checks before anything is created | [transfer](docs/transfer.md) |
-| **Missions** | A Lead forms a team; requirements, design, backlog and code in real git worktrees; a deterministic build scheduler, gates, retrospectives, live preview | [missions](docs/missions.md) |
+| **Missions** | A Lead forms a team; requirements, design, backlog and code in real git worktrees; a deterministic build scheduler, gates, retrospectives, live preview; a chat can start one, read what is waiting and answer the team | [missions](docs/missions.md) |
 | **Docker** | One container with git and Chromium; `/data` volume; previews on a published port range or on `<slug>.<preview.baseDomain>` | [docker](docs/docker.md) |
 
 ## Test

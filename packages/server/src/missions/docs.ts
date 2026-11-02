@@ -13,6 +13,11 @@ export type MissionMeta = {
 	/** Model new agents get unless the Lead picks another. */
 	model: { provider: string; modelId: string };
 	archived?: boolean;
+	/**
+	 * DNS label for the live preview: `<slug>.<preview.baseDomain>`. Written once at creation and kept
+	 * across renames, because a preview URL that moves under the user's feet is worse than an ugly one.
+	 */
+	slug?: string;
 };
 
 /** The workspace's missions. */

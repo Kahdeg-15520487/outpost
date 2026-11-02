@@ -40,6 +40,18 @@ Unknown provider IDs and `$VAR`s that aren't set produce warnings at startup.
 
 New chats use `models.default`, unless the workspace sets its own, falling back to the first available model. You can change the model per chat. With no keys at all, an offline **Demo** model follows a few scripts ("make a todo list", "make slides", …).
 
+## Live previews
+
+The App tab runs a mission's app from `main` and shows it. Where the browser reaches it is what `preview` decides:
+
+| Setting | Effect |
+|---|---|
+| *(unset)* | Each preview is on the dev server's own loopback port. Fine for `pnpm dev` on the same machine. |
+| `preview.ports` | Outpost listens on a port from the range and pipes to the app, so a published container port reaches an app on the container's loopback. |
+| `preview.baseDomain` | `https://<slug>.<baseDomain>/` on Outpost's own port, dispatched by Host header. Nothing to publish, works behind HTTPS. |
+
+`baseDomain` needs a wildcard certificate for `<baseDomain>` and a reverse proxy route for it; `<slug>` is the mission's name plus a short hash, fixed when the mission is created. Preview pages are not public: outpost only forwards when the viewer's session belongs to a member of the mission's workspace, and the session cookie is scoped to the base domain so it reaches the preview hostnames too. See [docker.md](docker.md) for the proxy setup.
+
 ## Environment overrides
 
 | Variable | Overrides |
@@ -49,3 +61,4 @@ New chats use `models.default`, unless the workspace sets its own, falling back 
 | `OUTPOST_DATA` | `dataDir`, which holds the system DB, one `workspaces/<id>.sqlite` per workspace, the secret, and stored credentials |
 | `OUTPOST_SECRET` | the generated `secret.key` (32 bytes, as hex or base64) |
 | `OUTPOST_PREVIEW_BIND`, `OUTPOST_PREVIEW_PORTS` | `preview.bind`, `preview.ports` — where browsers reach live previews (`0.0.0.0`, `"3100-3199"` in a container) |
+| `OUTPOST_PREVIEW_BASE_DOMAIN` | `preview.baseDomain` — serve previews on `<slug>.<baseDomain>` instead of a port range (see below) |

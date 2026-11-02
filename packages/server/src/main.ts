@@ -6,6 +6,7 @@ import { createApi } from "./http/api.ts";
 import { sendJson } from "./http/util.ts";
 import { compressible, encodedFile, pickEncoding } from "./http/compress.ts";
 import { attachSockets } from "./collab/socket.ts";
+import { createPreviewProxy } from "./preview-proxy.ts";
 import { installBuiltinBlueprints } from "./modules/blueprints.ts";
 import { Workspace } from "./kernel/workspace.ts";
 import { closeRenderer } from "./modules/render.ts";
@@ -16,6 +17,9 @@ process.on("warning", (w) => w.name !== "ExperimentalWarning" && console.warn(w)
 
 installBuiltinBlueprints();
 const api = createApi();
+// `<slug>.<preview.baseDomain>` is a different app on the same port, so it is dispatched before outpost's
+// own routes. With no base domain configured this claims nothing and previews keep their port URLs.
+const preview = createPreviewProxy();
 
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
@@ -30,6 +34,7 @@ const MIME: Record<string, string> = {
 
 const server = createServer(async (req, res) => {
 	try {
+		if (await preview.handle(req, res)) return;
 		if (await api.handle(req, res)) return;
 		if (req.url?.startsWith("/api/")) return sendJson(res, 404, { error: "Not found" });
 		// Static web app (production build). In development, Vite serves it and proxies here.
@@ -59,10 +64,13 @@ const server = createServer(async (req, res) => {
 		if (!res.headersSent) sendJson(res, 500, { error: "Internal error" });
 	}
 });
-attachSockets(server);
+// A dev server's HMR socket arrives on a preview hostname, not on /ws: hand those to the proxy first.
+server.on("upgrade", (req, socket, head) => preview.upgrade(req, socket, head));
+attachSockets(server, (req) => preview.owns(req));
 
 server.listen(config.port, config.host, () => {
 	console.log(`Outpost listening on http://${config.host}:${config.port}`);
+	if (config.preview.baseDomain) console.log(`  previews: https://<slug>.${config.preview.baseDomain}/ (dispatched by Host)`);
 	console.log(`  config: ${config.configFound ? config.configPath : `(none — defaults; create ${config.configPath}, see outpost.config.example.json)`}`);
 	console.log(`  data:   ${config.dataDir}`);
 });

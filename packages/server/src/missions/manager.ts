@@ -11,6 +11,7 @@ import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, GATE_DOCS, MissionDoc, MissionsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type GateName, type MissionMeta, type MissionStage, type MissionState } from "./docs.ts";
+import { missionSlug } from "./slug.ts";
 import { MissionRepo } from "./repo.ts";
 import { join } from "node:path";
 import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, isPending, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
@@ -62,6 +63,8 @@ export class MissionManager {
 	readonly #watchers = new Map<string, AgentWatcher>();
 	readonly summaries = new Map<string, Record<string, AgentSummary>>();
 	readonly #docWatches = new Map<string, Promise<unknown>>();
+	/** mission id → preview hostname label (`slugOf`), filled at open and on create. */
+	readonly #slugs = new Map<string, string>();
 	/** Milestone 4: assigns tasks, routes reviews, merges. */
 	readonly build: BuildScheduler;
 	/** Milestone 5: runs the app from main for the App tab. */
@@ -106,8 +109,18 @@ export class MissionManager {
 	async init() {
 		await this.ws.harness.commit(async (tx) => void (await tx.doc(MissionsDoc)), ctx);
 		const missions = (await this.ws.harness.snapshot(MissionsDoc, ctx))?.missions ?? {};
+		// Missions from before previews had hostnames get their slug now, once. It is written into the doc
+		// rather than recomputed from the name on every read, so the URL a user bookmarked stays theirs.
+		if (Object.values(missions).some((p) => !p.slug)) {
+			await this.ws.harness.commit(async (tx) => {
+				const all = await tx.doc(MissionsDoc);
+				for (const p of Object.values(all.missions)) p.slug ??= missionSlug(p.id, p.name);
+			}, ctx);
+			for (const p of Object.values(missions)) p.slug ??= missionSlug(p.id, p.name);
+		}
 		for (const p of Object.values(missions)) {
 			if (p.archived) continue;
+			if (p.slug) this.#slugs.set(p.id, p.slug);
 			const state = await this.state(p.id);
 			for (const a of Object.values(state.agents)) {
 				if (a.removed) continue;
@@ -127,6 +140,14 @@ export class MissionManager {
 			// A dev server a killed outpost left behind, then the preview itself if it was running.
 			void this.previews.reap(p.id).then(() => this.previews.resume(p.id));
 		}
+	}
+
+	/**
+	 * The label a preview is served under, for hosts like `<slug>.<preview.baseDomain>`. Sync, because the
+	 * preview proxy answers per request and the App tab needs it while rendering.
+	 */
+	slugOf(missionId: string): string | undefined {
+		return this.#slugs.get(missionId);
 	}
 
 	async list(): Promise<MissionMeta[]> {
@@ -487,7 +508,8 @@ export class MissionManager {
 		if (goal.length < 8) throw new HttpError(400, "Describe the goal in a sentence or two");
 		const id = newId("ms");
 		const name = opts.name?.trim() || goal.replace(/\s+/g, " ").split(/[.!?\n]/)[0]!.slice(0, 60);
-		const meta: MissionMeta = { id, name, goal, stage: "kickoff", createdAt: Date.now(), createdBy: user.displayName, model: opts.model };
+		const meta: MissionMeta = { id, name, goal, slug: missionSlug(id, name), stage: "kickoff", createdAt: Date.now(), createdBy: user.displayName, model: opts.model };
+		this.#slugs.set(id, meta.slug!);
 		await this.repo(id).init(goal, name);
 		await this.ws.harness.commit(async (tx) => {
 			const all = await tx.doc(MissionsDoc);
@@ -667,6 +689,8 @@ export class MissionManager {
 			const all = await tx.doc(MissionsDoc);
 			if (all.missions[missionId]) all.missions[missionId]!.archived = true;
 		}, ctx);
+		// An archived mission has no preview, so its hostname goes quiet with it.
+		this.#slugs.delete(missionId);
 		const state = await this.state(missionId);
 		for (const a of Object.values(state.agents)) {
 			this.#watchers.get(a.conversationId)?.stop();

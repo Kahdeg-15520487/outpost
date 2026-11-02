@@ -80,6 +80,13 @@ export type OutpostConfigFile = {
 		bind?: string;
 		/** "3100-3199" (or [3100, 3199]): the ports browsers use. Default: one ephemeral loopback port per preview. */
 		ports?: string | [number, number];
+		/**
+		 * Public base domain, e.g. "os.example.net": previews are then served at `<slug>.<baseDomain>` on the
+		 * same HTTPS port as outpost, dispatched by Host header. Unset keeps today's `host:port` URLs.
+		 * Must be one label under the wildcard your certificate covers — a public CA cannot issue
+		 * `*.os.example.net`, so `*.example.net` only reaches `<slug>.example.net`.
+		 */
+		baseDomain?: string;
 	};
 	/** Headless rendering of modules (agent visual feedback via module_screenshot). */
 	render?: {
@@ -153,6 +160,17 @@ function parsePortRange(value: string | [number, number] | undefined): [number, 
 	return [start, end];
 }
 
+/** "os.example.net" → "os.example.net"; "*.OS.example.net." → "os.example.net"; anything else is a warning and no base domain. */
+function parseBaseDomain(value: string | undefined): string | undefined {
+	if (value === undefined || value === "") return undefined;
+	const domain = value.trim().toLowerCase().replace(/^\*\.?/, "").replace(/\.$/, "");
+	if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+		console.warn(`outpost: preview.baseDomain must look like "os.example.net", got ${JSON.stringify(value)} — ignoring`);
+		return undefined;
+	}
+	return domain;
+}
+
 /** The secret that signs frame tokens and encrypts stored credentials. OUTPOST_SECRET (hex/base64, 32 bytes) wins over the generated file. */
 const secretFile = join(dataDir, "secret.key");
 const secret: Buffer = (() => {
@@ -187,7 +205,12 @@ export const config = {
 	demoModel: file.models?.demo ?? true,
 	githubToken: () => resolveSecret(file.airlocks?.github?.token).value,
 	render: { enabled: file.render?.enabled ?? true, chromePath: process.env.OUTPOST_CHROME ?? file.render?.chromePath },
-	preview: { bind: process.env.OUTPOST_PREVIEW_BIND ?? file.preview?.bind ?? "127.0.0.1", ports: parsePortRange(process.env.OUTPOST_PREVIEW_PORTS ?? file.preview?.ports) },
+	preview: {
+		bind: process.env.OUTPOST_PREVIEW_BIND ?? file.preview?.bind ?? "127.0.0.1",
+		ports: parsePortRange(process.env.OUTPOST_PREVIEW_PORTS ?? file.preview?.ports),
+		// Where previews are served when they get a hostname of their own (see preview-proxy.ts).
+		baseDomain: parseBaseDomain(process.env.OUTPOST_PREVIEW_BASE_DOMAIN ?? file.preview?.baseDomain),
+	},
 	maxUploadBytes: Math.round((file.files?.maxUploadMB ?? 100) * (1 << 20)),
 	secret,
 };

@@ -34,9 +34,10 @@ export function PreviewTab({ wsId, missionId, preview, canEdit, feedback = {}, b
 	const pinned = useRef(true);
 	const p = preview;
 	const running = p.status === "running" && p.port;
-	// The preview is its own server on its own port, so use the host outpost was reached on (localhost, a
-	// LAN address, a container's published address) rather than the address it bound to.
-	const url = running ? `http://${location.hostname || "127.0.0.1"}:${p.port}/` : "";
+	// The preview is its own server. When previews get a hostname of their own (`preview.baseDomain`), outpost
+	// already told us the URL; otherwise it is on a port, on whichever host outpost itself was reached on
+	// (localhost, a LAN address, a container's published address) rather than the address it bound to.
+	const url = running ? (p.publicUrl ?? `http://${location.hostname || "127.0.0.1"}:${p.port}/`) : "";
 	const showLogs = logsOpen || !running;
 
 	// Open the tab → start it (unless someone stopped it on purpose).

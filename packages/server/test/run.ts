@@ -14,6 +14,7 @@ const SUITES: { name: string; file: string; what: string }[] = [
 	{ name: "teams", file: "teams.ts", what: "backlog, approval, model controls, agent sandbox" },
 	{ name: "build", file: "build.ts", what: "M4 scheduler + M5 preview" },
 	{ name: "preview", file: "preview.ts", what: "preview.ports: the published range that reaches an app on loopback" },
+	{ name: "preview-proxy", file: "preview-proxy.ts", what: "preview.baseDomain: Host-dispatched previews, slugs, ACL, HMR upgrades, 502s" },
 	{ name: "conflicts", file: "conflicts.ts", what: "generated files, line endings, repo identity, overlapping areas" },
 	{ name: "connectors", file: "connectors.ts", what: "MCP servers and OpenAPI REST APIs as Airlocks: discovery, secrets, capabilities, approvals" },
 	{ name: "azure-devops", file: "azure-devops.ts", what: "the Azure DevOps connector against a stand-in for dev.azure.com" },

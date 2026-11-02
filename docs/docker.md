@@ -35,9 +35,33 @@ To use your own: copy that file, edit it, and mount it over `/app/docker/config.
 worktrees, uploads, `secret.key` and the encrypted model keys. A bind mount works too, but it must be
 writable by uid 10001 (`useradd --uid 10001 Outpost` in the image).
 
-**Ports and TLS.** Only 8787 is Outpost; previews use their own range. Outpost speaks plain HTTP (and sends
-`x-frame-options: DENY` for itself), so terminate TLS in a reverse proxy in front of it. Reaching Outpost
-over HTTPS also means the previews' plain-HTTP ports are blocked as mixed content.
+**Ports and TLS.** Only 8787 is Outpost; previews either use their own range or a hostname. Outpost speaks
+plain HTTP (and sends `x-frame-options: DENY` for itself), so terminate TLS in a reverse proxy in front of
+it. Reaching Outpost over HTTPS also means the previews' plain-HTTP ports are blocked as mixed content.
+
+**Previews over HTTPS: `preview.baseDomain`.** Set it (or `OUTPOST_PREVIEW_BASE_DOMAIN`) to a domain whose
+wildcard your certificate already covers, and previews move onto Outpost's own port, dispatched by Host
+header: `https://<slug>.<baseDomain>/` → the reverse proxy → `outpost:8787` → the app's loopback port. No
+port range to publish, one router, and HMR works because the WebSocket upgrade is proxied too.
+
+```json
+{ "preview": { "baseDomain": "os.example.net" } }
+```
+
+Then teach the reverse proxy one wildcard route:
+
+- `HostRegexp(`^[a-z0-9-]{1,63}\.os\.example\.net$`)` → `outpost:8787` (TLS terminator serving
+  `*.os.example.net`). `<slug>` is the mission's name plus a short hash, fixed when the mission is created.
+- Keep `preview.ports` unset so nothing starts a public listener; the proxy targets the dev server's own
+  loopback port.
+- **One label deep.** `<slug>.os.example.net` needs a certificate for `*.os.example.net`. A public CA will
+  not issue two wildcard levels for free, so if your certificate only covers `*.example.net`, use
+  `"baseDomain": "example.net"` and previews become `<slug>.example.net`.
+- The URL is not public: the proxy only forwards when the viewer's session cookie belongs to a member of
+  the mission's workspace (403 otherwise), which means the cookie has to be scoped to the base domain —
+  Outpost does that itself when `preview.baseDomain` is set and the request arrives on that domain.
+- Apps that redirect with an absolute `http://localhost:PORT/…` are rewritten back onto the public host;
+  relative redirects (`Location: /login`) need nothing.
 
 **Git and the shell.** The image has git, bash and node plus a system git identity, so agents can open
 worktrees, commit and merge. They run shell commands inside the container, and that shell is

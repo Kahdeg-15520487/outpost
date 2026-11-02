@@ -229,7 +229,7 @@ export const api = {
 // ------------------------------------------------------------------ missions (agent teams)
 
 export type MissionStage = "kickoff" | "discovery" | "design" | "planning" | "build" | "iterate" | "done";
-export type MissionMeta = { id: string; name: string; goal: string; stage: MissionStage; createdAt: number; createdBy: string; model: ModelRef; archived?: boolean };
+export type MissionMeta = { id: string; name: string; goal: string; stage: MissionStage; createdAt: number; createdBy: string; model: ModelRef; archived?: boolean; /** Preview hostname label, fixed at creation. */ slug?: string };
 export type AgentRecord = { key: string; name: string; role: string; conversationId: string; brief: string; model?: ModelRef; createdAt: number; removed?: boolean };
 export type Question = { id: string; agent: string; text: string; at: number; blocking?: boolean; assumption?: string; answeredAt?: number; resolution?: "answered" | "dismissed"; resolvedBy?: string; note?: string };
 /** Questions from before the flag existed are blocking. */
@@ -254,7 +254,7 @@ export type TaskCheck = { status: "running" | "passed" | "failed" | "skipped"; s
 export type GateName = "requirements" | "design";
 export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
 export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
-export type PreviewInfo = { status: PreviewStatus; port?: number; appPort?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean };
+export type PreviewInfo = { status: PreviewStatus; port?: number; appPort?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean; /** Set when previews are served as `<slug>.<preview base domain>`. */ slug?: string; publicUrl?: string };
 export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "outpost" };
 export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
 export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState; pendingRequest?: { summary: string; requestedBy: string; requestedAt: number } };

@@ -25,7 +25,7 @@ http.createServer((req, res) => res.end("hello from " + require("fs").readFileSy
   .listen(Number(process.env.PORT), process.env.HOST);
 `;
 
-/** A stand-in for a mission checkout: preview.ts only needs these three things from the manager. */
+/** A stand-in for a mission checkout: preview.ts only needs these four things from the manager. */
 function fakeMission(name: string, body: string): { root: string; previewDir: string; updatePreview(): Promise<string> } {
 	const root = join(testDir, "missions", name);
 	const previewDir = join(root, "preview");
@@ -42,6 +42,7 @@ const manager = {
 	ws: { id: "ws-preview" },
 	channel: () => "preview-test",
 	repo: (id: string) => repos.get(id)!,
+	slugOf: (id: string) => `preview-${id}`,
 } as unknown as MissionManager;
 const previews = new PreviewManager(manager);
 

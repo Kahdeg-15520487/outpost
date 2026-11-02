@@ -41,6 +41,10 @@ export type PreviewInfo = {
 	readyAt?: number;
 	logSeq: number;
 	stoppedByUser?: boolean;
+	/** The DNS label this preview answers to, when `preview.baseDomain` is set. */
+	slug?: string;
+	/** Where a browser reaches it over HTTPS (`https://<slug>.<baseDomain>/`), when the proxy serves it. */
+	publicUrl?: string;
 };
 export type RunConfig = { install?: string; test?: string; dev?: { command: string; readyPath?: string } | string };
 
@@ -258,7 +262,18 @@ export class PreviewManager {
 	}
 
 	info(missionId: string): PreviewInfo {
-		return this.#get(missionId).info;
+		return this.#decorate(missionId, this.#get(missionId).info);
+	}
+
+	/**
+	 * Adds the hostname a browser can use, when previews are dispatched by Host instead of by port. The
+	 * slug comes from the mission, the domain from config, so this is cheap enough to do on every read.
+	 */
+	#decorate(missionId: string, info: PreviewInfo): PreviewInfo {
+		const baseDomain = config.preview.baseDomain;
+		const slug = this.m.slugOf(missionId);
+		if (!baseDomain || !slug) return info;
+		return { ...info, slug, publicUrl: `https://${slug}.${baseDomain}/` };
 	}
 
 	logs(missionId: string, since = 0) {
@@ -277,7 +292,7 @@ export class PreviewManager {
 	#set(missionId: string, patch: Partial<PreviewInfo>) {
 		const p = this.#get(missionId);
 		p.info = Object.fromEntries(Object.entries({ ...p.info, ...patch }).filter(([, v]) => v !== undefined)) as PreviewInfo;
-		hub.publish(this.m.channel(missionId), { t: "mission.preview", ws: this.m.ws.id, mission: missionId, preview: p.info });
+		hub.publish(this.m.channel(missionId), { t: "mission.preview", ws: this.m.ws.id, mission: missionId, preview: this.#decorate(missionId, p.info) });
 	}
 
 	#log(missionId: string, text: string, stream: "out" | "err" | "outpost" = "outpost") {
@@ -463,7 +478,11 @@ export class PreviewManager {
 			const command = dev.command.replace(/\$\{PORT\}|\$PORT\b|%PORT%/g, String(appPort));
 			this.#set(missionId, { status: "starting", head, port, appPort, command, startedAt: Date.now(), error: undefined, readyAt: undefined, stoppedByUser: undefined });
 			this.#log(missionId, `$ ${command}`);
-			const env = { ...process.env, PORT: String(appPort), HOST: "127.0.0.1", BROWSER: "none", FORCE_COLOR: "0", NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development") };
+			const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(appPort), HOST: "127.0.0.1", BROWSER: "none", FORCE_COLOR: "0", NODE_ENV: process.env.NODE_ENV === "production" ? "development" : (process.env.NODE_ENV ?? "development") };
+			// Vite ≥6 rejects an unknown Host with "Blocked request. This host is not allowed". Rewriting Host is
+			// what fixes it; this is the belt to that braces, and it also covers the HMR socket's origin check.
+			const slug = this.m.slugOf(missionId);
+			if (config.preview.baseDomain && slug) env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS = `${slug}.${config.preview.baseDomain},${config.preview.baseDomain}`;
 			const proc = this.#spawn(sh, command, cwd, env);
 			p.proc = proc;
 			let printedPort: number | undefined;
@@ -501,6 +520,7 @@ export class PreviewManager {
 						writeFileSync(this.#wantFile(missionId), String(Date.now()));
 						this.#log(missionId, `ready on http://${host}:${candidate}${readyPath}`);
 						if (fwd) this.#log(missionId, `public preview on http://${config.preview.bind}:${port} → 127.0.0.1:${candidate}`);
+						else if (config.preview.baseDomain && slug) this.#log(missionId, `public preview on https://${slug}.${config.preview.baseDomain}/ → 127.0.0.1:${candidate}`);
 						// Remember the whole tree (Windows can't always kill it through npm/bash wrappers).
 						if (process.platform === "win32" && proc.pid) {
 							const [table, listener] = await Promise.all([processTable(), listenerPid(candidate)]);

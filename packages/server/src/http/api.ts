@@ -12,9 +12,21 @@ import { oauthLogins } from "../kernel/oauth.ts";
 import { blueprints, modules, HttpError, sessions, sign, users, verify, workspaces, ROLE_RANK, type Role, type User } from "../kernel/system-db.ts";
 import { Workspace } from "../kernel/workspace.ts";
 import { hub } from "../collab/hub.ts";
-import { readRaw, Router, type Req } from "./util.ts";
+import { parseCookies, readRaw, Router, type Req } from "./util.ts";
 
-const cookie = (token: string, maxAge: number) => `outpost_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+/**
+ * The session cookie. When previews live on `<slug>.<preview.baseDomain>`, the cookie is scoped to that
+ * domain so the proxy can recognize the viewer there too — a preview is code execution, so "not public"
+ * has to hold on the preview hostname as well as on outpost's own. `Secure` follows the request's scheme
+ * (outpost itself may be on plain HTTP on a LAN).
+ */
+const cookie = (token: string, maxAge: number, req?: Req) => {
+	const host = (req?.raw.headers.host ?? "").toLowerCase().replace(/:\d+$/, "");
+	const base = config.preview.baseDomain;
+	const domain = base && (host === base || host.endsWith(`.${base}`)) ? `; Domain=.${base}` : "";
+	const https = (req?.raw.socket as { encrypted?: boolean } | undefined)?.encrypted || String(req?.raw.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim() === "https";
+	return `outpost_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${domain}${https ? "; Secure" : ""}`;
+};
 const asRole = (r: unknown): Role => {
 	if (r === "viewer" || r === "editor" || r === "owner") return r;
 	throw new HttpError(400, "role must be viewer|editor|owner");
@@ -37,7 +49,7 @@ function moduleView(g: ReturnType<typeof modules.get> & {}, role: Role) {
 }
 
 function signIn(req: Req, user: User) {
-	req.res.setHeader("set-cookie", cookie(sessions.create(user.id), 30 * 86400));
+	req.res.setHeader("set-cookie", cookie(sessions.create(user.id), 30 * 86400, req));
 	return { user };
 }
 
@@ -58,10 +70,16 @@ export function createApi(): Router {
 	r.post("/api/auth/logout", (req) => {
 		const token = /outpost_session=([^;]+)/.exec(req.raw.headers.cookie ?? "")?.[1];
 		if (token) sessions.delete(token);
-		req.res.setHeader("set-cookie", cookie("", 0));
+		req.res.setHeader("set-cookie", cookie("", 0, req));
 		return { ok: true };
 	});
-	r.get("/api/me", (req) => ({ user: req.user ?? null, firstRun: users.count() === 0 }));
+	r.get("/api/me", (req) => {
+		// A session that predates preview hostnames is host-only, so the preview proxy would turn it away.
+		// Re-issuing the same token with the domain attribute costs nothing and fixes it on the next page load.
+		const token = parseCookies(req.raw.headers.cookie).outpost_session;
+		if (req.user && token && config.preview.baseDomain) req.res.setHeader("set-cookie", cookie(token, 30 * 86400, req));
+		return { user: req.user ?? null, firstRun: users.count() === 0 };
+	});
 
 	// ------------------------------------------------------------ models & providers
 	r.get("/api/models", async (req) => {

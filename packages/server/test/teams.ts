@@ -12,6 +12,7 @@ import { join } from "node:path";
 const { users, workspaces } = await import("../src/kernel/system-db.ts");
 const { Workspace } = await import("../src/kernel/workspace.ts");
 const { addItems, renderBacklog } = await import("../src/missions/backlog.ts");
+const { MissionsDoc } = await import("../src/missions/docs.ts");
 const { agentEnv, fromGitBashPath } = await import("../src/missions/env.ts");
 
 
@@ -19,6 +20,11 @@ const { agentEnv, fromGitBashPath } = await import("../src/missions/env.ts");
 const u = users.create("teams", "password123");
 const ws = await Workspace.get(workspaces.create("teams", u.id).id);
 const p = await ws.missions.create(u, { goal: "Agent team regression mission", model: { provider: "outpost-demo", modelId: "demo" } });
+// The preview hostname is fixed when the mission is created and written into the doc, so it can't drift
+// under a bookmark (and a mission created before previews had hostnames gets one at startup, once).
+check("the mission has a preview slug", /^[a-z0-9-]+-[0-9a-f]{6}$/.test(p.slug ?? "") && ws.missions.slugOf(p.id) === p.slug, [p.slug, ws.missions.slugOf(p.id)]);
+const stored = (await ws.harness.snapshot(MissionsDoc, ctx))?.missions?.[p.id];
+check("the slug is stored with the mission, not recomputed", stored?.slug === p.slug, [p.slug, stored?.slug]);
 await passDocGates(ws, p.id);
 await ws.missions.stopAll(p.id);
 

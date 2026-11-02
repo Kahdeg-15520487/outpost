@@ -18,9 +18,11 @@ import { join } from "node:path";
  *   { t: "sub", kind: "mission", ws, mission }   mission team, agent summaries, repo changes
  *   { t: "call", id, moduleId, method, args }    module RPC as the signed-in user
  */
-export function attachSockets(server: import("node:http").Server) {
+export function attachSockets(server: import("node:http").Server, skip?: (req: import("node:http").IncomingMessage) => boolean) {
 	const wss = new WebSocketServer({ noServer: true });
 	server.on("upgrade", (req, socket, head) => {
+		// A preview hostname's Upgrade is HMR for the mission's app, not a subscription: preview-proxy owns it.
+		if (skip?.(req)) return;
 		if (!req.url?.startsWith("/ws")) return socket.destroy();
 		const user = sessions.user(parseCookies(req.headers.cookie).outpost_session);
 		if (!user) {

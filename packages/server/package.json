@@ -13,6 +13,7 @@
 		"test:render": "tsx test/render-check.ts",
 		"test:build": "tsx test/build.ts",
 		"test:preview": "tsx test/preview.ts",
+		"test:preview-proxy": "tsx test/preview-proxy.ts",
 		"test:home": "tsx test/home.ts",
 		"test:conflicts": "tsx test/conflicts.ts",
 		"test:connectors": "tsx test/connectors.ts",

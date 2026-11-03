@@ -129,12 +129,21 @@ check("a workspace with apps says more than it did before", (before ?? "") !== s
 await ws.deleteModule(contacts.id);
 
 console.log("spend");
+// Written through snapshot rather than into the live map: this mission's agents are still running, and their
+// watchers write into that same record between the set and the read (which is why the numbers moved between
+// Windows and Linux). The check is about the tool's arithmetic — the sum, and the cost rounded to four places.
 const summary = (tokens: number, cost: number) => ({ busy: false, status: "idle" as const, tail: "", tokens, cost, queued: 0, updatedAt: Date.now() });
-const real = pm.summaries.get(id);
-pm.summaries.set(id, { lead: summary(1200, 0.0345), planner: summary(800, 0.01) });
-check("mission_read reports what the team spent", JSON.stringify((json(await call("mission_read", { mission: id })).spend)) === JSON.stringify({ tokens: 2000, cost: 0.0445 }), json(await call("mission_read", { mission: id })).spend);
-if (real) pm.summaries.set(id, real);
-else pm.summaries.delete(id);
+const snapshot = pm.snapshot.bind(pm);
+const stub = (sums: Record<string, unknown>) => {
+	(pm as any).snapshot = async (missionId: string) => ({ ...(await snapshot(missionId)), summaries: sums });
+};
+stub({});
+const nothing = json(await call("mission_read", { mission: id }));
+check("a team that has spent nothing reports no spend at all", !("spend" in nothing), Object.keys(nothing));
+stub({ lead: summary(1200, 0.0345), planner: summary(800, 0.01) });
+const spend = json(await call("mission_read", { mission: id })).spend;
+(pm as any).snapshot = snapshot;
+check("mission_read reports what the team spent", JSON.stringify(spend) === JSON.stringify({ tokens: 2000, cost: 0.0445 }), spend);
 
 console.log("the gate boundary");
 const toolNames = [...tools.keys()];

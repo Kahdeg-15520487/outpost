@@ -5,7 +5,7 @@ import "../mission-repo.css";
 import "../mission-build.css";
 import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateName, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type MissionMeta, type MissionStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateItem, type GateName, type GateReview, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type MissionMeta, type MissionStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
 import { navigate, missionHref, timeAgo, useChat, useMission } from "../store";
 import { Dialog, Markdown, NavToggle, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
@@ -631,7 +631,12 @@ function Overview({ ws, mission, live, questions, canEdit, onOpenAgent }: { ws: 
 					<a key={g} className="ov-gate" href={missionHref(ws.id, mission.id, g)}>
 						<i />
 						<span>
-							<b>The {g} {g === "design" ? "is" : "are"} waiting for your approval.</b> {state.gates![g]!.summary ? `${state.gates![g]!.summary!.slice(0, 160)}${state.gates![g]!.summary!.length > 160 ? "…" : ""}` : ""}
+							<b>The {g} {g === "design" ? "is" : "are"} waiting for your approval.</b>{" "}
+							{state.gates![g]!.items?.length
+								? `${state.gates![g]!.items!.length} point${state.gates![g]!.items!.length === 1 ? "" : "s"} to settle${state.gates![g]!.items!.length > 1 ? " — each one on its own" : ""}.`
+								: state.gates![g]!.summary
+									? `${state.gates![g]!.summary!.replace(/[*`#>]/g, "").slice(0, 160)}${state.gates![g]!.summary!.length > 160 ? "…" : ""}`
+									: ""}
 						</span>
 						<span className="ov-gate-go">Review →</span>
 					</a>
@@ -664,12 +669,54 @@ function Overview({ ws, mission, live, questions, canEdit, onOpenAgent }: { ws: 
 	);
 }
 
+/**
+ * One decision point of a review: fine, or it needs changing. The verdict is stored on the mission as it is
+ * clicked — a review of a long document is not something to lose on a reload — while the gate itself is decided
+ * once, at the bottom, because a document on `main` is one file.
+ */
+function GateReviewItem({ ws, missionId, gate, item, index, review, disabled, onChange }: { ws: string; missionId: string; gate: GateName; item: GateItem; index: number; review?: GateReview; disabled: boolean; onChange: (id: string, verdict?: "ok" | "changes", note?: string) => void }) {
+	const [note, setNote] = useState(review?.verdict === "changes" ? (review.note ?? "") : "");
+	const saved = review?.note ?? "";
+	const flagged = review?.verdict === "changes";
+	return (
+		<li className={`gri${review?.verdict === "ok" ? " ok" : ""}${flagged ? " changes" : ""}`}>
+			<div className="gri-head">
+				<span className="gri-n">{index + 1}</span>
+				<span className="gri-title">{item.title}</span>
+				<span className="gri-acts">
+					<button type="button" className={`btn tiny ghost${review?.verdict === "ok" ? " on" : ""}`} disabled={disabled} aria-pressed={review?.verdict === "ok"} title="This is fine" onClick={() => onChange(item.id, review?.verdict === "ok" ? undefined : "ok")}>
+						✓ Looks right
+					</button>
+					<button type="button" className={`btn tiny ghost${flagged ? " on warn" : ""}`} disabled={disabled} aria-pressed={flagged} title="Say what should change" onClick={() => onChange(item.id, flagged ? undefined : "changes")}>
+						✎ Change this
+					</button>
+				</span>
+			</div>
+			{item.detail && (
+				<div className="gri-detail">
+					<Markdown text={item.detail} />
+				</div>
+			)}
+			{flagged && (
+				<div className="gri-note">
+					<textarea className="input" rows={2} placeholder="What should change?" value={note} onChange={(e) => setNote(e.target.value)} disabled={disabled} />
+					<button type="button" className="btn tiny" disabled={disabled || note.trim() === saved} onClick={() => onChange(item.id, "changes", note.trim())}>
+						Save note
+					</button>
+				</div>
+			)}
+		</li>
+	);
+}
+
 /** Approve or send back the requirements or the design (M2). */
 function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: string; missionId: string; gate: GateName; g?: DocGate; hasGates: boolean; canEdit: boolean; blockers: number }) {
 	const [changes, setChanges] = useState(false);
 	const [comment, setComment] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
+	// Verdicts clicked before the server answers, so a checklist of twelve doesn't feel sticky.
+	const [local, setLocal] = useState<Record<string, GateReview>>({});
 	if (!hasGates) return null;
 	const label = gate === "requirements" ? "Requirements" : "Design";
 	const act = async (what: "approve" | "changes") => {
@@ -683,6 +730,23 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 			setErr(e.message);
 		} finally {
 			setBusy(false);
+		}
+	};
+	const review = { ...(g?.reviews ?? {}), ...local };
+	const items = g?.items ?? [];
+	const flagged = items.filter((it) => review[it.id]?.verdict === "changes");
+	const settled = items.filter((it) => review[it.id]?.verdict === "ok").length;
+	/** What "Request changes" starts with: the items already flagged, so the note can just be refined. */
+	const fromItems = () => flagged.map((it) => `- **${it.title}**${review[it.id]?.note ? `: ${review[it.id]!.note}` : ""}`).join("\n");
+	const verdict = async (id: string, v?: "ok" | "changes", note?: string) => {
+		setErr("");
+		const previous = local[id];
+		setLocal((l) => ({ ...l, [id]: v ? { verdict: v, ...(v === "changes" && note ? { note } : {}), by: "", at: Date.now() } : (undefined as any) }));
+		try {
+			await api.post(`/api/w/${ws}/missions/${missionId}/gates/${gate}/review`, { item: id, verdict: v ?? "clear", note });
+		} catch (e: any) {
+			setLocal((l) => ({ ...l, [id]: previous as any }));
+			setErr(e.message);
 		}
 	};
 	if (!g) return <div className="gate-bar idle">{label}: not submitted for your approval yet. The lead asks when they're ready.</div>;
@@ -699,30 +763,68 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 				<b>Changes requested</b> by {g.decidedBy}: “{g.comment}” <span className="muted">· the team is revising</span>
 			</div>
 		);
+	const startChanges = () => setChanges(true);
+	// The lead can paste its whole document into the request; the checklist is what matters, so it comes first
+	// and the prose is one line to unfold.
+	const longSummary = (g.summary ?? "").length > 320;
 	return (
 		<div className="gate-bar pending">
-			<div className="gate-main">
-				<div>
-					<b>{label}: waiting for your approval</b>
-					<span className="muted">
-						{" "}
-						· {g.requestedBy} {g.requestedAt ? timeAgo(g.requestedAt) : ""}
-						{g.commit ? ` · main @ ${g.commit}` : ""}
-					</span>
-					{g.summary && <div className="gate-summary">{g.summary}</div>}
-				</div>
-				{canEdit && !changes && (
+			<div className="gate-head">
+				<b>{label}: waiting for your approval</b>
+				<span className="muted">
+					· {g.requestedBy} {g.requestedAt ? timeAgo(g.requestedAt) : ""}
+					{g.commit ? ` · main @ ${g.commit}` : ""}
+				</span>
+			</div>
+			{blockers > 0 && <div className="gate-block">Not ready: {blockers} blocking question{blockers === 1 ? " is" : "s are"} open on the Overview tab.</div>}
+			{items.length > 0 ? (
+				<>
+					<div className="gate-count">
+						{settled} of {items.length} looked at
+						{flagged.length ? ` · ${flagged.length} change${flagged.length === 1 ? "" : "s"} requested` : ""}
+						<span className="muted"> — say what's fine and what isn't, then approve or send it back. The document is on the tab around this card.</span>
+					</div>
+					<ol className="gate-items">
+						{items.map((it, i) => (
+							<GateReviewItem key={it.id} ws={ws} missionId={missionId} gate={gate} item={it} index={i} review={review[it.id]} disabled={!canEdit || busy || changes} onChange={verdict} />
+						))}
+					</ol>
+				</>
+			) : (
+				g.summary && (
+					<div className="gate-summary">
+						<Markdown text={g.summary} />
+					</div>
+				)
+			)}
+			{g.summary && items.length > 0 && (
+				<details className="gate-request" open={!longSummary}>
+					<summary>{longSummary ? "What the lead said about it" : "What the lead said about it"}</summary>
+					<div className="gate-summary">
+						<Markdown text={g.summary} />
+					</div>
+				</details>
+			)}
+			{canEdit && !changes && (
+				<div className="gate-foot">
+					<span className="muted">{items.length ? (flagged.length ? "Approve is off until the flagged items are fine or sent" : settled === items.length ? "Every item looked at" : "Nothing has to be ticked — approve when you're satisfied") : ""}</span>
 					<div className="gate-actions">
-						<button className="btn small" disabled={busy} onClick={() => setChanges(true)}>
-							Request changes
+						<button
+							className="btn small"
+							disabled={busy}
+							onClick={() => {
+								if (flagged.length) setComment(fromItems());
+								startChanges();
+							}}
+						>
+							{flagged.length ? `Request ${flagged.length} change${flagged.length === 1 ? "" : "s"}` : "Request changes"}
 						</button>
-						<button className="btn primary small" disabled={busy || blockers > 0} title={blockers ? "Blocking questions are open (Overview)" : undefined} onClick={() => act("approve")}>
+						<button className="btn primary small" disabled={busy || blockers > 0 || flagged.length > 0} title={flagged.length ? "You flagged items above: send those to the team, or mark them as fine" : blockers ? "Blocking questions are open (Overview)" : undefined} onClick={() => act("approve")}>
 							Approve {gate}
 						</button>
 					</div>
-				)}
-			</div>
-			{blockers > 0 && <div className="gate-block">Not ready: {blockers} blocking question{blockers === 1 ? " is" : "s are"} open on the Overview tab.</div>}
+				</div>
+			)}
 			{changes && (
 				<form
 					className="gate-changes"
@@ -731,7 +833,7 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 						if (comment.trim()) act("changes");
 					}}
 				>
-					<textarea className="input" rows={3} autoFocus placeholder={`What should change in the ${gate}?`} value={comment} onChange={(e) => setComment(e.target.value)} />
+					<textarea className="input" rows={4} autoFocus placeholder={`What should change in the ${gate}?`} value={comment} onChange={(e) => setComment(e.target.value)} />
 					<div className="row" style={{ justifyContent: "flex-end" }}>
 						<button type="button" className="btn ghost small" onClick={() => setChanges(false)}>
 							Cancel

@@ -17,6 +17,7 @@ import { users, type User } from "../kernel/system-db.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import type { Backlog } from "./backlog.ts";
 import { GATE_DOCS, openBlocking, type GateName, type MissionMeta, type MissionState, type Question } from "./docs.ts";
+import { gateItems } from "./gates.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
@@ -69,8 +70,15 @@ function waitingOnUser(state: MissionState, backlog: Backlog): { kind: string; d
 		});
 	for (const gate of Object.keys(GATE_DOCS) as GateName[]) {
 		const g = state.gates?.[gate];
-		if (g?.status === "pending")
-			out.push({ kind: "gate", detail: `the ${gate} document is waiting for the user's approval on the ${gate[0]!.toUpperCase()}${gate.slice(1)} tab${g.summary ? `: ${clip(g.summary, 160)}` : ""}` });
+		if (g?.status === "pending") {
+			// The user settles a review item by item: say how far along it is, not just that it is waiting.
+			const flagged = Object.values(g.reviews ?? {}).filter((r) => r.verdict === "changes").length;
+			const settled = Object.values(g.reviews ?? {}).filter((r) => r.verdict === "ok").length;
+			const items = gateItems(g).length;
+			const progress = items ? ` — ${settled} of ${items} looked at${flagged ? `, ${plural(flagged, "item")} flagged for changes` : ""}` : "";
+			const said = g.summary ? ` (${clip(g.summary.replace(/[*#]/g, "").replace(/\s+/g, " ").trim(), 160)})` : "";
+			out.push({ kind: "gate", detail: `the ${gate} document is waiting for the user's approval on the ${gate[0]!.toUpperCase()}${gate.slice(1)} tab${progress}${said}` });
+		}
 		if (g?.status === "changes") out.push({ kind: "gate", detail: `the user asked for changes to the ${gate} document${g.comment ? `: ${clip(g.comment, 200)}` : ""}` });
 	}
 	const a = backlog.approval;

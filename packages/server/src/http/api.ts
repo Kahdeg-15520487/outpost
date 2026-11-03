@@ -414,6 +414,18 @@ export function createApi(): Router {
 		await ws.missions.approveGate(req.params.p!, gate, user, comment ? String(comment) : undefined);
 		return { ok: true };
 	});
+	// One item of a pending review: it's fine, or it needs a change (with the note the team gets).
+	r.post("/api/w/:ws/missions/:p/gates/:gate/review", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { item, verdict, note } = await req.body();
+		await ws.missions.meta(req.params.p!);
+		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
+		if (!gate) throw new HttpError(404, "No such gate");
+		if (typeof item !== "string" || !item) throw new HttpError(400, "item: the id of the review item");
+		if (verdict !== "ok" && verdict !== "changes" && verdict !== "clear") throw new HttpError(400, "verdict: ok, changes or clear");
+		await ws.missions.reviewGateItem(req.params.p!, gate, user, item, verdict, note === undefined ? undefined : String(note));
+		return { ok: true };
+	});
 	r.post("/api/w/:ws/missions/:p/gates/:gate/changes", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();

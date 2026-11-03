@@ -252,7 +252,10 @@ export type BacklogItem = { id: string; type: ItemType; parent?: string; title: 
 export type BuildState = { paused?: boolean; startedAt?: number; finishedAt?: number; retro?: string; retroNotes?: boolean };
 export type TaskCheck = { status: "running" | "passed" | "failed" | "skipped"; stage: "submit" | "merge"; commit: string; at: number; command?: string; output?: string; reason?: string; ms?: number };
 export type GateName = "requirements" | "design";
-export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
+/** One decision point of a document review. */
+export type GateItem = { id: string; title: string; detail?: string };
+export type GateReview = { verdict: "ok" | "changes"; note?: string; by: string; at: number };
+export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; items?: GateItem[]; reviews?: Record<string, GateReview>; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
 export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
 export type PreviewInfo = { status: PreviewStatus; port?: number; appPort?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean; /** Set when previews are served as `<slug>.<preview base domain>`. */ slug?: string; publicUrl?: string };
 export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "outpost" };

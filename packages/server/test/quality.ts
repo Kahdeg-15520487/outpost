@@ -64,6 +64,57 @@ check("design review waits for approved requirements", /requirements approved fi
 const rr = await tool("lead", "request_review", { gate: "requirements", summary: "3 stories" });
 let st = await pm.state(p.id);
 check("request_review: pending, ends the lead's turn", st.gates?.requirements?.status === "pending" && rr.control?.terminate === true && !!st.gates.requirements.commit);
+
+// ------------------------------------------------------------------ reviewing a document in pieces
+console.log("reviewing in pieces");
+const { gateItems, changesFromItems, withGateItems } = await import("../src/missions/gates.ts");
+const { MissionDoc: MD } = await import("../src/missions/docs.ts");
+const setGate = (gate: "requirements" | "design", g: any) =>
+	ws.harness.commit(async (tx: any) => {
+		const doc = await tx.doc(MD, p.id, null);
+		doc.gates = { ...doc.gates, [gate]: { status: "pending", summary: "s", requestedBy: "Lead", requestedAt: Date.now(), ...g } };
+	}, ctx);
+await setGate("requirements", { summary: ["Two things:", "", "- **Scoring**: three darts, best of five", "- **Voice**: no recording, typed only"].join("\n") });
+const derived = gateItems((await pm.state(p.id)).gates?.requirements);
+check("an older request's bullets become the items of its review", derived.length === 2 && derived[0]!.title === "Scoring" && derived[0]!.detail === "three darts, best of five" && derived[1]!.id === "p2", derived);
+check("the browser is sent those items with the state", (withGateItems(await pm.state(p.id))!.gates!.requirements!).items?.length === 2);
+await pm.reviewGateItem(p.id, "requirements", u, "p1", "changes", "six darts, not five");
+let gate = (await pm.state(p.id)).gates!.requirements!;
+check("a flagged item is stored with its note and who said it", gate.reviews?.p1?.verdict === "changes" && gate.reviews.p1.note === "six darts, not five" && gate.reviews.p1.by === u.displayName, gate.reviews);
+check("the derived items are kept, so the id resolves next time", gate.items?.length === 2);
+await pm.reviewGateItem(p.id, "requirements", u, "p2", "ok");
+gate = (await pm.state(p.id)).gates!.requirements!;
+check("an item can be marked fine", gate.reviews?.p2?.verdict === "ok", gate.reviews);
+check("approving is refused while an item is flagged", /You asked for changes on 1 item \(Scoring\)/.test(await rejects(() => pm.approveGate(p.id, "requirements", u))));
+check("the change request can be built from the flagged items", changesFromItems(gate) === "- **Scoring**: six darts, not five", changesFromItems(gate));
+check("an unknown item is not a review", /No item p9/.test(await rejects(() => pm.reviewGateItem(p.id, "requirements", u, "p9", "ok"))));
+await pm.reviewGateItem(p.id, "requirements", u, "p1", "clear");
+gate = (await pm.state(p.id)).gates!.requirements!;
+check("a verdict can be taken back", !gate.reviews?.p1, gate.reviews);
+check("with nothing flagged, approving goes through", await pm.approveGate(p.id, "requirements", u).then(() => true, () => false));
+check("a decided review is not a checklist any more", /aren't waiting for approval/.test(await rejects(() => pm.reviewGateItem(p.id, "requirements", u, "p2", "ok"))));
+
+// a new request is a new checklist
+await tool("lead", "request_review", { gate: "design", summary: "rest + rows", items: [{ title: "Rest shape" }, { title: "Rows", detail: "one row per task" }] });
+gate = (await pm.state(p.id)).gates!.design!;
+check("items come with the request, in order, with ids", gate.items?.length === 2 && gate.items[0]!.id === "i1" && gate.items[1]!.title === "Rows" && gate.items[1]!.detail === "one row per task", gate.items);
+check("a new request starts with no verdicts", !Object.keys(gate.reviews ?? {}).length, gate.reviews);
+await pm.reviewGateItem(p.id, "design", u, "i1", "changes", "three columns");
+await tool("lead", "request_review", { gate: "design", summary: "rest + columns", items: [{ title: "Shape" }] });
+gate = (await pm.state(p.id)).gates!.design!;
+check("re-requesting replaces the items and forgets the old verdicts", gate.items?.length === 1 && gate.items[0]!.title === "Shape" && !Object.keys(gate.reviews ?? {}).length, gate);
+check("requesting without items keeps the checklist off", !(await (async () => {
+	await setGate("requirements", { status: "approved" });
+	await tool("lead", "request_review", { gate: "requirements", summary: "still prose only, no bullets" });
+	return (await pm.state(p.id)).gates!.requirements!.items;
+})()), "items should be absent");
+check("a changes request with no comment complains when nothing is flagged", /Say what should change, or flag an item/.test(await rejects(() => pm.gateChanges(p.id, "requirements", u, ""))));
+await tool("lead", "request_review", { gate: "requirements", summary: "again", items: [{ title: "Scope" }, { title: "Non-goals" }] });
+await pm.reviewGateItem(p.id, "requirements", u, "i2", "changes", "name the excluded formats");
+await pm.gateChanges(p.id, "requirements", u, "");
+check("the team is told which items to change", /\*\*Non-goals\*\*: name the excluded formats/.test(lastTo("lead")), lastTo("lead"));
+// back to the plain path the rest of the suite expects
+await setGate("requirements", { status: "pending", summary: "with non-goals" });
 await pm.gateChanges(p.id, "requirements", u, "Add non-goals");
 check("request changes reaches the lead", (await pm.state(p.id)).gates?.requirements?.status === "changes" && /requested changes to the requirements/.test(lastTo("lead")));
 await tool("lead", "request_review", { gate: "requirements", summary: "with non-goals" });

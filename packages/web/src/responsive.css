@@ -208,6 +208,15 @@ body.nav-locked { overflow: hidden; }
 	.proc-head { padding: 8px 10px; }
 	.proc-head .arg { font-size: 11px; }
 
+	/* --- a document review on a phone: the title gets the whole line, the two verdicts sit under it */
+	.gate-bar.pending { padding: 10px 11px; }
+	.gri-head { flex-wrap: wrap; }
+	.gri-title { flex: 1 0 100%; }
+	.gri-acts { width: 100%; justify-content: flex-end; }
+	.gri-detail, .gri-note { padding-left: 0; }
+	.gri-note { flex-wrap: wrap; }
+	.gri-note textarea { flex: 1 1 100%; } /* 16px, so iOS doesn't zoom into the note */
+
 	/* --- composer: full width, above the home indicator, and big enough not to zoom on focus */
 	.composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
 	.composer { border-radius: 14px; }
@@ -400,6 +409,7 @@ body.nav-locked { overflow: hidden; }
 @media (hover: none) {
 	.btn { padding: 8px 12px; }
 	.btn.small { padding: 7px 10px; }
+	.btn.tiny { padding: 7px 10px; font-size: 12px; } /* the review buttons are the point of the checklist */
 	.tabs button, .tab, .bp-tab { padding: 7px 11px; }
 	.side-item { padding: 9px 9px; }
 	.side-section-toggle { padding: 8px 0; } /* a label you tap to fold needs a thumb's worth of height */

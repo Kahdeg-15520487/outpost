@@ -74,7 +74,24 @@ export type Activity = { at: number; agent?: string; kind: "team" | "message" | 
 /** The user's approval of a document stage (M2). Requested by the lead, decided on the doc's tab. */
 export type GateName = "requirements" | "design";
 export const GATE_DOCS: Record<GateName, string> = { requirements: "docs/requirements.md", design: "docs/design.md" };
-export type DocGate = { status: "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; commit?: string; decidedBy?: string; decidedAt?: number; comment?: string };
+/** One decision point in a document review: a heading-ish title and, optionally, the detail the lead wants read. */
+export type GateItem = { id: string; title: string; detail?: string };
+/** The user's verdict on one item: it's fine, or it needs changing (with a note for the team). */
+export type GateReview = { verdict: "ok" | "changes"; note?: string; by: string; at: number };
+export type DocGate = {
+	status: "pending" | "approved" | "changes";
+	summary?: string;
+	/** What the user is being asked to settle, one line each. Older requests have only `summary`. */
+	items?: GateItem[];
+	/** By item id. Kept after the decision, so the page can still show what was flagged. */
+	reviews?: Record<string, GateReview>;
+	requestedBy?: string;
+	requestedAt?: number;
+	commit?: string;
+	decidedBy?: string;
+	decidedAt?: number;
+	comment?: string;
+};
 
 export type MissionState = {
 	agents: Record<string, AgentRecord>;

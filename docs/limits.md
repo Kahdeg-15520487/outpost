@@ -7,3 +7,4 @@
 - Live previews are agent-written code. As an iframe on a published port, or on `<slug>.<preview.baseDomain>`, they are checked against workspace membership — but the dev server itself has whatever the container has, and a framework's own dev-only endpoints are reachable to whoever passes that check.
 - Missions are their own repository and preview: what a team builds is not packaged as a module, and a mission's `docs/` live in git rather than in the Files store, so they can't be embedded in a chat or exported with Transfer.
 - The assistant can answer a team's questions and message it, but never approve a document gate — that stays a human decision on the mission page.
+- A document review settles its items one by one, but the decision is still one gate on one file: git has no half-approval, so approving the requirements approves `docs/requirements.md` as it stands on `main`.

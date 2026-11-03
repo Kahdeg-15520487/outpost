@@ -85,10 +85,36 @@
 .gate-bar.changes { border-color: #f3c7b5; background: var(--signal-wash); color: var(--signal-ink); }
 .gate-bar.pending { border-color: #f0dca4; background: #fffaf0; box-shadow: 0 8px 24px -16px rgba(181, 122, 6, .7); display: grid; gap: 8px; }
 .gate-main { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
-.gate-summary { margin-top: 4px; white-space: pre-wrap; font-size: 13px; }
 .gate-actions { display: flex; gap: 6px; flex: none; }
 .gate-block { font-size: 12.5px; color: #7f1d1d; }
 .gate-changes { display: grid; gap: 6px; }
+/* A review is a checklist: one row per decision point, each settleable on its own. */
+.gate-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.gate-foot { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
+.gate-foot > .muted { font-size: 12px; }
+.gate-request { border-top: 1px dashed var(--line); padding-top: 6px; }
+.gate-request > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.gate-request[open] > summary { margin-bottom: 6px; }
+.gate-summary { max-width: 78ch; font-size: 13px; }
+.gate-summary > :first-child { margin-top: 0; }
+.gate-summary > :last-child { margin-bottom: 0; }
+.gate-count { font-size: 12px; color: var(--muted); }
+.gate-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.gri { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 8px 10px; display: grid; gap: 4px; }
+.gri.ok { border-color: #bfe0c8; background: #f6fbf7; }
+.gri.changes { border-color: #f3c7b5; background: #fffaf7; }
+.gri-head { display: flex; gap: 8px; align-items: baseline; }
+.gri-n { flex: none; width: 18px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.gri-title { flex: 1; font-weight: 600; font-size: 13px; }
+.gri-acts { flex: none; display: flex; gap: 4px; }
+.gri-detail { font-size: 12.5px; color: var(--ink-2); padding-left: 26px; }
+.gri-detail > :first-child { margin-top: 0; }
+.gri-detail > :last-child { margin-bottom: 0; }
+.gri-note { display: flex; gap: 6px; align-items: flex-end; padding-left: 26px; }
+.gri-note textarea { flex: 1; font-size: 12.5px; }
+.btn.tiny { font-size: 11.5px; padding: 3px 7px; border-radius: 7px; }
+.btn.tiny.on { background: var(--ok-wash); border-color: #bfe0c8; color: #1d5a33; }
+.btn.tiny.on.warn { background: var(--signal-wash); border-color: #f3c7b5; color: var(--signal-ink); }
 .vt-badge.gate { background: #b45309; }
 .ov-gate { display: flex; align-items: center; gap: 9px; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid #f0dca4; background: #fffaf0; font-size: 13px; color: var(--text); text-decoration: none; }
 .ov-gate i { width: 9px; height: 9px; border-radius: 50%; background: #d97706; flex: none; }

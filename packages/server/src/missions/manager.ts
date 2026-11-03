@@ -12,6 +12,7 @@ import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
 import { ACTIVITY_LIMIT, GATE_DOCS, MissionDoc, MissionsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type GateName, type MissionMeta, type MissionStage, type MissionState } from "./docs.ts";
+import { changesFromItems, flaggedItems, gateItems, withGateItems } from "./gates.ts";
 import { missionSlug } from "./slug.ts";
 import { MissionRepo } from "./repo.ts";
 import { join } from "node:path";
@@ -172,7 +173,7 @@ export class MissionManager {
 
 	async snapshot(missionId: string) {
 		const [meta, state, backlog] = await Promise.all([this.meta(missionId), this.state(missionId), this.backlog(missionId)]);
-		return { mission: meta, state, backlog, summaries: this.summaries.get(missionId) ?? {}, head: await this.repo(missionId).head().catch(() => ""), preview: this.previews.info(missionId) };
+		return { mission: meta, state: withGateItems(state), backlog, summaries: this.summaries.get(missionId) ?? {}, head: await this.repo(missionId).head().catch(() => ""), preview: this.previews.info(missionId) };
 	}
 
 	async backlog(missionId: string): Promise<Backlog> {
@@ -188,7 +189,7 @@ export class MissionManager {
 					await tx.doc(BacklogDoc, missionId, null);
 				}, ctx);
 				const w = await this.ws.harness.watchDoc(MissionDoc, missionId, ctx);
-				w?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.state", ws: this.ws.id, mission: missionId, state: value }));
+				w?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.state", ws: this.ws.id, mission: missionId, state: withGateItems(value) }));
 				const b = await this.ws.harness.watchDoc(BacklogDoc, missionId, ctx);
 				b?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.backlog", ws: this.ws.id, mission: missionId, backlog: value }));
 			})();
@@ -348,9 +349,39 @@ export class MissionManager {
 		return (["requirements", "design"] as GateName[]).filter((g) => gates[g]?.status !== "approved");
 	}
 
+	/**
+	 * The user's verdict on one item of a pending review. The gate itself is decided by `approveGate` /
+	 * `gateChanges`; this is the checklist that leads up to it.
+	 */
+	async reviewGateItem(missionId: string, gate: GateName, user: User, item: string, verdict: "ok" | "changes" | "clear", note?: string) {
+		await this.ws.harness.commit(async (tx) => {
+			const st = (await tx.doc(MissionDoc, missionId, null)) as MissionState;
+			const g = st.gates?.[gate];
+			if (!g || g.status !== "pending") throw new HttpError(409, `The ${gate} aren't waiting for approval`.replace("design aren't", "design isn't"));
+			// An older request has no stored items; derive them once and keep them, so the id the browser sends
+			// resolves on every later call too.
+			if (!g.items?.length) {
+				const derived = gateItems(g);
+				if (!derived.length) throw new HttpError(409, `The ${gate} review has no items to decide one by one`);
+				g.items = derived;
+			}
+			const found = g.items.find((it) => it.id === item);
+			if (!found) throw new HttpError(404, `No item ${item} in the ${gate} review`);
+			g.reviews ??= {};
+			if (verdict === "clear") delete g.reviews[item];
+			else {
+				const text = (note ?? "").trim();
+				g.reviews[item] = { verdict, ...(verdict === "changes" && text ? { note: text } : {}), by: user.displayName, at: Date.now() };
+			}
+		}, ctx);
+	}
+
 	/** The user approves requirements or design; the lead moves on. */
 	async approveGate(missionId: string, gate: GateName, user: User, comment?: string) {
 		await this.assertReady(missionId);
+		const flagged = flaggedItems((await this.state(missionId)).gates?.[gate]);
+		if (flagged.length)
+			throw new HttpError(409, `You asked for changes on ${flagged.length} item${flagged.length === 1 ? "" : "s"} (${flagged.map((i) => i.title).join(", ")}). Send those to the team, or mark them as fine.`);
 		await this.ws.harness.commit(async (tx) => {
 			const st = (await tx.doc(MissionDoc, missionId, null)) as MissionState;
 			st.gates ??= {};
@@ -366,9 +397,10 @@ export class MissionManager {
 		);
 	}
 
-	/** The user sends requirements or design back with a comment. */
+	/** The user sends requirements or design back with a comment — or with the items they flagged. */
 	async gateChanges(missionId: string, gate: GateName, user: User, comment: string) {
-		if (!comment.trim()) throw new HttpError(400, "Say what should change");
+		if (!comment.trim()) comment = changesFromItems((await this.state(missionId)).gates?.[gate]);
+		if (!comment.trim()) throw new HttpError(400, "Say what should change, or flag an item");
 		await this.ws.harness.commit(async (tx) => {
 			const st = (await tx.doc(MissionDoc, missionId, null)) as MissionState;
 			const g = st.gates?.[gate];
@@ -923,8 +955,17 @@ export class MissionManager {
 			defineTool({
 				name: "request_review",
 				description:
-					"Lead only. Ask the user to approve the requirements (docs/requirements.md) or the design (docs/design.md, decision records, wireframes) on main. They approve or request changes on that document's tab; their decision arrives as a message. End your turn after it. The backlog can't be approved until both are.",
-				parameters: Type.Object({ gate: Type.Union([Type.Literal("requirements"), Type.Literal("design")]), summary: Type.String({ description: "a few lines: what's in it, the main choices, open points" }) }),
+					"Lead only. Ask the user to approve the requirements (docs/requirements.md) or the design (docs/design.md, decision records, wireframes) on main. They settle it on that document's tab, item by item, and their decision arrives as a message. End your turn after it. The backlog can't be approved until both are.",
+				parameters: Type.Object({
+					gate: Type.Union([Type.Literal("requirements"), Type.Literal("design")]),
+					summary: Type.String({ description: "two or three sentences: what's in it and what you need decided. Not the document." }),
+					items: Type.Optional(
+						Type.Array(Type.Object({ title: Type.String({ description: "the decision point, a few words" }), detail: Type.Optional(Type.String({ description: "one line of context, if the title isn't enough" })) }), {
+							maxItems: 12,
+							description: "what the user settles one by one: the choices, the open points, the things you'd most like checked. Say what you recommend where there is a recommendation.",
+						}),
+					),
+				}),
 				execute: async (args, api) => {
 					const { missionId, me, state } = await this.#caller(api);
 					if (me.role !== "lead") throw new Error("Only the lead requests reviews.");
@@ -935,7 +976,9 @@ export class MissionManager {
 					await this.ws.harness.commit(async (tx) => {
 						const st = (await tx.doc(MissionDoc, missionId, null)) as MissionState;
 						st.gates ??= {};
-						st.gates[gate] = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now(), ...(commit ? { commit } : {}) };
+						const items = (args.items ?? []).map((it, i) => ({ id: `i${i + 1}`, title: it.title.trim(), ...(it.detail?.trim() ? { detail: it.detail.trim() } : {}) }));
+						// A new request is a new checklist: verdicts on the previous one don't carry over.
+						st.gates[gate] = { status: "pending", summary: args.summary, ...(items.length ? { items, reviews: {} } : {}), requestedBy: me.name, requestedAt: Date.now(), ...(commit ? { commit } : {}) };
 						pushActivity(st, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the ${gate} — see the ${gate === "requirements" ? "Requirements" : "Design"} tab` });
 					}, ctx);
 					return { ...text(`Submitted the ${gate} for review. The user decides on its tab; their decision arrives as a message. End your turn now.`), control: { terminate: true } };

@@ -96,6 +96,24 @@ function demoProvider() {
 /** With `models.ambientEnv: false`, providers see no env vars or ambient files (AWS profiles, gcloud ADC): only outpost credentials. */
 const isolatedAuthContext = { env: async () => undefined, fileExists: async () => false };
 
+/**
+ * Which providers this instance offers. `models.only` is the allowlist — the point of it is that a self-hosted
+ * Outpost can be a "the key you have" box rather than a directory of every provider pi-ai supports; `enabled:
+ * false` on one provider is the narrow case of the same idea. Kept pure so it can be checked without a config file.
+ */
+export function offeredProviders<T extends { id: string }>(builtins: readonly T[], opts: { only: readonly string[]; providers: Record<string, { enabled?: boolean; [key: string]: unknown }> }): { offered: T[]; unknownOnly: string[]; ignored: string[] } {
+	const allowed = opts.only.length ? new Set(opts.only) : undefined;
+	const offered = builtins.filter((p) => (!allowed || allowed.has(p.id)) && opts.providers[p.id]?.enabled !== false);
+	const known = new Set(builtins.map((p) => p.id));
+	return {
+		offered,
+		// ids in `models.only` that aren't a provider at all: a typo, or a provider that was removed
+		unknownOnly: opts.only.filter((id) => !known.has(id)),
+		// a key configured for a provider the allowlist doesn't offer: it would silently do nothing
+		ignored: Object.keys(opts.providers).filter((id) => known.has(id) && !offered.some((p) => p.id === id) && opts.providers[id]?.enabled !== false),
+	};
+}
+
 export function createOutpostModels(): MutableModels {
 	const models = createModels({
 		credentials,
@@ -103,8 +121,11 @@ export function createOutpostModels(): MutableModels {
 		identity: { attribution: { name: "Outpost", url: "https://github.com/Kahdeg-15520487/outpost" } },
 	});
 	const builtins = builtinProviders();
-	for (const provider of builtins) if (config.providers[provider.id]?.enabled !== false) models.setProvider(provider);
+	const { offered, unknownOnly, ignored } = offeredProviders(builtins, { only: config.onlyProviders, providers: config.providers });
+	for (const provider of offered) models.setProvider(provider);
 	if (config.demoModel) models.setProvider(demoProvider());
+	if (unknownOnly.length) console.warn(`outpost: models.only names unknown provider id(s): ${unknownOnly.join(", ")}. Known: ${builtins.map((p) => p.id).join(", ")}`);
+	if (ignored.length) console.warn(`outpost: models.providers.${ignored.join(", models.providers.")} configured, but models.only doesn't offer ${ignored.length === 1 ? "it" : "them"} — ignored`);
 	const unknown = Object.keys(config.providers).filter((id) => !builtins.some((p) => p.id === id));
 	if (unknown.length) console.warn(`outpost: unknown provider id(s) in config: ${unknown.join(", ")}. Known: ${builtins.map((p) => p.id).join(", ")}`);
 	for (const [id, entry] of Object.entries(config.providers)) {

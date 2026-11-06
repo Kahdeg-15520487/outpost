@@ -106,7 +106,8 @@ export function createApi(): Router {
 	r.get("/api/providers", async (req) => {
 		req.need();
 		const providers = await Promise.all((await listProviders()).map(async (p) => ({ ...p, oauth: await oauthLogins.describe(p.id) })));
-		return { providers, configPath: config.configPath, configFound: config.configFound, ambientEnv: config.ambientEnv };
+		// `only`: the providers this instance offers (models.only), so the page can say why the list is short.
+		return { providers, configPath: config.configPath, configFound: config.configFound, ambientEnv: config.ambientEnv, only: config.onlyProviders };
 	});
 	// OAuth sign-in (device-code flows, e.g. GitHub Copilot). The flow runs here; Settings polls it.
 	r.post("/api/providers/:id/oauth", async (req) => ({ login: oauthLogins.start(req.params.id!, req.need().displayName) }));

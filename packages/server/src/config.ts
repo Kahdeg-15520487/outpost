@@ -52,6 +52,11 @@ export type OutpostConfigFile = {
 		default?: string;
 		/** Per-provider keys and settings, keyed by pi provider id (anthropic, openai, google, openrouter, …). */
 		providers?: Record<string, ProviderConfig>;
+		/**
+		 * The only providers this instance offers. Listed in Settings, and the only real models in the picker;
+		 * every other provider pi-ai supports is as if it didn't exist. Absent or empty means all of them.
+		 */
+		only?: string[];
 		/** Let providers also pick up their standard env vars (ANTHROPIC_API_KEY, …). Default true. */
 		ambientEnv?: boolean;
 		/** Offer the offline scripted demo model. Default true. */
@@ -201,6 +206,16 @@ export const config = {
 	webDist: join(repoRoot, "packages", "web", "dist"),
 	defaultModel,
 	providers: file.models?.providers ?? {},
+	/** `models.only`, narrowed: trimmed, lowercased, deduplicated. Empty means "every provider is offered". */
+	onlyProviders: (() => {
+		const raw = file.models?.only;
+		if (raw === undefined) return [];
+		if (!Array.isArray(raw)) {
+			console.warn(`outpost: models.only must be an array of provider ids, got ${JSON.stringify(raw)} — ignoring`);
+			return [];
+		}
+		return [...new Set(raw.map((id) => String(id).trim().toLowerCase()).filter(Boolean))];
+	})(),
 	ambientEnv: file.models?.ambientEnv ?? true,
 	demoModel: file.models?.demo ?? true,
 	githubToken: () => resolveSecret(file.airlocks?.github?.token).value,

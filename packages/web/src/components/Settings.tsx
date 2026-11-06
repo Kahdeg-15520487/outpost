@@ -11,6 +11,8 @@ type Provider = { id: string; name: string; configured: boolean; source?: string
 
 export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace; onChanged: () => void; onManageModels: () => void }) {
 	const [providers, setProviders] = useState<Provider[]>([]);
+	/** models.only: the providers this instance offers. Empty means every provider pi-ai supports. */
+	const [only, setOnly] = useState<string[]>([]);
 	const [cfg, setCfg] = useState<{ configPath: string; configFound: boolean; ambientEnv: boolean }>();
 	const [keyErr, setKeyErr] = useState("");
 	const [models, setModels] = useState<ModelInfo[]>([]);
@@ -30,6 +32,7 @@ export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace;
 	const loadProviders = () =>
 		api.get("/api/providers").then((r) => {
 			setProviders(r.providers);
+			setOnly(r.only ?? []);
 			// Rejoin a sign-in that is still running (page reload, another tab).
 			const running = (r.providers as Provider[]).find((p) => p.oauth?.login?.status === "running");
 			if (running) setSignInFor((cur) => cur ?? running.id);
@@ -141,7 +144,14 @@ export function SettingsPage({ ws, onChanged, onManageModels }: { ws: Workspace;
 						<div className="card">
 							<h3 style={{ margin: "0 0 4px", font: "600 17px var(--display)" }}>Model providers</h3>
 							<div className="muted" style={{ fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
-								Every provider pi-ai supports. A key is taken from, in order: <b>{cfg?.configFound ? "" : "(missing) "}</b>
+								{only.length ? (
+									<>
+										This instance offers <b>{only.join(", ")}</b> — <code className="mono">models.only</code> in <code className="mono">{cfg?.configPath}</code> decides which providers exist here.
+									</>
+								) : (
+									<>Every provider pi-ai supports.</>
+								)}{" "}
+								A key is taken from, in order: <b>{cfg?.configFound ? "" : "(missing) "}</b>
 								<code className="mono">{cfg?.configPath}</code> → keys saved here (encrypted in the data dir)
 								{cfg?.ambientEnv ? <> → the provider's standard env var</> : <> (ambient env vars disabled)</>}.
 							</div>

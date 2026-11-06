@@ -19,6 +19,7 @@ cp outpost.config.example.json outpost.config.json
       "azure": { "apiKey": "$AZURE_OPENAI_API_KEY", "env": { "AZURE_OPENAI_BASE_URL": "https://…" } },
       "groq": { "enabled": false }                          // hide a provider
     },
+    "only": ["anthropic", "openai"],           // optional: the only providers this instance offers
     "ambientEnv": true,                        // also accept providers' standard env vars
     "demo": true                               // offer the offline demo model
   },
@@ -35,6 +36,8 @@ Outpost can use every provider pi-ai supports: Anthropic, OpenAI, Google, Azure,
 3. The provider's **standard env var** (`ANTHROPIC_API_KEY`, …). Set `models.ambientEnv: false` to turn this off.
 
 **GitHub Copilot** uses a subscription sign-in instead of a key. Go to **Settings → Model providers → Sign in with GitHub**, copy the code, and approve it at github.com/login/device. Leave the domain prompt blank for github.com, or enter your GitHub Enterprise domain. The flow runs on the server (device code, so the browser doesn't need to be on the same machine). The token is stored in the encrypted credential store and refreshed automatically. The model picker shows only the models your Copilot plan allows. Other subscription logins aren't offered; those providers take API keys.
+
+**Narrowing the list.** By default every provider pi-ai supports is offered, which is a lot of list for an instance that will only ever use one or two. `models.only` is an allowlist: the providers it names are the ones that exist here — they are what Settings lists, what can be given a key, and the only real models in the picker. Everything else is as if pi-ai didn't support it. `models.providers.<id>.enabled: false` still hides a single provider, and the two compose (allowed but switched off is off). An id in `only` that isn't a provider, and a key configured for a provider `only` leaves out, are both warnings at startup rather than silent no-ops.
 
 Unknown provider IDs and `$VAR`s that aren't set produce warnings at startup.
 

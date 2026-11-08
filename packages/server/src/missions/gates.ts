@@ -10,7 +10,7 @@
  * existing pending review gets the same checklist. Parsed ids are `p1…`, explicit ids `i1…`, so a review of a
  * parsed item can never be mistaken for a review of a new one.
  */
-import type { DocGate, GateItem, GateReview, MissionState } from "./docs.ts";
+import type { GateItem, GateReview, MissionState, Review } from "./docs.ts";
 
 const MAX_ITEMS = 20;
 
@@ -22,7 +22,7 @@ function splitItem(line: string): { title: string; detail?: string } {
 }
 
 /** Items a request carries: what the lead listed, or the bullets of its summary for older requests. */
-export function gateItems(g: DocGate | undefined): GateItem[] {
+export function gateItems(g: Review | undefined): GateItem[] {
 	if (!g) return [];
 	if (g.items?.length) return g.items;
 	const text = g.summary ?? "";
@@ -44,17 +44,17 @@ export function gateItems(g: DocGate | undefined): GateItem[] {
 }
 
 /** Reviews in item order, so a view can say "3 of 6 settled" without looking at keys. */
-export function gateReview(g: DocGate | undefined, id: string): GateReview | undefined {
+export function gateReview(g: Review | undefined, id: string): GateReview | undefined {
 	return g?.reviews?.[id];
 }
 
 /** Items the user marked as needing a change. */
-export function flaggedItems(g: DocGate | undefined): GateItem[] {
+export function flaggedItems(g: Review | undefined): GateItem[] {
 	return gateItems(g).filter((it) => g?.reviews?.[it.id]?.verdict === "changes");
 }
 
 /** The change request the team gets, when the user flagged items instead of writing a paragraph. */
-export function changesFromItems(g: DocGate | undefined): string {
+export function changesFromItems(g: Review | undefined): string {
 	const flagged = flaggedItems(g);
 	if (!flagged.length) return "";
 	return flagged.map((it) => `- **${it.title}**${g!.reviews![it.id]!.note ? `: ${g!.reviews![it.id]!.note}` : ""}`).join("\n");

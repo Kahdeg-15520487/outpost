@@ -1,9 +1,10 @@
 import "../backlog.css";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, type AgentRecord, type Backlog, type BacklogItem, type Feedback, type ItemStatus, type Question } from "../api";
+import { api, type AgentRecord, type Backlog, type BacklogItem, type Feedback, type GateReview, type ItemStatus, type Question } from "../api";
 import { timeAgo } from "../store";
 import { Markdown } from "./bits";
 import { askConfirm, reportError } from "../dialogs";
+import { ReviewChecklist, changesFromFlags, reviewFootNote } from "./ReviewChecklist";
 
 const COLUMNS: { id: ItemStatus; label: string }[] = [
 	{ id: "todo", label: "To do" },
@@ -158,11 +159,32 @@ function Blockers({ blockers }: { blockers: Question[] }) {
 	);
 }
 
+
+/**
+ * What the requester said when they asked: markdown, and folded away when it is longer than a paragraph. The
+ * checklist is what the user is being asked to settle, so it comes first — a pasted wall of prose above it made the
+ * card scroll before the first item (the same fix the document gates needed).
+ */
+function ReviewRequest({ summary, what }: { summary?: string; what: string }) {
+	if (!summary) return null;
+	const long = summary.length > 320;
+	return (
+		<details className="gate-request" open={!long}>
+			<summary>{what}</summary>
+			<div className="gate-summary">
+				<Markdown text={summary} />
+			</div>
+		</details>
+	);
+}
+
 function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: string; backlog: Backlog; canEdit: boolean; blockers: Question[]; gatesLeft: string[] }) {
 	const a = backlog.approval;
 	const [changes, setChanges] = useState(false);
 	const [comment, setComment] = useState("");
 	const [busy, setBusy] = useState(false);
+	// Verdicts clicked before the server answers, so a list of ten features doesn't feel sticky.
+	const [local, setLocal] = useState<Record<string, GateReview>>({});
 	const act = async (path: string, body: object) => {
 		setBusy(true);
 		try {
@@ -173,6 +195,19 @@ function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: st
 			reportError(e.message);
 		} finally {
 			setBusy(false);
+		}
+	};
+	const reviews = { ...(a.reviews ?? {}), ...local };
+	const items = a.items ?? [];
+	const flagged = items.filter((it) => reviews[it.id]?.verdict === "changes");
+	const verdict = async (id: string, v?: "ok" | "changes", note?: string) => {
+		const previous = local[id];
+		setLocal((l) => ({ ...l, [id]: v ? { verdict: v, ...(v === "changes" && note ? { note } : {}), by: "", at: Date.now() } : (undefined as any) }));
+		try {
+			await api.post(`${base}/review`, { item: id, verdict: v ?? "clear", note });
+		} catch (e: any) {
+			setLocal((l) => ({ ...l, [id]: previous as any }));
+			reportError(e.message);
 		}
 	};
 	if (a.status === "approved") return <BuildBar base={base} backlog={backlog} canEdit={canEdit} />;
@@ -189,19 +224,41 @@ function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: st
 				<div>
 					<b>Waiting for your approval</b>
 					<span className="muted"> · {a.requestedBy} {a.requestedAt ? timeAgo(a.requestedAt) : ""}</span>
-					{a.summary && <div className="bl-ap-summary">{a.summary}</div>}
 				</div>
 				{canEdit && !changes && (
 					<div className="bl-ap-actions">
-						<button className="btn small" disabled={busy} onClick={() => setChanges(true)}>
-							Request changes
+						<button
+							className="btn small"
+							disabled={busy}
+							onClick={() => {
+								if (flagged.length) setComment(changesFromFlags(items, reviews));
+								setChanges(true);
+							}}
+						>
+							{flagged.length ? `Request ${flagged.length} change${flagged.length === 1 ? "" : "s"}` : "Request changes"}
 						</button>
-						<button className="btn primary small" disabled={busy || blockers.length > 0 || gatesLeft.length > 0} onClick={() => act("approve", {})} title={gatesLeft.length ? `Approve the ${gatesLeft.join(" and the ")} first` : blockers.length ? "Blocking questions are open" : undefined}>
+						<button
+							className="btn primary small"
+							disabled={busy || blockers.length > 0 || gatesLeft.length > 0 || flagged.length > 0}
+							onClick={() => act("approve", {})}
+							title={flagged.length ? "You flagged items below: send those to the team, or mark them as fine" : gatesLeft.length ? `Approve the ${gatesLeft.join(" and the ")} first` : blockers.length ? "Blocking questions are open" : undefined}
+						>
 							Approve backlog
 						</button>
 					</div>
 				)}
 			</div>
+			{items.length > 0 ? (
+				<div className="bl-review">
+					<ReviewChecklist items={items} reviews={reviews} disabled={!canEdit || busy || changes} onVerdict={verdict} what="Each feature is one decision; the board below is the whole plan." />
+					{canEdit && !changes && <div className="gate-foot-note muted">{reviewFootNote(items, reviews)}</div>}
+				</div>
+			) : (
+				<div className="gate-summary">
+					<Markdown text={a.summary ?? ""} />
+				</div>
+			)}
+			<ReviewRequest summary={a.summary} what="What the planner said about it" />
 			{gatesLeft.length > 0 && (
 				<div className="bl-blockers">
 					<b>Approve the {gatesLeft.join(" and the ")} first</b> (on {gatesLeft.length === 1 ? "its tab" : "their tabs"}): the backlog is planned from {gatesLeft.length === 1 ? "it" : "them"}.
@@ -216,7 +273,7 @@ function ApprovalBar({ base, backlog, canEdit, blockers, gatesLeft }: { base: st
 						if (comment.trim()) act("changes", { comment });
 					}}
 				>
-					<textarea className="input" rows={3} autoFocus placeholder="What should change? e.g. Drop F8 Reports; split T12; T5 must come before T3…" value={comment} onChange={(e) => setComment(e.target.value)} />
+					<textarea className="input" rows={3} autoFocus placeholder="What should change? The items you flagged are in here already — add anything else. e.g. Drop F8 Reports; split T12; T5 must come before T3…" value={comment} onChange={(e) => setComment(e.target.value)} />
 					<div className="row" style={{ justifyContent: "flex-end" }}>
 						<button type="button" className="btn ghost small" onClick={() => setChanges(false)}>
 							Cancel
@@ -239,6 +296,7 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 	const [busy, setBusy] = useState(false);
 	const [changes, setChanges] = useState<string | null>(null);
 	const [comment, setComment] = useState("");
+	const [local, setLocal] = useState<Record<string, GateReview>>({});
 	const pending = Object.values(backlog.items)
 		.filter((i) => i.pending)
 		.sort(byOrder);
@@ -258,6 +316,21 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 		}
 	};
 	const r = backlog.pendingRequest;
+	const reviews = { ...(backlog.pendingReview?.reviews ?? {}), ...local };
+	const items = backlog.pendingReview?.items ?? [];
+	const flaggedIds = new Set(items.filter((it) => reviews[it.id]?.verdict === "changes").map((it) => it.id));
+	/** A group is held down by the items in it that are flagged — the same rule as the backlog itself. */
+	const flaggedOf = (ids: string[]) => items.filter((it) => flaggedIds.has(it.id) && (ids.length === 0 || ids.includes(it.id)));
+	const verdict = async (id: string, v?: "ok" | "changes", note?: string) => {
+		const previous = local[id];
+		setLocal((l) => ({ ...l, [id]: v ? { verdict: v, ...(v === "changes" && note ? { note } : {}), by: "", at: Date.now() } : (undefined as any) }));
+		try {
+			await api.post(`${base}/pending-review`, { item: id, verdict: v ?? "clear", note });
+		} catch (e: any) {
+			setLocal((l) => ({ ...l, [id]: previous as any }));
+			reportError(e.message);
+		}
+	};
 	return (
 		<div className="bl-approval pending bl-pending">
 			<div className="bl-ap-main">
@@ -273,9 +346,14 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 					) : (
 						<span className="muted"> · the team is still drafting</span>
 					)}
-					{r?.summary && <div className="bl-ap-summary">{r.summary}</div>}
 				</div>
 			</div>
+			{items.length > 0 && (
+				<div className="bl-review">
+					<ReviewChecklist items={items} reviews={reviews} disabled={!canEdit || busy || changes !== null} onVerdict={verdict} what="Approve all of them, or a feedback's items on their own." />
+				</div>
+			)}
+			<ReviewRequest summary={r?.summary} what="What the team said about them" />
 			{[...groups].map(([fb, items]) => (
 				<div key={fb || "-"} className="pd-group">
 					<div className="pd-head">
@@ -289,10 +367,23 @@ function PendingBar({ base, backlog, canEdit, blockers, feedback, onOpen }: { ba
 						)}
 						{canEdit && (
 							<span className="pd-actions">
-								<button className="btn small" disabled={busy} onClick={() => setChanges(fb)}>
+								<button
+									className="btn small"
+									disabled={busy}
+									onClick={() => {
+										const mine = flaggedOf(items.map((i) => i.id));
+										if (mine.length) setComment(changesFromFlags(mine, reviews));
+										setChanges(fb);
+									}}
+								>
 									Request changes
 								</button>
-								<button className="btn primary small" disabled={busy || blockers.length > 0} title={blockers.length ? "Blocking questions are open" : undefined} onClick={() => act("approve-pending", fb ? { feedback: fb } : {})}>
+								<button
+									className="btn primary small"
+									disabled={busy || blockers.length > 0 || flaggedOf(items.map((i) => i.id)).length > 0}
+									title={flaggedOf(items.map((i) => i.id)).length ? "You flagged items above: send those to the team, or mark them as fine" : blockers.length ? "Blocking questions are open" : undefined}
+									onClick={() => act("approve-pending", fb ? { feedback: fb } : {})}
+								>
 									Approve{groups.size > 1 ? " these" : ""}
 								</button>
 							</span>

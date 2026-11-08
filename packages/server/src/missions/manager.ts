@@ -11,12 +11,12 @@ import { HttpError, newId, type User } from "../kernel/system-db.ts";
 import { models as modelRegistry } from "../kernel/models.ts";
 import { formatBytes } from "../files/store.ts";
 import type { Workspace } from "../kernel/workspace.ts";
-import { ACTIVITY_LIMIT, GATE_DOCS, MissionDoc, MissionsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type GateName, type MissionMeta, type MissionStage, type MissionState } from "./docs.ts";
+import { ACTIVITY_LIMIT, GATE_DOCS, MissionDoc, MissionsDoc, isBlocking, openBlocking, type Activity, type AgentRecord, type Feedback, type GateName, type MissionMeta, type MissionStage, type MissionState, type Review } from "./docs.ts";
 import { changesFromItems, flaggedItems, gateItems, withGateItems } from "./gates.ts";
 import { missionSlug } from "./slug.ts";
 import { MissionRepo } from "./repo.ts";
 import { join } from "node:path";
-import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, emptyBacklog, isPending, renderBacklog, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
+import { BacklogDoc, PARENT_TYPE, STATUSES, STATUS_LABEL, addItems, backlogOutline, backlogReviewItems, emptyBacklog, isPending, pendingReviewItems, renderBacklog, withReviewItems, type Backlog, type BacklogItem, type ItemInput } from "./backlog.ts";
 import { agentInstructions, roleCatalog, roleDef } from "./roles.ts";
 import { AgentWatcher, type AgentSummary } from "./watch.ts";
 import { BuildScheduler } from "./build.ts";
@@ -173,7 +173,7 @@ export class MissionManager {
 
 	async snapshot(missionId: string) {
 		const [meta, state, backlog] = await Promise.all([this.meta(missionId), this.state(missionId), this.backlog(missionId)]);
-		return { mission: meta, state: withGateItems(state), backlog, summaries: this.summaries.get(missionId) ?? {}, head: await this.repo(missionId).head().catch(() => ""), preview: this.previews.info(missionId) };
+		return { mission: meta, state: withGateItems(state), backlog: withReviewItems(backlog), summaries: this.summaries.get(missionId) ?? {}, head: await this.repo(missionId).head().catch(() => ""), preview: this.previews.info(missionId) };
 	}
 
 	async backlog(missionId: string): Promise<Backlog> {
@@ -191,7 +191,7 @@ export class MissionManager {
 				const w = await this.ws.harness.watchDoc(MissionDoc, missionId, ctx);
 				w?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.state", ws: this.ws.id, mission: missionId, state: withGateItems(value) }));
 				const b = await this.ws.harness.watchDoc(BacklogDoc, missionId, ctx);
-				b?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.backlog", ws: this.ws.id, mission: missionId, backlog: value }));
+				b?.start(async (value) => hub.publish(this.channel(missionId), { t: "mission.backlog", ws: this.ws.id, mission: missionId, backlog: withReviewItems(value) }));
 			})();
 			started.catch(() => this.#docWatches.delete(missionId));
 			this.#docWatches.set(missionId, started);
@@ -247,6 +247,10 @@ export class MissionManager {
 		await this.assertReady(missionId);
 		const missing = await this.unapprovedGates(missionId);
 		if (missing.length) throw new HttpError(409, `Approve the ${missing.join(" and the ")} first (on ${missing.length === 1 ? "its tab" : "their tabs"}); the backlog is planned from ${missing.length === 1 ? "it" : "them"}.`);
+		// The review is in pieces, but the backlog is still approved once. Sending it back is how a flagged item
+		// reaches the team, so approve is refused until they are fine.
+		const flagged = flaggedItems((await this.backlog(missionId)).approval);
+		if (flagged.length) throw new HttpError(409, `You asked for changes on ${flagged.length} item${flagged.length === 1 ? "" : "s"} (${flagged.map((i) => i.title).join(", ")}). Send those to the team, or mark them as fine.`);
 		const rev = await this.editBacklog(missionId, (b) => {
 			b.approval = Object.fromEntries(Object.entries({ ...b.approval, status: "approved", decidedBy: user.displayName, decidedAt: Date.now(), comment: comment || undefined, revision: b.revision + 1 }).filter(([, v]) => v !== undefined)) as Backlog["approval"];
 			return b.revision + 1;
@@ -255,13 +259,62 @@ export class MissionManager {
 		await this.tellLead(missionId, `The user (${user.displayName}) **approved the backlog** (revision ${rev}).${comment ? `\n\nTheir note: ${comment}` : ""}\n\nThe build starts now: outpost assigns ready tasks to the developers (role \`worker\`), routes finished work to the reviewer and merges what passes. Make sure the team has the developers (and a reviewer) the backlog needs (team_add with start: false; they get tasks automatically). You handle blocked tasks and questions.`);
 	}
 
-	/** The user sends the backlog back with a comment; the Lead gets it to the planner. */
+	/** The user sends the backlog back with a comment — or with the items they flagged; the Lead gets it to the planner. */
 	async requestBacklogChanges(missionId: string, user: User, comment: string) {
+		comment = comment.trim() || changesFromItems((await this.backlog(missionId)).approval);
+		if (!comment.trim()) throw new HttpError(400, "Say what should change, or flag an item");
 		await this.editBacklog(missionId, (b) => {
 			b.approval = { ...b.approval, status: "changes", decidedBy: user.displayName, decidedAt: Date.now(), comment };
 		});
 		await this.log(missionId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for backlog changes: ${clip(comment, 160)}` });
 		await this.tellLead(missionId, `The user (${user.displayName}) **requested changes to the backlog**:\n\n${comment}\n\nHave the backlog revised with the backlog tools, then request approval again with backlog_request_approval.`);
+	}
+
+	/**
+	 * The user's verdict on one item of the backlog review: the feature (or PBI) it is asking about, or one of the
+	 * items it named itself. Stored on the request, not on the board: a review is not a change to the plan, so it
+	 * bumps no revision and writes nothing to git.
+	 */
+	async reviewBacklogItem(missionId: string, user: User, item: string, verdict: "ok" | "changes" | "clear", note?: string) {
+		await this.ws.harness.commit(async (tx) => {
+			const b = (await tx.doc(BacklogDoc, missionId, null)) as Backlog;
+			const a = b.approval;
+			if (a.status !== "pending") throw new HttpError(409, "The backlog isn't waiting for approval");
+			// Derived items are kept on the first verdict, so the id the browser sends resolves on every later call.
+			if (!a.items?.length) {
+				const derived = backlogReviewItems(b);
+				if (!derived.length) throw new HttpError(409, "The backlog review has no items to decide one by one");
+				a.items = derived;
+			}
+			if (!a.items.some((it) => it.id === item)) throw new HttpError(404, `No item ${item} in the backlog review`);
+			a.reviews ??= {};
+			if (verdict === "clear") delete a.reviews[item];
+			else {
+				const text = (note ?? "").trim();
+				a.reviews[item] = { verdict, ...(verdict === "changes" && text ? { note: text } : {}), by: user.displayName, at: Date.now() };
+			}
+		}, ctx);
+	}
+
+	/** The same for the items added after approval: one verdict per pending item. */
+	async reviewPendingItem(missionId: string, user: User, item: string, verdict: "ok" | "changes" | "clear", note?: string) {
+		await this.ws.harness.commit(async (tx) => {
+			const b = (await tx.doc(BacklogDoc, missionId, null)) as Backlog;
+			const items = pendingReviewItems(b);
+			if (!items.length) throw new HttpError(409, "Nothing is waiting for approval");
+			if (!items.some((it) => it.id === item)) throw new HttpError(404, `No item ${item} in the request`);
+			b.pendingReviews ??= {};
+			if (verdict === "clear") delete b.pendingReviews[item];
+			else {
+				const text = (note ?? "").trim();
+				b.pendingReviews[item] = { verdict, ...(verdict === "changes" && text ? { note: text } : {}), by: user.displayName, at: Date.now() };
+			}
+		}, ctx);
+	}
+
+	/** The review of the pending items, as it stands. */
+	#pendingReview(b: Backlog): Review {
+		return { items: pendingReviewItems(b), reviews: b.pendingReviews };
 	}
 
 	/** The user edits an item on the board (status, title, description, assignee...). */
@@ -511,14 +564,21 @@ export class MissionManager {
 	/** The user approves pending items (all, or one feedback's); the scheduler can then build them. */
 	async approvePending(missionId: string, user: User, feedback?: string) {
 		await this.assertReady(missionId);
+		const waiting = await this.backlog(missionId);
+		const flagged = flaggedItems(this.#pendingReview(waiting)).filter((it) => !feedback || waiting.items[it.id]?.feedback === feedback);
+		if (flagged.length) throw new HttpError(409, `You asked for changes on ${flagged.length} item${flagged.length === 1 ? "" : "s"} (${flagged.map((i) => i.title).join(", ")}). Send those to the team, or mark them as fine.`);
 		const ids = await this.editBacklog(missionId, (b) => {
 			const items = Object.values(b.items).filter((i) => i.pending && (!feedback || i.feedback === feedback));
 			if (!items.length) throw new HttpError(409, "Nothing is waiting for approval");
 			for (const i of items) {
 				delete i.pending;
 				i.updatedAt = Date.now();
+				if (b.pendingReviews) delete b.pendingReviews[i.id];
 			}
-			if (!Object.values(b.items).some((i) => i.pending)) delete b.pendingRequest;
+			if (!Object.values(b.items).some((i) => i.pending)) {
+				delete b.pendingRequest;
+				delete b.pendingReviews;
+			}
 			return items.map((i) => i.id);
 		});
 		await this.log(missionId, { at: Date.now(), kind: "user", text: `${user.displayName} approved ${ids.join(", ")}${feedback ? ` (from ${feedback})` : ""}` });
@@ -529,8 +589,12 @@ export class MissionManager {
 
 	/** The user sends pending items back with a comment. */
 	async pendingChanges(missionId: string, user: User, comment: string, feedback?: string) {
-		if (!comment.trim()) throw new HttpError(400, "Say what should change");
-		await this.editBacklog(missionId, (b) => void delete b.pendingRequest);
+		if (!comment.trim()) comment = changesFromItems(this.#pendingReview(await this.backlog(missionId)));
+		if (!comment.trim()) throw new HttpError(400, "Say what should change, or flag an item");
+		await this.editBacklog(missionId, (b) => {
+			delete b.pendingRequest;
+			delete b.pendingReviews;
+		});
 		await this.log(missionId, { at: Date.now(), kind: "user", text: `${user.displayName} asked for changes${feedback ? ` to ${feedback}'s items` : " to the pending items"}: ${clip(comment, 140)}` });
 		const t = await this.#triager(missionId);
 		if (t) await this.deliver(missionId, t.key, { from: user.displayName, fromKey: `user:${user.id}`, kind: "message", text: `Changes requested to the pending backlog items${feedback ? ` from ${feedback}` : ""}:\n\n${comment}\n\nRevise them with the backlog tools, then backlog_request_approval again.` });
@@ -1197,25 +1261,38 @@ export class MissionManager {
 				name: "backlog_request_approval",
 				description:
 					"Lead or planner: submit the backlog for the user's approval. They review it as a board in the Backlog tab and approve or request changes; you'll get their decision as a message. Don't start the build before approval, and don't also ask with ask_user.",
-				parameters: Type.Object({ summary: Type.String({ description: "a few lines: scope, how many features/PBIs/tasks, how the work splits across developers, open points" }) }),
+				parameters: Type.Object({
+					summary: Type.String({ description: "a few lines: scope, how many features/PBIs/tasks, how the work splits across developers, open points" }),
+					items: Type.Optional(
+						Type.Array(Type.Object({ title: Type.String({ description: "a decision point, a few words" }), detail: Type.Optional(Type.String({ description: "one line of context, if the title isn't enough" })) }), {
+							maxItems: 12,
+							description: "optional: what the user should check one by one. Skip it and they review it by feature, which is usually what they want.",
+						}),
+					),
+				}),
 				execute: async (args, api) => {
 					const { missionId, me, state } = await this.#caller(api);
 					if (!["lead", "planner"].includes(me.role)) throw new Error("Only the lead or the planner requests backlog approval.");
 					const blockers = openBlocking(state);
 					const gatesLeft = state.gates ? (["requirements", "design"] as GateName[]).filter((g) => state.gates![g]?.status !== "approved") : [];
 					const readiness = gatesLeft.length ? ` Note: the ${gatesLeft.join(" and the ")} ${gatesLeft.length === 1 ? "isn't" : "aren't"} approved yet; the user can't approve the backlog before that (request_review).` : blockers.length ? ` Note: ${blockers.length} blocking question${blockers.length === 1 ? " is" : "s are"} still open; the user can't approve until ${blockers.length === 1 ? "it's" : "they're"} answered.` : "";
+					const items = (args.items ?? []).map((it, i) => ({ id: `i${i + 1}`, title: it.title.trim(), ...(it.detail?.trim() ? { detail: it.detail.trim() } : {}) }));
 					const current = await this.backlog(missionId);
 					if (current.approval.status === "approved") {
 						const pending = Object.values(current.items).filter((i) => i.pending);
 						if (!pending.length) throw new Error("The backlog is approved and nothing is pending. Items you add now (or from feedback) become pending; request approval after adding them.");
-						await this.editBacklog(missionId, (b) => void (b.pendingRequest = { summary: args.summary, requestedBy: me.name, requestedAt: Date.now() }));
+						// A new request is a new checklist: verdicts on the previous one don't carry over.
+						await this.editBacklog(missionId, (b) => {
+							b.pendingRequest = { summary: args.summary, requestedBy: me.name, requestedAt: Date.now(), ...(items.length ? { items } : {}) };
+							delete b.pendingReviews;
+						});
 						await this.log(missionId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve ${pending.length} new backlog item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) — see the Backlog tab` });
 						return { ...text(`Submitted ${pending.length} pending item(s). The user approves them in the Backlog tab; their decision arrives as a message. End your turn now.${readiness}`), control: { terminate: true } };
 					}
 					const n = await this.editBacklog(missionId, (b) => {
 						const tasks = Object.values(b.items).filter((i) => i.type === "task").length;
 						if (!tasks) throw new Error("The backlog has no tasks yet. Add them with backlog_add first.");
-						b.approval = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now() };
+						b.approval = { status: "pending", summary: args.summary, requestedBy: me.name, requestedAt: Date.now(), ...(items.length ? { items, reviews: {} } : {}) };
 						return tasks;
 					});
 					await this.log(missionId, { at: Date.now(), agent: me.key, kind: "question", text: `${me.name} asks you to approve the backlog (${n} tasks) — see the Backlog tab` });

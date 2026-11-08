@@ -95,6 +95,20 @@ check("approving pending items also waits for blocking questions", /Not ready to
 const q4 = (await questions()).find((q) => q.text === "W1 or Week 1?")!;
 await pm.dismissQuestion(p.id, q4.id, u);
 
+// The items added after approval are reviewed one at a time too: same card, same rule.
+console.log("reviewing the pending items");
+const { pendingReviewItems } = await import("../src/missions/backlog.ts");
+const pendingItems = pendingReviewItems(b);
+check("the browser is sent those items with the backlog", (await pm.snapshot(p.id)).backlog?.pendingReview?.items?.length === pendingItems.length, (await pm.snapshot(p.id)).backlog?.pendingReview);
+check("the pending items are the items of the review", pendingItems.length === 3 && pendingItems[0]!.id === "P2" && /Header shows W##/.test(pendingItems[0]!.detail ?? "") && /from FB-1/.test(pendingItems[0]!.detail ?? ""), pendingItems);
+await pm.reviewPendingItem(p.id, u, "P2", "changes", "show the ISO week");
+b = await pm.backlog(p.id);
+check("a flagged pending item is kept on the backlog", b.pendingReviews?.P2?.verdict === "changes" && b.pendingReviews.P2.note === "show the ISO week", b.pendingReviews);
+check("approving that group is refused while one of its items is flagged", /You asked for changes on 1 item \(P2 Week number in header\)/.test((await rejects(() => pm.approvePending(p.id, u, "FB-1"))) ?? ""));
+await pm.pendingChanges(p.id, u, "", "FB-1");
+check("requesting changes with nothing typed sends the flagged item", (await pm.state(p.id)).activity.some((a) => /asked for changes to FB-1's items: - \*\*P2 Week number in header\*\*: show the ISO week/.test(a.text)), (await pm.state(p.id)).activity.slice(-2));
+await tool("planner", "backlog_request_approval", { summary: "FB-1: week number, ISO" });
+
 const approved = await pm.approvePending(p.id, u, "FB-1");
 b = await pm.backlog(p.id);
 check("approve one feedback's items", approved.join() === "P2,T2" && !b.items.T2!.pending && untagged.pending && b.items[untagged.id]!.pending === true, approved);

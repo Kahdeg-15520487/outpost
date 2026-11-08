@@ -54,6 +54,14 @@ function signIn(req: Req, user: User) {
 	return { user };
 }
 
+/** One click of a review in pieces: which item, and whether it looks right or needs a change. */
+async function reviewVerdict(req: Req) {
+	const { item, verdict, note } = await req.body();
+	if (typeof item !== "string" || !item) throw new HttpError(400, "item: the id of the review item");
+	if (verdict !== "ok" && verdict !== "changes" && verdict !== "clear") throw new HttpError(400, "verdict: ok, changes or clear");
+	return { item, verdict: verdict as "ok" | "changes" | "clear", note: note === undefined ? undefined : String(note) };
+}
+
 export function createApi(): Router {
 	const r = new Router();
 
@@ -418,13 +426,11 @@ export function createApi(): Router {
 	// One item of a pending review: it's fine, or it needs a change (with the note the team gets).
 	r.post("/api/w/:ws/missions/:p/gates/:gate/review", async (req) => {
 		const { user, ws } = await member(req, "editor");
-		const { item, verdict, note } = await req.body();
+		const { item, verdict, note } = await reviewVerdict(req);
 		await ws.missions.meta(req.params.p!);
 		const gate = req.params.gate === "design" ? "design" : req.params.gate === "requirements" ? "requirements" : undefined;
 		if (!gate) throw new HttpError(404, "No such gate");
-		if (typeof item !== "string" || !item) throw new HttpError(400, "item: the id of the review item");
-		if (verdict !== "ok" && verdict !== "changes" && verdict !== "clear") throw new HttpError(400, "verdict: ok, changes or clear");
-		await ws.missions.reviewGateItem(req.params.p!, gate, user, item, verdict, note === undefined ? undefined : String(note));
+		await ws.missions.reviewGateItem(req.params.p!, gate, user, item, verdict, note);
 		return { ok: true };
 	});
 	r.post("/api/w/:ws/missions/:p/gates/:gate/changes", async (req) => {
@@ -532,9 +538,24 @@ export function createApi(): Router {
 	r.post("/api/w/:ws/missions/:p/backlog/changes", async (req) => {
 		const { user, ws } = await member(req, "editor");
 		const { comment } = await req.body();
-		if (!String(comment ?? "").trim()) throw new HttpError(400, "Say what should change");
 		await ws.missions.meta(req.params.p!);
-		await ws.missions.requestBacklogChanges(req.params.p!, user, String(comment));
+		// No comment is fine when the user flagged items: the request is built from those.
+		await ws.missions.requestBacklogChanges(req.params.p!, user, String(comment ?? ""));
+		return { ok: true };
+	});
+	// A review in pieces: one verdict per item, stored on the request as it is clicked.
+	r.post("/api/w/:ws/missions/:p/backlog/review", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { item, verdict, note } = await reviewVerdict(req);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.reviewBacklogItem(req.params.p!, user, item, verdict, note);
+		return { ok: true };
+	});
+	r.post("/api/w/:ws/missions/:p/backlog/pending-review", async (req) => {
+		const { user, ws } = await member(req, "editor");
+		const { item, verdict, note } = await reviewVerdict(req);
+		await ws.missions.meta(req.params.p!);
+		await ws.missions.reviewPendingItem(req.params.p!, user, item, verdict, note);
 		return { ok: true };
 	});
 	r.patch("/api/w/:ws/missions/:p/backlog/:id", async (req) => {

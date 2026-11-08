@@ -5,13 +5,14 @@ import "../mission-repo.css";
 import "../mission-build.css";
 import { PreviewTab } from "./Preview";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type BacklogItem, type DocGate, type GateItem, type GateName, type GateReview, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type MissionMeta, type MissionStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
+import { api, fileUrl, formatBytes, isBlocking, type AgentRecord, type Backlog, type BacklogItem, type DocGate, type GateItem, type GateName, type GateReview, type AgentSummary, type AttachmentRecord, type ModelInfo, type ModelRef, type MissionMeta, type MissionStage, type Question, type Workspace, type WorkspaceDocs } from "../api";
 import { navigate, missionHref, timeAgo, useChat, useMission } from "../store";
 import { Dialog, Markdown, NavToggle, colorFor } from "./bits";
 import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, type Attachments } from "./Chat";
 import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
 import { askConfirm, reportError } from "../dialogs";
+import { ReviewChecklist, changesFromFlags, reviewFootNote } from "./ReviewChecklist";
 
 const STAGES: { id: MissionStage; label: string }[] = [
 	{ id: "kickoff", label: "Kickoff" },
@@ -136,7 +137,7 @@ export function MissionPage({ ws, missionId, tab, models, picker, grants }: { ws
 								{Object.keys(state.attachments ?? {}).length}
 							</span>
 						)}
-						{t.id === "backlog" && live.backlog.approval.status === "pending" && <span className="vt-badge">!</span>}
+						{t.id === "backlog" && (live.backlog.approval.status === "pending" || !!live.backlog.pendingReview?.items.length) && <span className="vt-badge gate" title="Waiting for your approval">!</span>}
 					</a>
 				))}
 				<span className="grow" />
@@ -641,6 +642,7 @@ function Overview({ ws, mission, live, questions, canEdit, onOpenAgent }: { ws: 
 						<span className="ov-gate-go">Review →</span>
 					</a>
 				))}
+			{(live.backlog.approval.status === "pending" || !!live.backlog.pendingReview?.items.length) && <BacklogReviewCard ws={ws} mission={mission} backlog={live.backlog} />}
 			<Readiness questions={questions} />
 			{questions.length > 0 && (
 				<div className="ov-questions">
@@ -666,46 +668,6 @@ function Overview({ ws, mission, live, questions, canEdit, onOpenAgent }: { ws: 
 				</ol>
 			</div>
 		</div>
-	);
-}
-
-/**
- * One decision point of a review: fine, or it needs changing. The verdict is stored on the mission as it is
- * clicked — a review of a long document is not something to lose on a reload — while the gate itself is decided
- * once, at the bottom, because a document on `main` is one file.
- */
-function GateReviewItem({ ws, missionId, gate, item, index, review, disabled, onChange }: { ws: string; missionId: string; gate: GateName; item: GateItem; index: number; review?: GateReview; disabled: boolean; onChange: (id: string, verdict?: "ok" | "changes", note?: string) => void }) {
-	const [note, setNote] = useState(review?.verdict === "changes" ? (review.note ?? "") : "");
-	const saved = review?.note ?? "";
-	const flagged = review?.verdict === "changes";
-	return (
-		<li className={`gri${review?.verdict === "ok" ? " ok" : ""}${flagged ? " changes" : ""}`}>
-			<div className="gri-head">
-				<span className="gri-n">{index + 1}</span>
-				<span className="gri-title">{item.title}</span>
-				<span className="gri-acts">
-					<button type="button" className={`btn tiny ghost${review?.verdict === "ok" ? " on" : ""}`} disabled={disabled} aria-pressed={review?.verdict === "ok"} title="This is fine" onClick={() => onChange(item.id, review?.verdict === "ok" ? undefined : "ok")}>
-						✓ Looks right
-					</button>
-					<button type="button" className={`btn tiny ghost${flagged ? " on warn" : ""}`} disabled={disabled} aria-pressed={flagged} title="Say what should change" onClick={() => onChange(item.id, flagged ? undefined : "changes")}>
-						✎ Change this
-					</button>
-				</span>
-			</div>
-			{item.detail && (
-				<div className="gri-detail">
-					<Markdown text={item.detail} />
-				</div>
-			)}
-			{flagged && (
-				<div className="gri-note">
-					<textarea className="input" rows={2} placeholder="What should change?" value={note} onChange={(e) => setNote(e.target.value)} disabled={disabled} />
-					<button type="button" className="btn tiny" disabled={disabled || note.trim() === saved} onClick={() => onChange(item.id, "changes", note.trim())}>
-						Save note
-					</button>
-				</div>
-			)}
-		</li>
 	);
 }
 
@@ -735,9 +697,6 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 	const review = { ...(g?.reviews ?? {}), ...local };
 	const items = g?.items ?? [];
 	const flagged = items.filter((it) => review[it.id]?.verdict === "changes");
-	const settled = items.filter((it) => review[it.id]?.verdict === "ok").length;
-	/** What "Request changes" starts with: the items already flagged, so the note can just be refined. */
-	const fromItems = () => flagged.map((it) => `- **${it.title}**${review[it.id]?.note ? `: ${review[it.id]!.note}` : ""}`).join("\n");
 	const verdict = async (id: string, v?: "ok" | "changes", note?: string) => {
 		setErr("");
 		const previous = local[id];
@@ -778,18 +737,7 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 			</div>
 			{blockers > 0 && <div className="gate-block">Not ready: {blockers} blocking question{blockers === 1 ? " is" : "s are"} open on the Overview tab.</div>}
 			{items.length > 0 ? (
-				<>
-					<div className="gate-count">
-						{settled} of {items.length} looked at
-						{flagged.length ? ` · ${flagged.length} change${flagged.length === 1 ? "" : "s"} requested` : ""}
-						<span className="muted"> — say what's fine and what isn't, then approve or send it back. The document is on the tab around this card.</span>
-					</div>
-					<ol className="gate-items">
-						{items.map((it, i) => (
-							<GateReviewItem key={it.id} ws={ws} missionId={missionId} gate={gate} item={it} index={i} review={review[it.id]} disabled={!canEdit || busy || changes} onChange={verdict} />
-						))}
-					</ol>
-				</>
+				<ReviewChecklist items={items} reviews={review} disabled={!canEdit || busy || changes} onVerdict={verdict} what="The document is on the tab around this card." />
 			) : (
 				g.summary && (
 					<div className="gate-summary">
@@ -807,13 +755,13 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 			)}
 			{canEdit && !changes && (
 				<div className="gate-foot">
-					<span className="muted">{items.length ? (flagged.length ? "Approve is off until the flagged items are fine or sent" : settled === items.length ? "Every item looked at" : "Nothing has to be ticked — approve when you're satisfied") : ""}</span>
+					<span className="muted">{items.length ? reviewFootNote(items, review) : ""}</span>
 					<div className="gate-actions">
 						<button
 							className="btn small"
 							disabled={busy}
 							onClick={() => {
-								if (flagged.length) setComment(fromItems());
+								if (flagged.length) setComment(changesFromFlags(items, review));
 								startChanges();
 							}}
 						>
@@ -865,6 +813,31 @@ function RetroCard({ ws, missionId, path, tick }: { ws: string; missionId: strin
 }
 
 /** Whether the team may be approved to build: not while a blocking question is open. */
+/** The backlog asks for approval the same way the documents do: say it here, settle it on the Backlog tab. */
+function BacklogReviewCard({ ws, mission, backlog }: { ws: Workspace; mission: MissionMeta; backlog: Backlog }) {
+	const a = backlog.approval;
+	const pending = a.status === "pending";
+	const review = pending ? { items: a.items ?? [], reviews: a.reviews ?? {} } : { items: backlog.pendingReview?.items ?? [], reviews: backlog.pendingReview?.reviews ?? {} };
+	const settled = review.items.filter((it) => review.reviews[it.id]?.verdict === "ok").length;
+	const flagged = review.items.filter((it) => review.reviews[it.id]?.verdict === "changes").length;
+	const said = pending ? a.summary : backlog.pendingRequest?.summary;
+	const n = review.items.length;
+	return (
+		<a className="ov-gate" href={missionHref(ws.id, mission.id, "backlog")}>
+			<i />
+			<span>
+				<b>{pending ? "The backlog is waiting for your approval." : `${n || "New"} item${n === 1 ? "" : "s"} added after approval ${n === 1 ? "is" : "are"} waiting for you.`}</b>{" "}
+				{n
+					? `${n} decision${n === 1 ? "" : "s"} to settle${settled ? ` · ${settled} looked at` : ""}${flagged ? ` · ${flagged} flagged` : ""}.`
+					: said
+						? `${said.replace(/[*`#>]/g, "").slice(0, 160)}${said.length > 160 ? "…" : ""}`
+						: ""}
+			</span>
+			<span className="ov-gate-go">Review →</span>
+		</a>
+	);
+}
+
 function Readiness({ questions }: { questions: Question[] }) {
 	const blocking = questions.filter(isBlocking).length;
 	const other = questions.length - blocking;

@@ -259,8 +259,14 @@ export type DocGate = { status: "pending" | "approved" | "changes"; summary?: st
 export type PreviewStatus = "off" | "no-config" | "installing" | "starting" | "running" | "crashed" | "failed";
 export type PreviewInfo = { status: PreviewStatus; port?: number; appPort?: number; host?: string; head?: string; error?: string; command?: string; startedAt?: number; readyAt?: number; logSeq: number; stoppedByUser?: boolean; /** Set when previews are served as `<slug>.<preview base domain>`. */ slug?: string; publicUrl?: string };
 export type PreviewLogLine = { seq: number; at: number; text: string; stream: "out" | "err" | "outpost" };
-export type BacklogApproval = { status: "draft" | "pending" | "approved" | "changes"; summary?: string; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
-export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState; pendingRequest?: { summary: string; requestedBy: string; requestedAt: number } };
+/** A review in pieces: what the user settles one by one, and their verdicts so far. */
+export type Review = { summary?: string; items?: GateItem[]; reviews?: Record<string, GateReview> };
+export type BacklogApproval = Review & { status: "draft" | "pending" | "approved" | "changes"; requestedBy?: string; requestedAt?: number; decidedBy?: string; decidedAt?: number; comment?: string; revision?: number };
+/** Items the team drafted after approval, waiting for the user's approval. */
+export type PendingRequest = { summary: string; requestedBy: string; requestedAt: number; items?: GateItem[] };
+/** The pending items as a review: derived on the server, verdicts included. */
+export type PendingReview = { items: GateItem[]; reviews: Record<string, GateReview> };
+export type Backlog = { items: Record<string, BacklogItem>; seq: Record<ItemType, number>; approval: BacklogApproval; revision: number; build?: BuildState; pendingRequest?: PendingRequest; pendingReview?: PendingReview };
 
 // ---------------------------------------------------------------- workspace homepage
 

@@ -389,7 +389,13 @@ async function run() {
 	await go(missionHash("backlog"));
 	must("Backlog: the pending items bar lists them", await until("pending bar", () => text(".bl-pending").then((t) => /2 new items waiting/.test(t) && /FB-1/.test(t))));
 	check("pending cards are marked", (await count(".kb-card.pending")) >= 1);
+	check("the pending items are reviewed one at a time", await until("pending review", () => count(".bl-pending .gri").then((n) => n >= 2)));
+check("…with what there is to check on each one", (await count(".bl-pending .gri-detail")) >= 1 && /P2/.test(await text(".bl-pending .gri:first-child")));
 	await shot("pending");
+	await page.click(".bl-pending .gri:first-child .gri-acts button:nth-child(2)");
+	check("flagging a pending item holds its group's Approve", await until("group held", async () => (await page.$$eval(".bl-pending .pd-actions .btn.primary", (bs) => (bs[0] as HTMLButtonElement).disabled)) === true));
+	await page.click(".bl-pending .gri:first-child .gri-acts button:nth-child(1)");
+	check("marking it fine releases Approve", await until("group free", async () => (await page.$$eval(".bl-pending .pd-actions .btn.primary", (bs) => (bs[0] as HTMLButtonElement).disabled)) === false));
 	await clickText(".bl-pending button", /^Approve/);
 	check("approve from the bar: nothing pending any more", await until("approved", async () => !Object.values((await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.items as any[]).some((i) => i.pending)));
 
@@ -410,6 +416,33 @@ async function run() {
 	check("Design tab: not submitted yet", await until("design gate", () => text(".gate-bar.idle").then((t) => /not submitted for your approval yet/.test(t))));
 	await go(missionHash("backlog"));
 	check("the backlog says which documents still need approval", /Approve the design first/.test(await text(".bl")) || (await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.approval.status === "approved");
+
+	console.log("reviewing the backlog");
+	// Ask for the backlog again the way the planner does; the checklist is derived from the features.
+	const { BacklogDoc } = await import("../src/missions/backlog.ts");
+	const reAsk = async () => (await Workspace.get(ws)).harness.commit(async (tx: any) => void (Object.assign((await tx.doc(BacklogDoc, pid, null)).approval, { status: "pending", summary: "one plan, five decisions", reviews: {} })), BACKGROUND_CONTEXT);
+	await reAsk();
+	await go(missionHash("backlog"));
+	must("Backlog: a pending approval is a checklist", await until("review card", () => count(".bl-review .gri").then((n) => n >= 1)));
+	check("one item per feature, with its PBIs under it", /F\d/.test(await text(".bl-review .gri:first-child")) && /P\d/.test(await text(".bl-review .gri:first-child")));
+	await shot("backlog-review");
+	await page.click(".bl-review .gri:first-child .gri-acts button:nth-child(2)");
+	await page.type(".bl-review .gri.changes textarea", "two columns, not three");
+	await clickText(".bl-review .gri.changes button", "Save note");
+	const verdicts = async () => (await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.approval;
+	check("the verdict is stored as it is clicked", await until("stored", async () => Object.values((await verdicts()).reviews ?? {}).some((r: any) => r.verdict === "changes" && r.note === "two columns, not three")));
+	check("and Approve is off while it is flagged", await until("approve off", async () => (await page.$$eval(".bl-ap-actions .btn.primary", (bs) => (bs[0] as HTMLButtonElement).disabled)) === true));
+	await go(missionHash("backlog"));
+	must("the verdict survives a reload", await until("still flagged", () => count(".bl-review .gri.changes").then((n) => n === 1)));
+	await clickText(".bl-ap-actions button", /^Request 1 change/);
+	check("Request changes starts from the flagged item", await until("note seeded", () => page.$eval(".bl-ap-changes textarea", (e) => (e as HTMLTextAreaElement).value).then((v) => /two columns, not three/.test(v), () => false)));
+	await shot("backlog-changes");
+	await clickText(".bl-ap-changes button", "Cancel");
+	await (await Workspace.get(ws)).harness.commit(async (tx: any) => {
+		const b = (await tx.doc(BacklogDoc, pid, null)) as any;
+		Object.assign(b.approval, { status: "approved", decidedBy: "Ana", decidedAt: Date.now(), reviews: {} });
+	}, BACKGROUND_CONTEXT);
+	check("the backlog is approved again for the rest of the run", await until("approved again", async () => (await verdicts()).status === "approved"));
 
 	console.log("connections");
 	process.env.OUTPOST_ALLOW_PRIVATE_HOSTS = "1";

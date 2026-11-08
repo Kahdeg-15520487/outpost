@@ -1,4 +1,5 @@
 import { defineDocFamily } from "@earendil-works/pi-durable";
+import type { GateItem, GateReview } from "./docs.ts";
 
 /**
  * A mission's backlog: features → product backlog items (PBIs) → tasks. outpost is the source of
@@ -86,7 +87,23 @@ export type Approval = {
 	comment?: string;
 	/** Backlog revision that was approved. */
 	revision?: number;
+	/** What the user settles one by one; derived from the features when the request names none. */
+	items?: GateItem[];
+	/** By item id. Kept after the decision, so the page can still show what was flagged. */
+	reviews?: Record<string, GateReview>;
 };
+
+/** Items the team drafted after the backlog was approved, waiting for the user's approval. */
+export type PendingRequest = {
+	summary: string;
+	requestedBy: string;
+	requestedAt: number;
+	/** The decisions the requester names; the pending items themselves when it names none. */
+	items?: GateItem[];
+};
+
+/** A request the user settles one by one, as the browser gets it: the items and the verdicts so far. */
+export type PendingReview = { items: GateItem[]; reviews: Record<string, GateReview> };
 
 export type Backlog = {
 	items: Record<string, BacklogItem>;
@@ -97,7 +114,11 @@ export type Backlog = {
 	/** The build (after approval): see build.ts. */
 	build?: BuildState;
 	/** The team asked the user to approve pending items (after the backlog itself was approved). */
-	pendingRequest?: { summary: string; requestedBy: string; requestedAt: number };
+	pendingRequest?: PendingRequest;
+	/** The user's verdicts on those items, by item id. Pending items are reviewed with or without a request. */
+	pendingReviews?: Record<string, GateReview>;
+	/** Read-only: set when the backlog is sent to the browser, never stored. */
+	pendingReview?: PendingReview;
 };
 
 export const emptyBacklog = (): Backlog => ({ items: {}, seq: { feature: 0, pbi: 0, task: 0 }, approval: { status: "draft" }, revision: 0 });
@@ -255,4 +276,58 @@ export function addItems(b: Backlog, inputs: ItemInput[], by: string, opts: { pe
 	for (const item of made) b.items[item.id] = item;
 	b.seq = seq;
 	return made.map(({ id, type, title, parent }) => ({ id, type, title, ...(parent ? { parent } : {}) }));
+}
+
+const MAX_REVIEW_ITEMS = 20;
+
+/**
+ * What a backlog approval asks the user to settle: one item per feature, with the PBIs under it, so a review of
+ * forty tasks is five decisions instead of one yes/no on the whole plan. Derived from the board itself rather than
+ * from what the planner wrote, so it is right even when the summary is a paragraph. A request that named its own
+ * items keeps them.
+ */
+export function backlogReviewItems(b: Backlog): GateItem[] {
+	if (b.approval.items?.length) return b.approval.items;
+	const sorted = Object.values(b.items).sort(byOrder);
+	const features = sorted.filter((i) => i.type === "feature");
+	// A backlog with no features (a small one) is reviewed by its PBIs instead.
+	const parents = (features.length ? features : sorted.filter((i) => i.type === "pbi")).slice(0, MAX_REVIEW_ITEMS);
+	return parents.map((parent) => {
+		const pbis = features.length ? sorted.filter((i) => i.type === "pbi" && i.parent === parent.id) : [parent];
+		const tasks = sorted.filter((i) => i.type === "task" && pbis.some((p) => p.id === i.parent));
+		const lines = pbis.map((p) => `- **${p.id}** ${p.title}${p.estimate ? ` · ${p.estimate}` : ""}`);
+		if (tasks.length) lines.push(`- ${tasks.length} task${tasks.length === 1 ? "" : "s"}`);
+		return { id: parent.id, title: `${parent.id} ${parent.title}`, detail: lines.join("\n") };
+	});
+}
+
+/** The same for items added after approval: one per pending item, with what there is to check on it. */
+export function pendingReviewItems(b: Backlog): GateItem[] {
+	if (b.pendingRequest?.items?.length) return b.pendingRequest.items;
+	return Object.values(b.items)
+		.filter((i) => i.pending)
+		.sort(byOrder)
+		.slice(0, MAX_REVIEW_ITEMS)
+		.map((i) => {
+			const lines = i.type === "pbi" ? (i.acceptance ?? []).map((a) => `- ${a}`) : i.description ? [i.description] : [];
+			if (i.feedback) lines.push(`- from ${i.feedback}`);
+			if (i.estimate) lines.push(`- ${i.estimate}${i.area ? ` · ${i.area}` : ""}`);
+			return { id: i.id, title: `${i.id} ${i.title}`, ...(lines.length ? { detail: lines.join("\n") } : {}) };
+		});
+}
+
+/**
+ * The backlog as the browser sees it: a review request carries the items it is actually asking about, whether the
+ * planner named them or they were derived from the board. Nothing else on the backlog is changed.
+ */
+export function withReviewItems(b: Backlog | null | undefined): Backlog | null | undefined {
+	if (!b) return b;
+	const items = b.approval.status === "pending" ? backlogReviewItems(b) : [];
+	const pending = pendingReviewItems(b);
+	if (!items.length && !pending.length) return b;
+	return {
+		...b,
+		approval: items.length ? { ...b.approval, items } : b.approval,
+		...(pending.length ? { pendingReview: { items: pending, reviews: b.pendingReviews ?? {} } } : {}),
+	};
 }

@@ -78,13 +78,19 @@ export const GATE_DOCS: Record<GateName, string> = { requirements: "docs/require
 export type GateItem = { id: string; title: string; detail?: string };
 /** The user's verdict on one item: it's fine, or it needs changing (with a note for the team). */
 export type GateReview = { verdict: "ok" | "changes"; note?: string; by: string; at: number };
-export type DocGate = {
-	status: "pending" | "approved" | "changes";
+/**
+ * Anything the user settles one item at a time: a document gate, the backlog, the items added after it. They all
+ * share the shape so the checklist on the page and the code behind it are the same story.
+ */
+export type Review = {
 	summary?: string;
-	/** What the user is being asked to settle, one line each. Older requests have only `summary`. */
+	/** What the user is being asked to settle, one line each. A request that names none is read back into items. */
 	items?: GateItem[];
 	/** By item id. Kept after the decision, so the page can still show what was flagged. */
 	reviews?: Record<string, GateReview>;
+};
+export type DocGate = Review & {
+	status: "pending" | "approved" | "changes";
 	requestedBy?: string;
 	requestedAt?: number;
 	commit?: string;

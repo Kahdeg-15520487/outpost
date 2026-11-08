@@ -153,6 +153,27 @@ await pm.editBacklog(p.id, (b) =>
 		"planner",
 	),
 );
+// ------------------------------------------------------------------ reviewing the backlog in pieces
+// "Approve the backlog" was one click on a plan nobody could read at once. It is a checklist now, the way the
+// documents are: one item per feature, and the plan is still approved once.
+console.log("reviewing the backlog");
+const { backlogReviewItems } = await import("../src/missions/backlog.ts");
+const reviewItems = backlogReviewItems(await pm.backlog(p.id));
+check("the features become the items of the backlog review", reviewItems.length === 1 && reviewItems[0]!.title.includes("Board") && /P\d/.test(reviewItems[0]!.detail ?? "") && /3 tasks/.test(reviewItems[0]!.detail ?? ""), reviewItems);
+const boardFeature = reviewItems[0]!.id;
+await pm.reviewBacklogItem(p.id, u, boardFeature, "changes", "two tasks, not three");
+let bl = await pm.backlog(p.id);
+check("a flagged feature is stored on the request with its note", bl.approval.reviews?.[boardFeature]?.verdict === "changes" && bl.approval.reviews[boardFeature]!.note === "two tasks, not three", bl.approval.reviews);
+check("the derived items are kept, so the id resolves next time", bl.approval.items?.length === 1);
+check("a review of the plan bumps no revision (it is not a change to the plan)", bl.revision === (await pm.backlog(p.id)).revision);
+check("approving is refused while an item is flagged, and it names the feature", new RegExp(`You asked for changes on 1 item \\(F\\d+ Board\\)`).test(await rejects(() => pm.approveBacklog(p.id, u))));
+await pm.requestBacklogChanges(p.id, u, "");
+check("requesting changes with nothing typed sends the flagged feature", /\*\*F\d+ Board\*\*: two tasks, not three/.test(lastTo("lead")), lastTo("lead"));
+await tool("lead", "backlog_request_approval", { summary: "the same plan" });
+bl = await pm.backlog(p.id);
+check("a new request starts with no verdicts", bl.approval.status === "pending" && !Object.keys(bl.approval.reviews ?? {}).length, bl.approval);
+check("an item the request does not have is not a review", /No item F99/.test(await rejects(() => pm.reviewBacklogItem(p.id, u, "F99", "ok"))));
+
 await pm.approveBacklog(p.id, u);
 const [tStore, tFlag, tT3] = Object.values((await pm.backlog(p.id)).items)
 	.filter((i) => i.type === "task" && i.title !== "x")

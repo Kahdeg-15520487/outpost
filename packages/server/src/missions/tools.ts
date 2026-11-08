@@ -15,8 +15,8 @@ import { defineTool } from "@earendil-works/pi-durable";
 import { defaultModel } from "../kernel/models.ts";
 import { users, type User } from "../kernel/system-db.ts";
 import type { Workspace } from "../kernel/workspace.ts";
-import type { Backlog } from "./backlog.ts";
-import { GATE_DOCS, openBlocking, type GateName, type MissionMeta, type MissionState, type Question } from "./docs.ts";
+import { backlogReviewItems, pendingReviewItems, type Backlog } from "./backlog.ts";
+import { GATE_DOCS, openBlocking, type GateName, type MissionMeta, type MissionState, type Question, type Review } from "./docs.ts";
 import { gateItems } from "./gates.ts";
 
 const text = (value: unknown) => ({ output: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -68,23 +68,31 @@ function waitingOnUser(state: MissionState, backlog: Backlog): { kind: string; d
 			kind: "question",
 			detail: `${plural(blocking.length, "blocking question")} from ${[...new Set(blocking.map((q) => state.agents[q.agent]?.name ?? q.agent))].join(", ")} — answer with mission_answer`,
 		});
+	// The user settles a review item by item: say how far along it is, not just that it is waiting.
+	const progressOf = (r: Review | undefined) => {
+		if (!r) return "";
+		const flagged = Object.values(r.reviews ?? {}).filter((v) => v.verdict === "changes").length;
+		const settled = Object.values(r.reviews ?? {}).filter((v) => v.verdict === "ok").length;
+		const items = gateItems(r).length;
+		return items ? ` — ${settled} of ${items} looked at${flagged ? `, ${plural(flagged, "item")} flagged for changes` : ""}` : "";
+	};
 	for (const gate of Object.keys(GATE_DOCS) as GateName[]) {
 		const g = state.gates?.[gate];
 		if (g?.status === "pending") {
-			// The user settles a review item by item: say how far along it is, not just that it is waiting.
-			const flagged = Object.values(g.reviews ?? {}).filter((r) => r.verdict === "changes").length;
-			const settled = Object.values(g.reviews ?? {}).filter((r) => r.verdict === "ok").length;
-			const items = gateItems(g).length;
-			const progress = items ? ` — ${settled} of ${items} looked at${flagged ? `, ${plural(flagged, "item")} flagged for changes` : ""}` : "";
+			const progress = progressOf(g);
 			const said = g.summary ? ` (${clip(g.summary.replace(/[*#]/g, "").replace(/\s+/g, " ").trim(), 160)})` : "";
 			out.push({ kind: "gate", detail: `the ${gate} document is waiting for the user's approval on the ${gate[0]!.toUpperCase()}${gate.slice(1)} tab${progress}${said}` });
 		}
 		if (g?.status === "changes") out.push({ kind: "gate", detail: `the user asked for changes to the ${gate} document${g.comment ? `: ${clip(g.comment, 200)}` : ""}` });
 	}
 	const a = backlog.approval;
-	if (a.status === "pending") out.push({ kind: "backlog", detail: `the backlog is waiting for the user's approval on the Backlog tab${a.summary ? `: ${clip(a.summary, 160)}` : ""}` });
+	if (a.status === "pending") out.push({ kind: "backlog", detail: `the backlog is waiting for the user's approval on the Backlog tab${progressOf({ items: backlogReviewItems({ ...backlog, approval: a }), reviews: a.reviews })}${a.summary ? `: ${clip(a.summary, 160)}` : ""}` });
 	if (a.status === "changes") out.push({ kind: "backlog", detail: `the user asked for backlog changes${a.comment ? `: ${clip(a.comment, 200)}` : ""}` });
-	if (backlog.pendingRequest && a.status === "approved") out.push({ kind: "items", detail: `the team asks the user to approve pending backlog items on the Backlog tab: ${clip(backlog.pendingRequest.summary, 160)}` });
+	if (backlog.pendingRequest && a.status === "approved")
+		out.push({
+			kind: "items",
+			detail: `the team asks the user to approve pending backlog items on the Backlog tab${progressOf({ items: pendingReviewItems(backlog), reviews: backlog.pendingReviews })}: ${clip(backlog.pendingRequest.summary, 160)}`,
+		});
 	return out;
 }
 

@@ -234,4 +234,13 @@ if (fontName) {
 	assert(!font.headers["content-encoding"], "already-compressed assets are not re-compressed");
 }
 
+// A rebuild renames every asset. A tab still holding the previous index.html asks for a name that is gone;
+// the SPA fallback used to answer it with HTML and a 200, so the script failed to parse and the app came up
+// empty with only a MIME warning in the console. A stale asset is a 404, a route is still the app.
+const stale = await fetch(`${base}/assets/index-0LDhash.js`, { headers: { cookie: (ana as any).cookie() as string } });
+assert(stale.status === 404, `a bundle name that no longer exists is a 404, not the app's HTML (got ${stale.status} ${stale.headers.get("content-type")})`);
+assert(!(stale.headers.get("content-type") ?? "").includes("text/html"), "and never HTML, which a script parses as a syntax error");
+const route = await fetch(`${base}/some/deep/route`, { headers: { cookie: (ana as any).cookie() as string } });
+assert(route.status === 200 && (route.headers.get("content-type") ?? "").includes("text/html"), "an unknown route still serves the app");
+
 await finish();

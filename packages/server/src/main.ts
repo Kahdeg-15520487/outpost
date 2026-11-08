@@ -39,8 +39,14 @@ const server = createServer(async (req, res) => {
 		if (req.url?.startsWith("/api/")) return sendJson(res, 404, { error: "Not found" });
 		// Static web app (production build). In development, Vite serves it and proxies here.
 		const path = normalize(decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname)).replace(/^([/\\])+/, "");
-		let file = join(config.webDist, path);
-		if (!file.startsWith(config.webDist) || !existsSync(file) || statSync(file).isDirectory()) file = join(config.webDist, "index.html");
+		const candidate = join(config.webDist, path);
+		const found = candidate.startsWith(config.webDist) && existsSync(candidate) && !statSync(candidate).isDirectory();
+		// A build gives every hashed file a new name, so an old one is simply gone. Answer 404: falling back to
+		// index.html made a request for a bundle succeed with HTML, and a browser parsing that as JavaScript
+		// renders an empty page with nothing in the console but a MIME warning — which is what an open tab (or a
+		// bookmarked build) looks like after a pull and a rebuild.
+		if (!found && /\.[a-z0-9]{1,8}$/i.test(path)) return sendJson(res, 404, { error: "Not found" });
+		const file = found ? candidate : join(config.webDist, "index.html");
 		if (!existsSync(file)) {
 			res.writeHead(200, { "content-type": "text/plain" });
 			return res.end("Outpost API is running. Build the web app (pnpm build) or run `pnpm dev` and open http://localhost:5173");

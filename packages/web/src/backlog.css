@@ -14,7 +14,6 @@
 .bl-approval .gate-request { margin-top: 6px; }
 .bl-approval .gate-summary { color: #5c4a1c; font-size: 13px; }
 .bl-ap-actions { display: flex; gap: 6px; flex: none; }
-.bl-ap-changes { display: grid; gap: 8px; margin-top: 10px; }
 
 /* toolbar */
 .bl-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px; flex-wrap: wrap; }

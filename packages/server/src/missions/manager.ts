@@ -312,9 +312,12 @@ export class MissionManager {
 		}, ctx);
 	}
 
-	/** The review of the pending items, as it stands. */
-	#pendingReview(b: Backlog): Review {
-		return { items: pendingReviewItems(b), reviews: b.pendingReviews };
+	/** The review of the pending items, as it stands; `feedback` narrows it to that group's items. */
+	#pendingReview(b: Backlog, feedback?: string): Review {
+		const items = pendingReviewItems(b);
+		if (!feedback) return { items, reviews: b.pendingReviews };
+		const mine = items.filter((it) => b.items[it.id]?.feedback === feedback);
+		return { items: mine, reviews: b.pendingReviews };
 	}
 
 	/** The user edits an item on the board (status, title, description, assignee...). */
@@ -589,7 +592,7 @@ export class MissionManager {
 
 	/** The user sends pending items back with a comment. */
 	async pendingChanges(missionId: string, user: User, comment: string, feedback?: string) {
-		if (!comment.trim()) comment = changesFromItems(this.#pendingReview(await this.backlog(missionId)));
+		if (!comment.trim()) comment = changesFromItems(this.#pendingReview(await this.backlog(missionId), feedback));
 		if (!comment.trim()) throw new HttpError(400, "Say what should change, or flag an item");
 		await this.editBacklog(missionId, (b) => {
 			delete b.pendingRequest;

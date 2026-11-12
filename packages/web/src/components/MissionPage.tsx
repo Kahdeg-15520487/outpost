@@ -12,7 +12,7 @@ import { AttachButton, AttachmentTray, pasteInto, Transcript, useAttachments, ty
 import { ModelSelect, pickerShows, type ModelPicker } from "./ModelPicker";
 import { BacklogTab } from "./Backlog";
 import { askConfirm, reportError } from "../dialogs";
-import { ReviewChecklist, changesFromFlags, reviewFootNote } from "./ReviewChecklist";
+import { ReviewChecklist, reviewFootNote } from "./ReviewChecklist";
 
 const STAGES: { id: MissionStage; label: string }[] = [
 	{ id: "kickoff", label: "Kickoff" },
@@ -673,21 +673,22 @@ function Overview({ ws, mission, live, questions, canEdit, onOpenAgent }: { ws: 
 
 /** Approve or send back the requirements or the design (M2). */
 function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: string; missionId: string; gate: GateName; g?: DocGate; hasGates: boolean; canEdit: boolean; blockers: number }) {
-	const [changes, setChanges] = useState(false);
-	const [comment, setComment] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState("");
+	// Only a request with no items needs typing: with items, "Request changes" sends them as they are.
+	const [writing, setWriting] = useState(false);
+	const [note, setNote] = useState("");
 	// Verdicts clicked before the server answers, so a checklist of twelve doesn't feel sticky.
 	const [local, setLocal] = useState<Record<string, GateReview>>({});
 	if (!hasGates) return null;
 	const label = gate === "requirements" ? "Requirements" : "Design";
-	const act = async (what: "approve" | "changes") => {
+	const act = async (what: "approve" | "changes", comment?: string) => {
 		setBusy(true);
 		setErr("");
 		try {
-			await api.post(`/api/w/${ws}/missions/${missionId}/gates/${gate}/${what}`, { comment: comment.trim() || undefined });
-			setChanges(false);
-			setComment("");
+			await api.post(`/api/w/${ws}/missions/${missionId}/gates/${gate}/${what}`, comment ? { comment } : undefined);
+			setWriting(false);
+			setNote("");
 		} catch (e: any) {
 			setErr(e.message);
 		} finally {
@@ -697,6 +698,8 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 	const review = { ...(g?.reviews ?? {}), ...local };
 	const items = g?.items ?? [];
 	const flagged = items.filter((it) => review[it.id]?.verdict === "changes");
+	// Ticking "Looks right" is the only thing that keeps an item out of the change request.
+	const open = items.filter((it) => review[it.id]?.verdict !== "ok");
 	const verdict = async (id: string, v?: "ok" | "changes", note?: string) => {
 		setErr("");
 		const previous = local[id];
@@ -722,7 +725,6 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 				<b>Changes requested</b> by {g.decidedBy}: “{g.comment}” <span className="muted">· the team is revising</span>
 			</div>
 		);
-	const startChanges = () => setChanges(true);
 	// The lead can paste its whole document into the request; the checklist is what matters, so it comes first
 	// and the prose is one line to unfold.
 	const longSummary = (g.summary ?? "").length > 320;
@@ -737,7 +739,7 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 			</div>
 			{blockers > 0 && <div className="gate-block">Not ready: {blockers} blocking question{blockers === 1 ? " is" : "s are"} open on the Overview tab.</div>}
 			{items.length > 0 ? (
-				<ReviewChecklist items={items} reviews={review} disabled={!canEdit || busy || changes} onVerdict={verdict} what="The document is on the tab around this card." />
+				<ReviewChecklist items={items} reviews={review} disabled={!canEdit || busy} onVerdict={verdict} what="The document is on the tab around this card." />
 			) : (
 				g.summary && (
 					<div className="gate-summary">
@@ -753,19 +755,12 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 					</div>
 				</details>
 			)}
-			{canEdit && !changes && (
+			{canEdit && (
 				<div className="gate-foot">
-					<span className="muted">{items.length ? reviewFootNote(items, review) : ""}</span>
+					<span className="muted">{items.length ? reviewFootNote(items, review, open.length) : ""}</span>
 					<div className="gate-actions">
-						<button
-							className="btn small"
-							disabled={busy}
-							onClick={() => {
-								if (flagged.length) setComment(changesFromFlags(items, review));
-								startChanges();
-							}}
-						>
-							{flagged.length ? `Request ${flagged.length} change${flagged.length === 1 ? "" : "s"}` : "Request changes"}
+						<button className="btn small" disabled={busy || (items.length > 0 && open.length === 0)} onClick={() => (items.length ? act("changes") : setWriting(true))} title={open.length ? "Sends every item you haven't marked as fine" : items.length ? "Every item is marked as fine — approve, or un-tick one" : undefined}>
+							{items.length ? `Request ${open.length || ""} change${open.length === 1 ? "" : "s"}` : "Request changes"}
 						</button>
 						<button className="btn primary small" disabled={busy || blockers > 0 || flagged.length > 0} title={flagged.length ? "You flagged items above: send those to the team, or mark them as fine" : blockers ? "Blocking questions are open (Overview)" : undefined} onClick={() => act("approve")}>
 							Approve {gate}
@@ -773,20 +768,20 @@ function GateBar({ ws, missionId, gate, g, hasGates, canEdit, blockers }: { ws: 
 					</div>
 				</div>
 			)}
-			{changes && (
+			{writing && items.length === 0 && (
 				<form
 					className="gate-changes"
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (comment.trim()) act("changes");
+						if (note.trim()) act("changes", note.trim());
 					}}
 				>
-					<textarea className="input" rows={4} autoFocus placeholder={`What should change in the ${gate}?`} value={comment} onChange={(e) => setComment(e.target.value)} />
+					<textarea className="input" rows={4} autoFocus placeholder={`What should change in the ${gate}?`} value={note} onChange={(e) => setNote(e.target.value)} />
 					<div className="row" style={{ justifyContent: "flex-end" }}>
-						<button type="button" className="btn ghost small" onClick={() => setChanges(false)}>
+						<button type="button" className="btn ghost small" onClick={() => setWriting(false)}>
 							Cancel
 						</button>
-						<button className="btn primary small" disabled={busy || !comment.trim()}>
+						<button className="btn primary small" disabled={busy || !note.trim()}>
 							Send to the team
 						</button>
 					</div>

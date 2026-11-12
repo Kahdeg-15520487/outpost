@@ -390,6 +390,7 @@ async function run() {
 	must("Backlog: the pending items bar lists them", await until("pending bar", () => text(".bl-pending").then((t) => /2 new items waiting/.test(t) && /FB-1/.test(t))));
 	check("pending cards are marked", (await count(".kb-card.pending")) >= 1);
 	check("the pending items are reviewed one at a time", await until("pending review", () => count(".bl-pending .gri").then((n) => n >= 2)));
+	check("…and their Request changes has no second box either", !(await page.$(".bl-ap-changes")));
 check("…with what there is to check on each one", (await count(".bl-pending .gri-detail")) >= 1 && /P2/.test(await text(".bl-pending .gri:first-child")));
 	await shot("pending");
 	await page.click(".bl-pending .gri:first-child .gri-acts button:nth-child(2)");
@@ -410,6 +411,7 @@ check("…with what there is to check on each one", (await count(".bl-pending .g
 	await go(missionHash("requirements"));
 	must("Requirements tab: approval bar", await until("gate bar", () => text(".gate-bar.pending").then((t) => /waiting for your approval/.test(t) && /Three stories/.test(t))));
 	await shot("gate");
+	check("the document review writes in one place: the per-item note, not a second box", !(await page.$(".gate-changes")));
 	await clickText(".gate-bar button", /^Approve requirements/);
 	check("approve from the tab", await until("approved", async () => (await api("GET", `/api/w/${ws}/missions/${pid}`)).state.gates?.requirements?.status === "approved" && /approved/.test(await text(".gate-bar"))));
 	await go(missionHash("design"));
@@ -434,10 +436,14 @@ check("…with what there is to check on each one", (await count(".bl-pending .g
 	check("and Approve is off while it is flagged", await until("approve off", async () => (await page.$$eval(".bl-ap-actions .btn.primary", (bs) => (bs[0] as HTMLButtonElement).disabled)) === true));
 	await go(missionHash("backlog"));
 	must("the verdict survives a reload", await until("still flagged", () => count(".bl-review .gri.changes").then((n) => n === 1)));
+	// "Request changes" is one click: it sends every feature not marked as fine, with the note, and no second box.
+	check("no second box: the foot line says what Request changes will send", !(await page.$(".bl-ap-changes")) && /Approve is off until you mark the 1 item you flagged|not marked as fine/.test(await text(".bl-review .gate-foot-note")), await text(".bl-review .gate-foot-note"));
+	const asked = (await api("GET", `/api/w/${ws}/missions/${pid}`)).backlog.approval;
 	await clickText(".bl-ap-actions button", /^Request 1 change/);
-	check("Request changes starts from the flagged item", await until("note seeded", () => page.$eval(".bl-ap-changes textarea", (e) => (e as HTMLTextAreaElement).value).then((v) => /two columns, not three/.test(v), () => false)));
-	await shot("backlog-changes");
-	await clickText(".bl-ap-changes button", "Cancel");
+	const sentChanges = await until("changes requested", async () => (await verdicts()).status === "changes" && (await verdicts()).comment);
+	check("Request changes sends what is not marked as fine, notes included", /\*\*F\d+ [^*]+\*\*: two columns, not three/.test(sentChanges ?? ""), sentChanges);
+	check("…and the team is told", (await api("GET", `/api/w/${ws}/missions/${pid}`)).state.activity.some((a: any) => /asked for backlog changes/.test(a.text)));
+	check("the review it was decided from is kept on the record", !!asked.reviews);
 	await (await Workspace.get(ws)).harness.commit(async (tx: any) => {
 		const b = (await tx.doc(BacklogDoc, pid, null)) as any;
 		Object.assign(b.approval, { status: "approved", decidedBy: "Ana", decidedAt: Date.now(), reviews: {} });

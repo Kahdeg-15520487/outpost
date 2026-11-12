@@ -65,12 +65,16 @@ export function ReviewItem({ item, index, review, disabled, onChange }: { item: 
 	);
 }
 
-/** "Approve is off until the flagged items are fine or sent" — the same foot line in every review. */
-export function reviewFootNote(items: GateItem[], reviews: Record<string, GateReview>) {
+/**
+ * The line under the items in every review. "Request changes" sends everything that isn't ticked, so the count is
+ * what the button will name; Approve is held down only by items the user explicitly flagged.
+ */
+export function reviewFootNote(items: GateItem[], reviews: Record<string, GateReview>, open = items.filter((it) => reviews[it.id]?.verdict !== "ok").length) {
 	const flagged = items.filter((it) => reviews[it.id]?.verdict === "changes").length;
 	const settled = items.filter((it) => reviews[it.id]?.verdict === "ok").length;
-	if (flagged) return "Approve is off until the flagged items are fine or sent";
-	return settled === items.length && items.length > 0 ? "Every item looked at" : "Nothing has to be ticked — approve when you're satisfied";
+	if (flagged) return `Approve is off until you mark the ${flagged} item${flagged === 1 ? "" : "s"} you flagged as fine or send ${flagged === 1 ? "it" : "them"} back`;
+	if (!open) return "Every item is marked as fine — approve when you're satisfied";
+	return settled ? `Request changes sends the ${open} item${open === 1 ? "" : "s"} not marked as fine` : `Nothing has to be ticked — approve, or request changes on the ${open} item${open === 1 ? "" : "s"} you haven't blessed`;
 }
 
 /** What "Request changes" starts with: the items already flagged, so the note can just be refined. */

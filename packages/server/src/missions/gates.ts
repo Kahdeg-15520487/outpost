@@ -53,11 +53,20 @@ export function flaggedItems(g: Review | undefined): GateItem[] {
 	return gateItems(g).filter((it) => g?.reviews?.[it.id]?.verdict === "changes");
 }
 
-/** The change request the team gets, when the user flagged items instead of writing a paragraph. */
+/**
+ * What "Request changes" sends: every item the user did not mark as fine. Ticking "Looks right" is the only thing
+ * that keeps an item out, so a review left half-read sends the rest — which is what pressing the button means. A
+ * flagged item carries the note the user wrote under it; an untouched one is named on its own.
+ */
 export function changesFromItems(g: Review | undefined): string {
-	const flagged = flaggedItems(g);
-	if (!flagged.length) return "";
-	return flagged.map((it) => `- **${it.title}**${g!.reviews![it.id]!.note ? `: ${g!.reviews![it.id]!.note}` : ""}`).join("\n");
+	const open = gateItems(g).filter((it) => g?.reviews?.[it.id]?.verdict !== "ok");
+	if (!open.length) return "";
+	return open.map((it) => `- **${it.title}**${g!.reviews?.[it.id]?.note ? `: ${g!.reviews![it.id]!.note}` : ""}`).join("\n");
+}
+
+/** How many items a change request would name, for the button and its foot line. */
+export function openItems(g: Review | undefined): number {
+	return gateItems(g).filter((it) => g?.reviews?.[it.id]?.verdict !== "ok").length;
 }
 
 /**

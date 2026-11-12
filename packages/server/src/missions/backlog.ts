@@ -290,12 +290,14 @@ export function backlogReviewItems(b: Backlog): GateItem[] {
 	if (b.approval.items?.length) return b.approval.items;
 	const sorted = Object.values(b.items).sort(byOrder);
 	const features = sorted.filter((i) => i.type === "feature");
-	// A backlog with no features (a small one) is reviewed by its PBIs instead.
-	const parents = (features.length ? features : sorted.filter((i) => i.type === "pbi")).slice(0, MAX_REVIEW_ITEMS);
+	// A backlog with no features (a small one) is reviewed by its PBIs instead, and a stray task by itself, so a
+	// request never asks for nothing.
+	const pbis = features.length ? [] : sorted.filter((i) => i.type === "pbi");
+	const parents = (features.length ? features : pbis.length ? pbis : sorted.filter((i) => i.type === "task")).slice(0, MAX_REVIEW_ITEMS);
 	return parents.map((parent) => {
-		const pbis = features.length ? sorted.filter((i) => i.type === "pbi" && i.parent === parent.id) : [parent];
-		const tasks = sorted.filter((i) => i.type === "task" && pbis.some((p) => p.id === i.parent));
-		const lines = pbis.map((p) => `- **${p.id}** ${p.title}${p.estimate ? ` · ${p.estimate}` : ""}`);
+		const mine = features.length ? sorted.filter((i) => i.type === "pbi" && i.parent === parent.id) : [parent];
+		const tasks = sorted.filter((i) => i.type === "task" && mine.some((p) => p.id === i.parent));
+		const lines = mine.map((p) => `- **${p.id}** ${p.title}${p.estimate ? ` · ${p.estimate}` : ""}${p.area && p.type === "task" ? ` · ${p.area}` : ""}`);
 		if (tasks.length) lines.push(`- ${tasks.length} task${tasks.length === 1 ? "" : "s"}`);
 		return { id: parent.id, title: `${parent.id} ${parent.title}`, detail: lines.join("\n") };
 	});

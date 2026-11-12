@@ -86,7 +86,13 @@ await pm.reviewGateItem(p.id, "requirements", u, "p2", "ok");
 gate = (await pm.state(p.id)).gates!.requirements!;
 check("an item can be marked fine", gate.reviews?.p2?.verdict === "ok", gate.reviews);
 check("approving is refused while an item is flagged", /You asked for changes on 1 item \(Scoring\)/.test(await rejects(() => pm.approveGate(p.id, "requirements", u))));
-check("the change request can be built from the flagged items", changesFromItems(gate) === "- **Scoring**: six darts, not five", changesFromItems(gate));
+check("the change request names every item not marked as fine", changesFromItems(gate) === "- **Scoring**: six darts, not five", changesFromItems(gate));
+// p2 is marked fine, p1 flagged: un-ticking p2 puts it in the request too, with no note of its own.
+const { openItems } = await import("../src/missions/gates.ts");
+await pm.reviewGateItem(p.id, "requirements", u, "p2", "clear");
+check("an item left untouched is sent as well", changesFromItems((await pm.state(p.id)).gates?.requirements) === "- **Scoring**: six darts, not five\n- **Voice**", changesFromItems((await pm.state(p.id)).gates?.requirements));
+check("…and the count says how many the button will name", openItems((await pm.state(p.id)).gates?.requirements) === 2);
+await pm.reviewGateItem(p.id, "requirements", u, "p2", "ok");
 check("an unknown item is not a review", /No item p9/.test(await rejects(() => pm.reviewGateItem(p.id, "requirements", u, "p9", "ok"))));
 await pm.reviewGateItem(p.id, "requirements", u, "p1", "clear");
 gate = (await pm.state(p.id)).gates!.requirements!;

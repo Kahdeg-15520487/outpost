@@ -87,7 +87,6 @@
 .gate-main { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .gate-actions { display: flex; gap: 6px; flex: none; }
 .gate-block { font-size: 12.5px; color: #7f1d1d; }
-.gate-changes { display: grid; gap: 6px; }
 /* A review is a checklist: one row per decision point, each settleable on its own. */
 .gate-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 .gate-foot { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
